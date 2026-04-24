@@ -1,0 +1,48 @@
+export const product = {
+  name: "Webhook Monitor",
+  tagline: "Receive, inspect, and replay webhooks in real time",
+  domain: "webhookmonitor.io",
+  url: "https://webhookmonitor.io",
+  accentColor: "#6366F1",
+  keyword: "webhook monitor tool",
+  seoTitle: "Webhook Monitor — Inspect & Replay Webhooks in Real Time | DevForge",
+  seoDescription: "Debug webhooks without ngrok. Get a unique URL, inspect every request in real time, and replay failed payloads. Only $19/mo.",
+  navLinks: [{ label: "Features", href: "#features" }, { label: "Pricing", href: "#pricing" }],
+  hero: {
+    badge: "Developer Tool",
+    headline: "Debug Webhooks Without the Pain.",
+    subtitle: "Get a unique endpoint URL, see every incoming request in real time with full headers and body, and replay any payload with one click.",
+    ctaText: "Start Free Trial",
+    ctaHref: "/register",
+    secondaryCtaText: "See Features",
+    secondaryCtaHref: "#features",
+  },
+  features: [
+    { title: "Unique Endpoints", description: "Get a stable, unique URL for each project. Route webhooks from Stripe, GitHub, or any service." },
+    { title: "Real-Time Log", description: "See requests as they arrive — method, headers, body, timing. Filter by status code or method." },
+    { title: "Replay & Forward", description: "Replay any request to your local dev server. Forward webhooks to multiple destinations." },
+  ],
+  pricing: {
+    planName: "Pro",
+    price: 19,
+    description: "Unlimited endpoints & requests",
+    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    features: [
+      { text: "Unlimited endpoints", included: true },
+      { text: "Real-time request log", included: true },
+      { text: "Request replay", included: true },
+      { text: "30-day history", included: true },
+      { text: "Team sharing", included: false },
+    ],
+  },
+  testimonials: [
+    { quote: "Replaced ngrok + webhook.site for our entire team. The replay feature is killer.", name: "Chris Park", role: "Backend Engineer" },
+    { quote: "Essential for testing Stripe webhooks locally. Clean UI too.", name: "Nina Vargas", role: "Full-Stack Developer" },
+    { quote: "The real-time log makes debugging webhook issues trivial.", name: "Ryan O'Brien", role: "DevOps Engineer" },
+  ],
+  dashboardNav: [
+    { label: "Requests", href: "/dashboard" },
+    { label: "Settings", href: "/dashboard/settings" },
+  ],
+  plausibleDomain: "webhookmonitor.io",
+} as const;

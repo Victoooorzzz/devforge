@@ -1,0 +1,48 @@
+export const product = {
+  name: "Invoice Follow-up",
+  tagline: "Track invoices and automate payment reminders",
+  domain: "invoicefollow.io",
+  url: "https://invoicefollow.io",
+  accentColor: "#10B981",
+  keyword: "invoice follow up tool",
+  seoTitle: "Invoice Follow-up — Automated Payment Reminders | DevForge",
+  seoDescription: "Stop chasing payments manually. Track invoices, set reminder schedules, and automate follow-ups via email. Only $12/mo.",
+  navLinks: [{ label: "Features", href: "#features" }, { label: "Pricing", href: "#pricing" }],
+  hero: {
+    badge: "Get Paid Faster",
+    headline: "Never Chase a Payment Again.",
+    subtitle: "Add your invoices, set a reminder schedule, and let us handle the follow-ups. Get paid faster without the awkward emails.",
+    ctaText: "Start Free Trial",
+    ctaHref: "/register",
+    secondaryCtaText: "See How It Works",
+    secondaryCtaHref: "#features",
+  },
+  features: [
+    { title: "Smart Reminders", description: "Set custom reminder schedules — 3 days before due, on due date, 7 days overdue. We send the emails." },
+    { title: "Client Dashboard", description: "See all invoices at a glance with status badges: paid, pending, overdue. Filter and search instantly." },
+    { title: "Email Templates", description: "Professional, customizable email templates that maintain your brand voice while gently nudging clients." },
+  ],
+  pricing: {
+    planName: "Pro",
+    price: 12,
+    description: "Unlimited invoices & reminders",
+    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    features: [
+      { text: "Unlimited invoices", included: true },
+      { text: "Automated email reminders", included: true },
+      { text: "Custom reminder schedules", included: true },
+      { text: "Client payment tracking", included: true },
+      { text: "Slack notifications", included: false },
+    ],
+  },
+  testimonials: [
+    { quote: "Cut my overdue invoices by 60% in the first month. The automated reminders are a game-changer.", name: "Lisa Wong", role: "Freelance Designer" },
+    { quote: "Simple and effective. No bloated accounting software needed.", name: "David Moreno", role: "Web Developer" },
+    { quote: "My clients actually appreciate the professional follow-up emails.", name: "Emma Clark", role: "Consultant" },
+  ],
+  dashboardNav: [
+    { label: "Invoices", href: "/dashboard" },
+    { label: "Settings", href: "/dashboard/settings" },
+  ],
+  plausibleDomain: "invoicefollow.io",
+} as const;

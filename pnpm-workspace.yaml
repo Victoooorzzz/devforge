@@ -1,0 +1,4 @@
+packages:
+  - "packages/*"
+  - "apps/*/frontend"
+  - "apps/devforge-site/frontend"

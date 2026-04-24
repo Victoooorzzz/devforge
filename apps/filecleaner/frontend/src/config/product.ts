@@ -1,0 +1,52 @@
+export const product = {
+  name: "File Cleaner",
+  tagline: "Upload, process, and clean your files in seconds",
+  domain: "filecleaner.io",
+  url: "https://filecleaner.io",
+  accentColor: "#F59E0B",
+  keyword: "file cleaner tool",
+  seoTitle: "File Cleaner — Upload, Process & Clean Files Instantly | DevForge",
+  seoDescription: "Upload files, remove metadata, compress images, convert formats. Fast, private, and developer-friendly. Only $9/mo.",
+  navLinks: [
+    { label: "Features", href: "#features" },
+    { label: "Pricing", href: "#pricing" },
+  ],
+  hero: {
+    badge: "Privacy-First",
+    headline: "Clean Your Files. Keep Your Sanity.",
+    subtitle: "Strip metadata, compress images, convert formats — all in one click. Files are processed in-memory and never stored.",
+    ctaText: "Start Free Trial",
+    ctaHref: "/register",
+    secondaryCtaText: "See Features",
+    secondaryCtaHref: "#features",
+  },
+  features: [
+    { title: "Metadata Removal", description: "Strip EXIF, GPS, author info, and hidden metadata from images and documents before sharing." },
+    { title: "Image Compression", description: "Reduce file sizes by up to 80% without visible quality loss. Supports PNG, JPEG, WebP." },
+    { title: "Format Conversion", description: "Convert between formats instantly. PDF to PNG, HEIC to JPEG, SVG to PNG — and more." },
+  ],
+  pricing: {
+    planName: "Pro",
+    price: 9,
+    description: "Unlimited file processing",
+    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    features: [
+      { text: "Unlimited file uploads", included: true },
+      { text: "Metadata stripping", included: true },
+      { text: "Image compression", included: true },
+      { text: "Format conversion", included: true },
+      { text: "Batch processing", included: true },
+      { text: "API access", included: false },
+    ],
+  },
+  testimonials: [
+    { quote: "I use this before every client delivery. Strips all the metadata I don't want shared.", name: "Jordan Lee", role: "Photographer" },
+    { quote: "Saved me from installing 3 different CLI tools. Just drag, drop, done.", name: "Priya Patel", role: "Frontend Developer" },
+    { quote: "The compression quality is surprisingly good for the price.", name: "Tom Harris", role: "Content Creator" },
+  ],
+  dashboardNav: [
+    { label: "Dashboard", href: "/dashboard" },
+    { label: "Settings", href: "/dashboard/settings" },
+  ],
+  plausibleDomain: "filecleaner.io",
+} as const;

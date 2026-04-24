@@ -1,0 +1,48 @@
+export const product = {
+  name: "Price Tracker",
+  tagline: "Monitor competitor prices and get instant alerts",
+  domain: "pricetrackr.io",
+  url: "https://pricetrackr.io",
+  accentColor: "#EF4444",
+  keyword: "price tracker tool",
+  seoTitle: "Price Tracker — Monitor Competitor Prices & Get Alerts | DevForge",
+  seoDescription: "Track product prices across the web. Get email alerts when prices drop or change. Perfect for competitive intelligence. Only $15/mo.",
+  navLinks: [{ label: "Features", href: "#features" }, { label: "Pricing", href: "#pricing" }],
+  hero: {
+    badge: "Competitive Edge",
+    headline: "Know When Prices Move. Instantly.",
+    subtitle: "Add URLs to track, set your thresholds, and get notified the moment prices change. Stay ahead of competitors and never miss a deal.",
+    ctaText: "Start Free Trial",
+    ctaHref: "/register",
+    secondaryCtaText: "See Features",
+    secondaryCtaHref: "#features",
+  },
+  features: [
+    { title: "URL Monitoring", description: "Add any product URL and we'll extract and track the price automatically with smart selectors." },
+    { title: "Alert Thresholds", description: "Set percentage or absolute price change thresholds. Get email alerts instantly when triggered." },
+    { title: "Price History", description: "View historical price trends with interactive charts. Spot patterns and make data-driven decisions." },
+  ],
+  pricing: {
+    planName: "Pro",
+    price: 15,
+    description: "Track up to 100 URLs",
+    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    features: [
+      { text: "100 tracked URLs", included: true },
+      { text: "Hourly price checks", included: true },
+      { text: "Email alerts", included: true },
+      { text: "Price history charts", included: true },
+      { text: "API access", included: false },
+    ],
+  },
+  testimonials: [
+    { quote: "Finally a price tracker that actually works reliably. The alerts are instant.", name: "Mike Zhang", role: "eCommerce Manager" },
+    { quote: "We use this to monitor competitor SaaS pricing. Invaluable for our strategy.", name: "Sarah Johnson", role: "Product Manager" },
+    { quote: "Simple setup, reliable tracking. Exactly what I needed.", name: "Alex Turner", role: "Indie Maker" },
+  ],
+  dashboardNav: [
+    { label: "Trackers", href: "/dashboard" },
+    { label: "Settings", href: "/dashboard/settings" },
+  ],
+  plausibleDomain: "pricetrackr.io",
+} as const;

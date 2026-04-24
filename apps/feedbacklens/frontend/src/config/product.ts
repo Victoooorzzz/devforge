@@ -1,0 +1,48 @@
+export const product = {
+  name: "Feedback Analyzer",
+  tagline: "Collect feedback and get AI-powered sentiment analysis",
+  domain: "feedbacklens.io",
+  url: "https://feedbacklens.io",
+  accentColor: "#8B5CF6",
+  keyword: "feedback analyzer AI",
+  seoTitle: "Feedback Analyzer — AI Sentiment Analysis for User Feedback | DevForge",
+  seoDescription: "Collect user feedback and instantly analyze sentiment with Gemini AI. Spot trends, prioritize issues, and understand your users. Only $19/mo.",
+  navLinks: [{ label: "Features", href: "#features" }, { label: "Pricing", href: "#pricing" }],
+  hero: {
+    badge: "AI-Powered",
+    headline: "Understand Your Users. Automatically.",
+    subtitle: "Collect feedback from any source, run AI sentiment analysis with Gemini, and surface the insights that matter most.",
+    ctaText: "Start Free Trial",
+    ctaHref: "/register",
+    secondaryCtaText: "See Features",
+    secondaryCtaHref: "#features",
+  },
+  features: [
+    { title: "AI Sentiment Analysis", description: "Powered by Google Gemini. Automatically classify feedback as positive, negative, or neutral with confidence scores." },
+    { title: "Feedback Collection", description: "Paste feedback manually, import from CSV, or use our API. Aggregate feedback from multiple channels in one place." },
+    { title: "Trend Detection", description: "Spot recurring themes and emerging issues before they become problems. Weekly digest with key insights." },
+  ],
+  pricing: {
+    planName: "Pro",
+    price: 19,
+    description: "Unlimited feedback & AI analysis",
+    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    features: [
+      { text: "Unlimited feedback entries", included: true },
+      { text: "AI sentiment analysis", included: true },
+      { text: "Theme detection", included: true },
+      { text: "CSV import/export", included: true },
+      { text: "Slack integration", included: false },
+    ],
+  },
+  testimonials: [
+    { quote: "The AI analysis is surprisingly accurate. Saved us from reading 500 feedback entries manually.", name: "Anna Foster", role: "Product Manager" },
+    { quote: "We pipe all our support tickets through this. The trend detection caught a UX issue we missed.", name: "James Wu", role: "UX Lead" },
+    { quote: "Clean, fast, and the AI actually works. No gimmicks.", name: "Olivia Santos", role: "Founder" },
+  ],
+  dashboardNav: [
+    { label: "Feedback", href: "/dashboard" },
+    { label: "Settings", href: "/dashboard/settings" },
+  ],
+  plausibleDomain: "feedbacklens.io",
+} as const;
