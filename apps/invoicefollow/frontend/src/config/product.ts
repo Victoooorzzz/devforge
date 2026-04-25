@@ -26,7 +26,7 @@ export const product = {
     planName: "Pro",
     price: 12,
     description: "Unlimited invoices & reminders",
-    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_INVOICEFOLLOW || "",
     features: [
       { text: "Unlimited invoices", included: true },
       { text: "Automated email reminders", included: true },

@@ -26,7 +26,7 @@ export const product = {
     planName: "Pro",
     price: 15,
     description: "Track up to 100 URLs",
-    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_PRICETRACKR || "",
     features: [
       { text: "100 tracked URLs", included: true },
       { text: "Hourly price checks", included: true },

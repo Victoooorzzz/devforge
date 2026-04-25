@@ -28,6 +28,8 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True)
     hashed_password: str
     stripe_customer_id: Optional[str] = Field(default=None, index=True)
+    lemonsqueezy_customer_id: Optional[str] = Field(default=None, index=True)
+
     is_active: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

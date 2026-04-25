@@ -9,6 +9,9 @@
     "clean": "turbo run clean"
   },
   "devDependencies": {
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
     "turbo": "^2.3.0",
     "typescript": "^5.4.0"
   },

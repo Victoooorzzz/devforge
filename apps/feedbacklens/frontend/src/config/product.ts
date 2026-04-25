@@ -26,7 +26,7 @@ export const product = {
     planName: "Pro",
     price: 19,
     description: "Unlimited feedback & AI analysis",
-    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_FEEDBACKLENS || "",
     features: [
       { text: "Unlimited feedback entries", included: true },
       { text: "AI sentiment analysis", included: true },

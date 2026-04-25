@@ -26,7 +26,7 @@ export const product = {
     planName: "Pro",
     price: 19,
     description: "Unlimited endpoints & requests",
-    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_WEBHOOKMONITOR || "",
     features: [
       { text: "Unlimited endpoints", included: true },
       { text: "Real-time request log", included: true },

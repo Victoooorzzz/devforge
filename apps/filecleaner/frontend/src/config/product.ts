@@ -29,7 +29,7 @@ export const product = {
     planName: "Pro",
     price: 9,
     description: "Unlimited file processing",
-    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_FILECLEANER || "",
     features: [
       { text: "Unlimited file uploads", included: true },
       { text: "Metadata stripping", included: true },

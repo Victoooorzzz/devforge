@@ -55,7 +55,8 @@ export const product = {
     planName: "Pro",
     price: 19,
     description: "Everything you need to get started",
-    stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID || "",
+    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID || "",
+
     features: [
       { text: "Core feature 1", included: true },
       { text: "Core feature 2", included: true },
