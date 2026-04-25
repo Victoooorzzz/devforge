@@ -1,6 +1,7 @@
 services:
   - type: web
     name: devforge-universal-backend
+    plan: free
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: PYTHONPATH=packages:. uvicorn backend_core.universal_main:app --host 0.0.0.0 --port $PORT
