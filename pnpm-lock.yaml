@@ -77,16 +77,16 @@ importers:
         version: 2.1.1
       lucide-react:
         specifier: latest
-        version: 1.11.0(react@19.2.5)
+        version: 1.11.0(react@18.3.1)
       next:
-        specifier: latest
-        version: 16.2.4(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+        specifier: ^14.2.0
+        version: 14.2.35(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react:
-        specifier: latest
-        version: 19.2.5
+        specifier: ^18.3.0
+        version: 18.3.1
       react-dom:
-        specifier: latest
-        version: 19.2.5(react@19.2.5)
+        specifier: ^18.3.0
+        version: 18.3.1(react@18.3.1)
       tailwind-merge:
         specifier: latest
         version: 3.5.0
@@ -1705,9 +1705,9 @@ snapshots:
     dependencies:
       react: 18.3.1
 
-  lucide-react@1.11.0(react@19.2.5):
+  lucide-react@1.11.0(react@18.3.1):
     dependencies:
-      react: 19.2.5
+      react: 18.3.1
 
   math-intrinsics@1.1.0: {}
 

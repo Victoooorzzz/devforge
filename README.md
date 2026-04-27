@@ -52,6 +52,8 @@ cd apps/webhookmonitor/backend && python main.py
 
 ## Creating a New Product
 
+Para una guía detallada y actualizada sobre cómo crear y desplegar un nuevo producto, consulta la [**Guía de Creación de Nuevos Micro-SaaS**](file:///c:/Users/victor/Downloads/microsaas/devforge/NEW_APP_GUIDE.md).
+
 1. Copy `apps/template` to `apps/your-product`
 2. Edit `frontend/src/config/product.ts` (name, accent, pricing, features)
 3. Add domain-specific dashboard components in `frontend/src/app/dashboard/`

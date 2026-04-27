@@ -5,7 +5,7 @@ const products: ProductInfo[] = [
   {
     name: "File Cleaner",
     tagline: "Upload, process, and clean your files in seconds",
-    domain: "filecleaner.io",
+    domain: "file-cleaner-ten.vercel.app",
     accentColor: "#F59E0B",
     price: 9,
     status: "live",
@@ -13,7 +13,7 @@ const products: ProductInfo[] = [
   {
     name: "Invoice Follow-up",
     tagline: "Track invoices and automate payment reminders",
-    domain: "invoicefollow.io",
+    domain: "invoice-follow.vercel.app",
     accentColor: "#10B981",
     price: 12,
     status: "live",
@@ -21,7 +21,7 @@ const products: ProductInfo[] = [
   {
     name: "Price Tracker",
     tagline: "Monitor competitor prices and get instant alerts",
-    domain: "pricetrackr.io",
+    domain: "price-trackr-delta.vercel.app",
     accentColor: "#EF4444",
     price: 15,
     status: "live",
@@ -29,7 +29,7 @@ const products: ProductInfo[] = [
   {
     name: "Webhook Monitor",
     tagline: "Receive, inspect, and replay webhooks in real time",
-    domain: "webhookmonitor.io",
+    domain: "webhook-monitor.vercel.app",
     accentColor: "#6366F1",
     price: 19,
     status: "live",
@@ -37,7 +37,7 @@ const products: ProductInfo[] = [
   {
     name: "Feedback Analyzer",
     tagline: "Collect feedback and get AI-powered sentiment analysis",
-    domain: "feedbacklens.io",
+    domain: "feedback-lens-eight.vercel.app",
     accentColor: "#8B5CF6",
     price: 19,
     status: "live",

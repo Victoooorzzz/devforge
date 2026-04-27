@@ -4,11 +4,7 @@ const path = require('path');
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@devforge/core", "@devforge/ui"],
-  experimental: {
-    turbo: {
-      root: path.join(__dirname, '../../../')
-    }
-  }
+  output: "export"
 };
 
 module.exports = nextConfig;
