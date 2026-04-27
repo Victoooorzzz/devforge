@@ -49,3 +49,47 @@ export async function fetchWithAuth(
 
   return response;
 }
+
+export async function login(email: string, password: string): Promise<{ success: boolean; token?: string; error?: string }> {
+  try {
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+      setToken(data.access_token);
+      return { success: true, token: data.access_token };
+    }
+
+    return { success: false, error: data.detail || 'Login failed' };
+  } catch (err) {
+    return { success: false, error: 'Connection error' };
+  }
+}
+
+export async function register(data: { email: string; password: string; [key: string]: any }): Promise<{ success: boolean; error?: string }> {
+  try {
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      if (result.access_token) {
+        setToken(result.access_token);
+      }
+      return { success: true };
+    }
+
+    return { success: false, error: result.detail || 'Registration failed' };
+  } catch (err) {
+    return { success: false, error: 'Connection error' };
+  }
+}

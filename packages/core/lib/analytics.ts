@@ -1,11 +1,6 @@
 // packages/core/lib/analytics.ts
 
-type EventName =
-  | "waitlist_signup"
-  | "trial_started"
-  | "checkout_started"
-  | "checkout_completed"
-  | "feature_used";
+type EventName = string;
 
 interface EventProps {
   feature_name?: string;
