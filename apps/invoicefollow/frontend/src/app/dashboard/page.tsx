@@ -29,10 +29,10 @@ export default function DashboardPage() {
     setShowForm(false);
   };
 
-  const statusColors: Record<string, { bg: string; text: string }> = {
-    pending: { bg: "rgba(245,158,11,0.15)", text: "#F59E0B" },
-    paid: { bg: "rgba(16,185,129,0.15)", text: "#10B981" },
-    overdue: { bg: "rgba(239,68,68,0.15)", text: "#EF4444" },
+  const statusColors: Record<string, { backgroundColor: string; color: string }> = {
+    pending: { backgroundColor: "rgba(245,158,11,0.15)", color: "#F59E0B" },
+    paid: { backgroundColor: "rgba(16,185,129,0.15)", color: "#10B981" },
+    overdue: { backgroundColor: "rgba(239,68,68,0.15)", color: "#EF4444" },
   };
 
   const totalPending = invoices.filter((i) => i.status !== "paid").reduce((s, i) => s + i.amount, 0);

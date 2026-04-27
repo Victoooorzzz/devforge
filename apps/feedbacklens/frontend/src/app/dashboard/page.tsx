@@ -11,10 +11,10 @@ interface FeedbackEntry {
   created_at: string;
 }
 
-const sentimentColors: Record<string, { bg: string; text: string }> = {
-  positive: { bg: "rgba(16,185,129,0.15)", text: "#10B981" },
-  negative: { bg: "rgba(239,68,68,0.15)", text: "#EF4444" },
-  neutral: { bg: "rgba(163,163,163,0.15)", text: "#A3A3A3" },
+const sentimentColors: Record<string, { backgroundColor: string; color: string }> = {
+  positive: { backgroundColor: "rgba(16,185,129,0.15)", color: "#10B981" },
+  negative: { backgroundColor: "rgba(239,68,68,0.15)", color: "#EF4444" },
+  neutral: { backgroundColor: "rgba(163,163,163,0.15)", color: "#A3A3A3" },
 };
 
 export default function DashboardPage() {
@@ -57,7 +57,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-3 gap-4 mb-8">
         {Object.entries(counts).map(([key, val]) => (
           <div key={key} className="p-4 rounded-lg text-center" style={{ backgroundColor: "var(--color-surface)" }}>
-            <p className="text-2xl font-bold font-mono" style={{ color: sentimentColors[key]?.text }}>{val}</p>
+            <p className="text-2xl font-bold font-mono" style={{ color: sentimentColors[key]?.color }}>{val}</p>
             <p className="text-xs font-medium uppercase tracking-wide mt-1" style={{ color: "var(--color-text-secondary)" }}>{key}</p>
           </div>
         ))}

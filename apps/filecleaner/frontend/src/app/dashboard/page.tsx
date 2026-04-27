@@ -45,11 +45,11 @@ export default function DashboardPage() {
     }
   }, []);
 
-  const statusColors: Record<string, { bg: string; text: string }> = {
-    uploading: { bg: "rgba(245,158,11,0.15)", text: "#F59E0B" },
-    processing: { bg: "rgba(99,102,241,0.15)", text: "#6366F1" },
-    complete: { bg: "rgba(16,185,129,0.15)", text: "#10B981" },
-    error: { bg: "rgba(239,68,68,0.15)", text: "#EF4444" },
+  const statusColors: Record<string, { backgroundColor: string; color: string }> = {
+    uploading: { backgroundColor: "rgba(245,158,11,0.15)", color: "#F59E0B" },
+    processing: { backgroundColor: "rgba(99,102,241,0.15)", color: "#6366F1" },
+    complete: { backgroundColor: "rgba(16,185,129,0.15)", color: "#10B981" },
+    error: { backgroundColor: "rgba(239,68,68,0.15)", color: "#EF4444" },
   };
 
   return (
@@ -88,7 +88,7 @@ export default function DashboardPage() {
                 <tr key={file.id} style={{ borderBottom: "1px solid rgba(38,38,38,0.15)" }}>
                   <td className="px-4 py-3 text-sm font-medium" style={{ color: "var(--color-text)" }}>{file.name}</td>
                   <td className="px-4 py-3 text-sm font-mono" style={{ color: "var(--color-text-secondary)" }}>{formatSize(file.size)}</td>
-                  <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full" style={{ backgroundColor: statusColors[file.status].bg, color: statusColors[file.status].text }}>{file.status}</span></td>
+                  <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full" style={{ backgroundColor: statusColors[file.status].backgroundColor, color: statusColors[file.status].color }}>{file.status}</span></td>
                   <td className="px-4 py-3 text-right">{file.downloadUrl && <a href={file.downloadUrl} className="text-xs font-medium" style={{ color: "var(--color-accent)" }}>Download</a>}</td>
                 </tr>
               ))}

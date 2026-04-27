@@ -24,7 +24,7 @@ const products: ProductInfo[] = [
     domain: "pricetrackr.io",
     accentColor: "#EF4444",
     price: 15,
-    status: "beta",
+    status: "live",
   },
   {
     name: "Webhook Monitor",
@@ -40,7 +40,7 @@ const products: ProductInfo[] = [
     domain: "feedbacklens.io",
     accentColor: "#8B5CF6",
     price: 19,
-    status: "beta",
+    status: "live",
   },
 ];
 
