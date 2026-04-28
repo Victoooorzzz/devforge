@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ client_name: "", amount: "", due_date: "" });
+  const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     apiClient.get<Invoice[]>("/invoices/list").then(({ data }) => setInvoices(data)).catch(() => {});
@@ -27,6 +28,23 @@ export default function DashboardPage() {
     setInvoices((prev) => [data, ...prev]);
     setForm({ client_name: "", amount: "", due_date: "" });
     setShowForm(false);
+  };
+
+  const handleMarkPaid = async (id: number) => {
+    setLoadingIds((prev) => new Set(prev).add(id));
+    trackEvent("feature_used", { feature_name: "mark_invoice_paid" });
+    try {
+      await apiClient.put(`/invoices/${id}/mark-paid`);
+      setInvoices((prev) => prev.map((inv) => inv.id === id ? { ...inv, status: "paid" } : inv));
+    } catch (err: any) {
+      alert("Error marking invoice as paid");
+    } finally {
+      setLoadingIds((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(id);
+        return newSet;
+      });
+    }
   };
 
   const statusColors: Record<string, { backgroundColor: string; color: string }> = {
@@ -61,8 +79,8 @@ export default function DashboardPage() {
       <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "var(--color-surface)" }}>
         <table className="w-full">
           <thead><tr style={{ borderBottom: "1px solid var(--color-border)" }}>
-            {["Client", "Amount", "Due Date", "Status", "Reminders"].map((h) => (
-              <th key={h} className="text-left text-xs font-medium uppercase tracking-wide px-4 py-3" style={{ color: "var(--color-text-secondary)" }}>{h}</th>
+            {["Client", "Amount", "Due Date", "Status", "Reminders", ""].map((h, i) => (
+              <th key={i} className="text-left text-xs font-medium uppercase tracking-wide px-4 py-3" style={{ color: "var(--color-text-secondary)" }}>{h}</th>
             ))}
           </tr></thead>
           <tbody>
@@ -73,6 +91,22 @@ export default function DashboardPage() {
                 <td className="px-4 py-3 text-sm" style={{ color: "var(--color-text-secondary)" }}>{inv.due_date}</td>
                 <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full" style={{ ...statusColors[inv.status] }}>{inv.status}</span></td>
                 <td className="px-4 py-3 text-sm font-mono" style={{ color: "var(--color-text-secondary)" }}>{inv.reminders_sent}</td>
+                <td className="px-4 py-3 text-right">
+                  {(inv.status === "pending" || inv.status === "overdue") && (
+                    <button 
+                      onClick={() => handleMarkPaid(inv.id)} 
+                      disabled={loadingIds.has(inv.id)}
+                      className="text-xs font-medium px-3 py-1 rounded transition-colors"
+                      style={{ 
+                        backgroundColor: "var(--color-surface-raised)", 
+                        color: "var(--color-text)",
+                        opacity: loadingIds.has(inv.id) ? 0.5 : 1
+                      }}
+                    >
+                      {loadingIds.has(inv.id) ? "Procesando..." : "Marcar como pagada"}
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

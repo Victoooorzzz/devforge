@@ -101,7 +101,7 @@ async def list_invoices(user: User = Depends(get_current_user), session: AsyncSe
     result = await session.execute(select(Invoice).where(Invoice.user_id == user.id).order_by(Invoice.due_date))
     return result.scalars().all()
 
-@invoice_router.post("/{invoice_id}/mark-paid")
+@invoice_router.put("/{invoice_id}/mark-paid")
 async def mark_paid(invoice_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(Invoice).where(Invoice.id == invoice_id, Invoice.user_id == user.id))
     inv = result.scalar_one_or_none()

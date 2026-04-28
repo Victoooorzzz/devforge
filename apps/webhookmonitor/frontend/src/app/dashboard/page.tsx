@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { apiClient, trackEvent } from "@devforge/core";
 
 interface WebhookRequest {
@@ -20,11 +20,42 @@ export default function DashboardPage() {
   const [requests, setRequests] = useState<WebhookRequest[]>([]);
   const [selected, setSelected] = useState<WebhookRequest | null>(null);
   const [endpointUrl, setEndpointUrl] = useState("");
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     apiClient.get<{ endpoint_url: string }>("/webhooks/endpoint").then(({ data }) => setEndpointUrl(data.endpoint_url)).catch(() => {});
-    apiClient.get<WebhookRequest[]>("/webhooks/requests").then(({ data }) => setRequests(data)).catch(() => {});
+    
+    const fetchRequests = async () => {
+      try {
+        const { data } = await apiClient.get<WebhookRequest[]>("/webhooks/requests");
+        setRequests((prev) => {
+          if (prev.length === 0) return data;
+          const existingIds = new Set(prev.map(r => r.id));
+          const newRequests = data.filter(r => !existingIds.has(r.id));
+          return [...newRequests, ...prev].slice(0, 100);
+        });
+      } catch (e) {}
+    };
+
+    fetchRequests();
+    intervalRef.current = setInterval(fetchRequests, 5000);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
   }, []);
+
+  const handleClearHistory = async () => {
+    if (!window.confirm("¿Estás seguro de que deseas limpiar el historial de peticiones?")) return;
+    trackEvent("feature_used", { feature_name: "clear_webhook_history" });
+    try {
+      await apiClient.delete("/webhooks/requests");
+      setRequests([]);
+      setSelected(null);
+    } catch (err: any) {
+      alert("Error al limpiar historial");
+    }
+  };
 
   const handleReplay = async (id: number) => {
     trackEvent("feature_used", { feature_name: "replay_webhook" });
@@ -33,7 +64,22 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold tracking-tight mb-2" style={{ color: "var(--color-text)" }}>Incoming Requests</h1>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--color-text)" }}>Incoming Requests</h1>
+          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: "rgba(16,185,129,0.1)", color: "#10B981" }}>
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+            En vivo
+          </span>
+        </div>
+        <button 
+          onClick={handleClearHistory} 
+          className="text-xs font-medium px-3 py-1.5 rounded transition-colors"
+          style={{ backgroundColor: "rgba(239,68,68,0.1)", color: "#EF4444" }}
+        >
+          Limpiar historial
+        </button>
+      </div>
       {endpointUrl && (
         <div className="flex items-center gap-3 mb-8 p-3 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
           <span className="text-xs font-medium" style={{ color: "var(--color-text-secondary)" }}>Your endpoint:</span>

@@ -30,6 +30,18 @@ export default function DashboardPage() {
     setShowForm(false);
   };
 
+  const handleDelete = async (id: number) => {
+    if (!window.confirm("¿Estás seguro de que deseas eliminar este producto?")) return;
+    trackEvent("feature_used", { feature_name: "delete_tracker" });
+    try {
+      await apiClient.delete(`/trackers/${id}`);
+      setTrackers((prev) => prev.filter((t) => t.id !== id));
+      alert("Producto eliminado");
+    } catch (err: any) {
+      alert("Error al eliminar producto");
+    }
+  };
+
   const getPriceChange = (curr: number | null, prev: number | null) => {
     if (!curr || !prev || prev === 0) return null;
     return ((curr - prev) / prev * 100).toFixed(1);
@@ -56,8 +68,8 @@ export default function DashboardPage() {
       <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "var(--color-surface)" }}>
         <table className="w-full">
           <thead><tr style={{ borderBottom: "1px solid var(--color-border)" }}>
-            {["Label", "Current Price", "Change", "Last Checked", "Status"].map((h) => (
-              <th key={h} className="text-left text-xs font-medium uppercase tracking-wide px-4 py-3" style={{ color: "var(--color-text-secondary)" }}>{h}</th>
+            {["Label", "Current Price", "Change", "Last Checked", "Status", ""].map((h, i) => (
+              <th key={i} className="text-left text-xs font-medium uppercase tracking-wide px-4 py-3" style={{ color: "var(--color-text-secondary)" }}>{h}</th>
             ))}
           </tr></thead>
           <tbody>
@@ -70,6 +82,15 @@ export default function DashboardPage() {
                   <td className="px-4 py-3 text-sm font-mono" style={{ color: change ? (parseFloat(change) > 0 ? "#EF4444" : "#10B981") : "var(--color-text-secondary)" }}>{change ? `${parseFloat(change) > 0 ? "+" : ""}${change}%` : "—"}</td>
                   <td className="px-4 py-3 text-sm" style={{ color: "var(--color-text-secondary)" }}>{t.last_checked || "Never"}</td>
                   <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full" style={{ backgroundColor: t.status === "active" ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)", color: t.status === "active" ? "#10B981" : "#EF4444" }}>{t.status}</span></td>
+                  <td className="px-4 py-3 text-right">
+                    <button 
+                      onClick={() => handleDelete(t.id)} 
+                      className="text-xs font-medium px-3 py-1 rounded transition-colors"
+                      style={{ backgroundColor: "rgba(239,68,68,0.1)", color: "#EF4444" }}
+                    >
+                      Eliminar
+                    </button>
+                  </td>
                 </tr>
               );
             })}

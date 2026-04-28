@@ -1,6 +1,6 @@
 "use client";
-import { useState, useCallback } from "react";
-import { uploadFile, trackEvent } from "@devforge/core";
+import { useState, useCallback, useEffect } from "react";
+import { uploadFile, trackEvent, apiClient } from "@devforge/core";
 
 interface FileItem {
   id: string;
@@ -13,6 +13,34 @@ interface FileItem {
 export default function DashboardPage() {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    const fetchFiles = async () => {
+      try {
+        const { data } = await apiClient.get<FileItem[]>("/files/list");
+        const formattedData = data.map((f: any) => ({
+          id: f.id.toString(),
+          name: f.name,
+          size: f.size,
+          status: f.status,
+          downloadUrl: f.download_url
+        }));
+        setFiles(formattedData);
+      } catch (err) {}
+    };
+    fetchFiles();
+  }, []);
+
+  const handleDelete = async (fileId: string) => {
+    if (!window.confirm("¿Estás seguro de que deseas eliminar este archivo?")) return;
+    trackEvent("feature_used", { feature_name: "delete_file" });
+    try {
+      await apiClient.delete(`/files/${fileId}`);
+      setFiles((prev) => prev.filter((f) => f.id !== fileId));
+    } catch (err) {
+      alert("Error al eliminar archivo");
+    }
+  };
 
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -88,8 +116,13 @@ export default function DashboardPage() {
                 <tr key={file.id} style={{ borderBottom: "1px solid rgba(38,38,38,0.15)" }}>
                   <td className="px-4 py-3 text-sm font-medium" style={{ color: "var(--color-text)" }}>{file.name}</td>
                   <td className="px-4 py-3 text-sm font-mono" style={{ color: "var(--color-text-secondary)" }}>{formatSize(file.size)}</td>
-                  <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full" style={{ backgroundColor: statusColors[file.status].backgroundColor, color: statusColors[file.status].color }}>{file.status}</span></td>
-                  <td className="px-4 py-3 text-right">{file.downloadUrl && <a href={file.downloadUrl} className="text-xs font-medium" style={{ color: "var(--color-accent)" }}>Download</a>}</td>
+                  <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full" style={{ backgroundColor: statusColors[file.status]?.backgroundColor || "rgba(255,255,255,0.1)", color: statusColors[file.status]?.color || "#fff" }}>{file.status}</span></td>
+                  <td className="px-4 py-3 text-right">
+                    {file.downloadUrl && <a href={file.downloadUrl} className="text-xs font-medium mr-3" style={{ color: "var(--color-accent)" }}>Download</a>}
+                    {file.status !== "uploading" && file.status !== "processing" && (
+                      <button onClick={() => handleDelete(file.id)} className="text-xs font-medium" style={{ color: "#EF4444" }}>Eliminar</button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
