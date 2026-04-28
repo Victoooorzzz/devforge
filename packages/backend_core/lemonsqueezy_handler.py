@@ -30,6 +30,9 @@ class CheckoutRequest(BaseModel):
 class CheckoutResponse(BaseModel):
     checkout_url: str
 
+class PortalResponse(BaseModel):
+    portal_url: str
+
 # --- API Interaction ---
 
 async def create_ls_checkout(user: User, variant_id: str):
@@ -85,6 +88,26 @@ async def create_checkout(
 ):
     url = await create_ls_checkout(user, body.variant_id)
     return CheckoutResponse(checkout_url=url)
+
+@ls_router.get("/portal", response_model=PortalResponse)
+async def get_portal(user: User = Depends(get_current_user)):
+    if not user.lemonsqueezy_customer_id:
+        raise HTTPException(status_code=400, detail="User has no active subscription")
+    
+    headers = {
+        "Accept": "application/vnd.api+json",
+        "Authorization": f"Bearer {settings.lemonsqueezy_api_key}"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{LS_API_URL}/customers/{user.lemonsqueezy_customer_id}", headers=headers)
+        if response.status_code != 200:
+            logger.error(f"LemonSqueezy API error: {response.text}")
+            raise HTTPException(status_code=500, detail="Failed to get customer portal")
+        
+        data = response.json()
+        portal_url = data["data"]["attributes"]["urls"]["customer_portal"]
+        return PortalResponse(portal_url=portal_url)
 
 # --- Webhook Handler ---
 

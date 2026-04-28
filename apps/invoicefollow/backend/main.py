@@ -26,13 +26,44 @@ class Invoice(SQLModel, table=True):
     reminders_sent: int = Field(default=0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+class InvoiceSettings(SQLModel, table=True):
+    __tablename__ = "invoice_settings"
+    user_id: int = Field(primary_key=True)
+    email_template: str = Field(default="Hello, your invoice is due. Please settle it soon.")
+
 class InvoiceCreate(BaseModel):
     client_name: str
     client_email: str
     amount: float
     due_date: date
 
+class InvoiceTemplateUpdate(BaseModel):
+    email_template: str
+
 invoice_router = APIRouter(prefix="/invoices", tags=["invoices"])
+settings_router = APIRouter(prefix="/settings", tags=["settings"])
+
+@settings_router.get("/invoice-template")
+async def get_invoice_template(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(InvoiceSettings).where(InvoiceSettings.user_id == user.id))
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = InvoiceSettings(user_id=user.id)
+        session.add(settings)
+        await session.flush()
+    return {"email_template": settings.email_template}
+
+@settings_router.put("/invoice-template")
+async def update_invoice_template(body: InvoiceTemplateUpdate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(InvoiceSettings).where(InvoiceSettings.user_id == user.id))
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = InvoiceSettings(user_id=user.id, email_template=body.email_template)
+    else:
+        settings.email_template = body.email_template
+    session.add(settings)
+    await session.flush()
+    return {"email_template": settings.email_template}
 
 async def send_overdue_reminders():
     """Background task specifically for Railway (Long-running process)."""
@@ -84,7 +115,7 @@ async def mark_paid(invoice_id: int, user: User = Depends(get_current_user), ses
 app = create_app(
     title="Invoice Follow-up", 
     description="Track invoices and automate payment reminders", 
-    domain_routers=[invoice_router]
+    domain_routers=[invoice_router, settings_router]
 )
 
 @app.on_event("startup")

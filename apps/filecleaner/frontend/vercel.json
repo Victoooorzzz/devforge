@@ -1,4 +1,6 @@
 {
-  "buildCommand": "next build",
-  "outputDirectory": "out"
+    "outputDirectory":  ".next",
+    "buildCommand":  "cd $OLDPWD \u0026\u0026 pnpm build --filter=filecleaner",
+    "framework":  "nextjs",
+    "installCommand":  "cd $OLDPWD \u0026\u0026 pnpm install"
 }

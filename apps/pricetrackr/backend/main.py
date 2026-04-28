@@ -22,11 +22,45 @@ class TrackedUrl(SQLModel, table=True):
     status: str = Field(default="active")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+class TrackerSettings(SQLModel, table=True):
+    __tablename__ = "tracker_settings"
+    user_id: int = Field(primary_key=True)
+    alert_email: str = Field(default="")
+    frequency: str = Field(default="24h")
+
 class TrackerCreate(BaseModel):
     url: str
     label: str
 
+class TrackerPrefsUpdate(BaseModel):
+    alert_email: str
+    frequency: str
+
 tracker_router = APIRouter(prefix="/trackers", tags=["trackers"])
+settings_router = APIRouter(prefix="/settings", tags=["settings"])
+
+@settings_router.get("/tracker-prefs")
+async def get_tracker_prefs(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(TrackerSettings).where(TrackerSettings.user_id == user.id))
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = TrackerSettings(user_id=user.id)
+        session.add(settings)
+        await session.flush()
+    return {"alert_email": settings.alert_email, "frequency": settings.frequency}
+
+@settings_router.put("/tracker-prefs")
+async def update_tracker_prefs(body: TrackerPrefsUpdate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(TrackerSettings).where(TrackerSettings.user_id == user.id))
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = TrackerSettings(user_id=user.id, alert_email=body.alert_email, frequency=body.frequency)
+    else:
+        settings.alert_email = body.alert_email
+        settings.frequency = body.frequency
+    session.add(settings)
+    await session.flush()
+    return {"alert_email": settings.alert_email, "frequency": settings.frequency}
 
 async def run_price_updates():
     """Background task to update all prices."""
@@ -80,7 +114,7 @@ async def delete_tracker(tracker_id: int, user: User = Depends(get_current_user)
 app = create_app(
     title="Price Tracker", 
     description="Monitor competitor prices and get alerts", 
-    domain_routers=[tracker_router]
+    domain_routers=[tracker_router, settings_router]
 )
 
 @app.on_event("startup")

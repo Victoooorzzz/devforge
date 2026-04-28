@@ -26,6 +26,7 @@ class User(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     email: str = Field(unique=True, index=True)
+    name: Optional[str] = Field(default=None)
     hashed_password: str
     stripe_customer_id: Optional[str] = Field(default=None, index=True)
     lemonsqueezy_customer_id: Optional[str] = Field(default=None, index=True)
@@ -57,6 +58,18 @@ class UserResponse(BaseModel):
     is_active: bool
     created_at: datetime
 
+class ProfileUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+class ProfileResponse(BaseModel):
+    id: int
+    email: str
+    name: Optional[str]
+    is_active: bool
+    has_active_subscription: bool
+    created_at: datetime
+    lemonsqueezy_customer_id: Optional[str]
 
 # --- Password Utilities ---
 
@@ -153,11 +166,42 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
     return TokenResponse(access_token=token)
 
 
-@auth_router.get("/me", response_model=UserResponse)
-async def get_me(user: User = Depends(get_current_user)):
-    return UserResponse(
+@auth_router.get("/profile", response_model=ProfileResponse)
+async def get_profile(user: User = Depends(get_current_user)):
+    return ProfileResponse(
         id=user.id,
         email=user.email,
+        name=user.name,
         is_active=user.is_active,
+        has_active_subscription=user.is_active,
         created_at=user.created_at,
+        lemonsqueezy_customer_id=user.lemonsqueezy_customer_id,
+    )
+
+@auth_router.put("/profile", response_model=ProfileResponse)
+async def update_profile(body: ProfileUpdateRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    if body.email and body.email != user.email:
+        existing = await session.execute(select(User).where(User.email == body.email))
+        if existing.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already registered",
+            )
+        user.email = body.email
+
+    if body.name is not None:
+        user.name = body.name
+
+    session.add(user)
+    await session.flush()
+    await session.refresh(user)
+
+    return ProfileResponse(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        is_active=user.is_active,
+        has_active_subscription=user.is_active,
+        created_at=user.created_at,
+        lemonsqueezy_customer_id=user.lemonsqueezy_customer_id,
     )

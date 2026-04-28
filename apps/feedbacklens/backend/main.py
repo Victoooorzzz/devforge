@@ -24,10 +24,44 @@ class FeedbackEntry(SQLModel, table=True):
     themes_json: str = Field(default="[]")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+class FeedbackSettings(SQLModel, table=True):
+    __tablename__ = "feedback_settings"
+    user_id: int = Field(primary_key=True)
+    custom_prompt: str = Field(default="")
+    negative_threshold: int = Field(default=5)
+
 class FeedbackCreate(BaseModel):
     text: str
 
+class FeedbackPrefsUpdate(BaseModel):
+    custom_prompt: str
+    negative_threshold: int
+
 feedback_router = APIRouter(prefix="/feedback", tags=["feedback"])
+settings_router = APIRouter(prefix="/settings", tags=["settings"])
+
+@settings_router.get("/feedback-prefs")
+async def get_feedback_prefs(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == user.id))
+    settings_obj = result.scalar_one_or_none()
+    if not settings_obj:
+        settings_obj = FeedbackSettings(user_id=user.id)
+        session.add(settings_obj)
+        await session.flush()
+    return {"custom_prompt": settings_obj.custom_prompt, "negative_threshold": settings_obj.negative_threshold}
+
+@settings_router.put("/feedback-prefs")
+async def update_feedback_prefs(body: FeedbackPrefsUpdate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == user.id))
+    settings_obj = result.scalar_one_or_none()
+    if not settings_obj:
+        settings_obj = FeedbackSettings(user_id=user.id, custom_prompt=body.custom_prompt, negative_threshold=body.negative_threshold)
+    else:
+        settings_obj.custom_prompt = body.custom_prompt
+        settings_obj.negative_threshold = body.negative_threshold
+    session.add(settings_obj)
+    await session.flush()
+    return {"custom_prompt": settings_obj.custom_prompt, "negative_threshold": settings_obj.negative_threshold}
 
 def _serialize(entry: FeedbackEntry) -> dict:
     return {"id": entry.id, "text": entry.text, "sentiment": entry.sentiment, "confidence": entry.confidence, "themes": json.loads(entry.themes_json), "created_at": entry.created_at.isoformat()}
@@ -71,7 +105,12 @@ async def analyze_feedback(entry_id: int, user: User = Depends(get_current_user)
         try:
             from google import genai
             client = genai.Client(api_key=settings.gemini_api_key)
-            prompt = f"""Analyze the following user feedback. Return ONLY valid JSON with this structure:
+            
+            s_res = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == user.id))
+            f_settings = s_res.scalar_one_or_none()
+            user_prompt = f_settings.custom_prompt if f_settings and f_settings.custom_prompt else "Analyze the following user feedback."
+            
+            prompt = f"""{user_prompt} Return ONLY valid JSON with this structure:
 {{"sentiment": "positive" | "negative" | "neutral", "confidence": 0.0-1.0, "themes": ["theme1", "theme2"]}}
 
 Feedback: "{entry.text}"
@@ -95,7 +134,7 @@ Feedback: "{entry.text}"
     await session.refresh(entry)
     return _serialize(entry)
 
-app = create_app(title="Feedback Analyzer", description="AI-powered sentiment analysis for user feedback", domain_routers=[feedback_router])
+app = create_app(title="Feedback Analyzer", description="AI-powered sentiment analysis for user feedback", domain_routers=[feedback_router, settings_router])
 
 if __name__ == "__main__":
     import uvicorn

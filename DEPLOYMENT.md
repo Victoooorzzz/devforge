@@ -1,6 +1,6 @@
 # 🚀 Guía de Despliegue: DevForge Monorepo (6 Dominios)
 
-Esta guía te permite desplegar toda la infraestructura usando **Vercel + Railway**.
+Esta guía te permite desplegar toda la infraestructura en menos de 30 minutos usando el flujo de **Vercel + Railway**.
 
 ---
 
@@ -18,52 +18,21 @@ Esta guía te permite desplegar toda la infraestructura usando **Vercel + Railwa
 ---
 
 ## 2. Despliegue de Frontends (Vercel)
+Deberás crear un proyecto en Vercel por cada aplicación. Gracias a la arquitectura Monorepo, Vercel compila desde la raíz:
 
-### ⚡ Deploy rápido con script (recomendado)
+1. Selecciona tu repositorio de GitHub.
+2. En **Project Settings** -> **Build & Development Settings**:
+   - **Framework Preset**: `Next.js`
+   - **Root Directory**: *(Déjalo vacío / en la raíz)*
+   - **Build Command**: `pnpm build --filter=<nombre-del-paquete>` (Ej: `pnpm build --filter=filecleaner`)
+   - **Output Directory**: `apps/<nombre-app>/frontend/.next` (Ej: `apps/filecleaner/frontend/.next`)
+   - **Install Command**: `pnpm install`
+3. En **Environment Variables**:
+   - Copia las variables de tu `.env` local (Stripe keys, API URLs, etc.).
+4. En **Domains**:
+   - Añade tu dominio oficial y sigue las instrucciones para configurar el DNS.
 
-Desde la raíz del monorepo:
-
-```powershell
-# Deploy todas las apps
-.\scripts\deploy-all.ps1
-
-# Deploy una app específica
-.\scripts\deploy-all.ps1 -AppName filecleaner
-```
-
-El script:
-1. Buildea con Turbo desde la raíz (resolviendo `@devforge/ui` y `@devforge/core`)
-2. Deploya los archivos estáticos (`out/`) de cada app a su proyecto Vercel
-
-### 🔧 Setup inicial de Vercel (una sola vez)
-
-Vincular cada proyecto desde su carpeta `frontend/`:
-
-```powershell
-cd apps/filecleaner/frontend && vercel link --project file-cleaner --yes
-cd apps/invoicefollow/frontend && vercel link --project invoice-follow --yes
-cd apps/pricetrackr/frontend && vercel link --project price-trackr --yes
-cd apps/webhookmonitor/frontend && vercel link --project webhook-monitor --yes
-cd apps/feedbacklens/frontend && vercel link --project feedback-lens --yes
-cd apps/devforge-site/frontend && vercel link --project devforge-empire --yes
-```
-
-### ⚠️ IMPORTANTE: Monorepo
-
-Todas las apps dependen de `@devforge/ui` y `@devforge/core` via `workspace:*`.
-**NO deployar desde subcarpetas individuales** — siempre buildear desde la raíz con Turbo:
-
-```bash
-pnpm build --filter=filecleaner   # Resuelve workspace deps correctamente
-```
-
-El `devforge-site` (landing page principal) también puede deployarse desde la raíz del monorepo
-usando el `vercel.json` raíz que ya está configurado:
-
-```powershell
-vercel link --project devforge-empire --yes
-vercel --prod --yes
-```
+*(Nota: También puedes usar el script `scripts/deploy-all.ps1` para desplegar todas las apps desde la línea de comandos si ya tienes los proyectos vinculados).*
 
 ---
 
@@ -73,7 +42,7 @@ Deberás crear **6 servicios** (o uno con múltiples routers) en Railway:
 1. Selecciona "New Project" -> "GitHub Repo".
 2. Railway detectará automáticamente el `Procfile` que creé en cada carpeta de backend.
 3. En cada servicio, configura las **Environment Variables**:
-   - `DATABASE_URL`: Tu URL de PostgreSQL.
+   - `DATABASE_URL`: Tu URL de PostgreSQL (puedes crear una base de datos PostgreSQL ahí mismo en Railway).
    - `STRIPE_WEBHOOK_SECRET`: El secreto que te da Stripe al configurar el webhook.
 4. Railway te dará una URL (ej: `api-filecleaner.railway.app`). Copia esta URL y ponla como `NEXT_PUBLIC_API_URL` en el frontend de Vercel correspondiente.
 
@@ -87,23 +56,21 @@ Para cada producto:
 
 ---
 
-## ✅ Resumen de Proyectos y URLs
-
-| Producto | Package Name | Vercel Project | Production URL |
-|---|---|---|---|
-| Main Site | `devforge-site` | `devforge-empire` | devforge-empire.vercel.app |
-| File Cleaner | `filecleaner` | `file-cleaner` | file-cleaner-ten.vercel.app |
-| Invoice Follow | `invoicefollow` | `invoice-follow` | invoice-follow.vercel.app |
-| Price Tracker | `pricetrackr` | `price-trackr` | price-trackr-delta.vercel.app |
-| Webhook Monitor | `webhookmonitor` | `webhook-monitor` | webhook-monitor.vercel.app |
-| Feedback Lens | `feedbacklens` | `feedback-lens` | feedback-lens-eight.vercel.app |
-
-### Backend Ports (Railway)
-| Producto | Carpeta Backend | Port |
+## ✅ Resumen de Puertos y Dominios
+| Producto | Carpeta Root (Vercel) | Backend Port (Railway) |
 |---|---|---|
-| File Cleaner | `apps/filecleaner/backend` | 8001 |
-| Invoice Follow | `apps/invoicefollow/backend` | 8002 |
-| Price Tracker | `apps/pricetrackr/backend` | 8003 |
-| Webhook Monitor | `apps/webhookmonitor/backend` | 8004 |
-| Feedback Lens | `apps/feedbacklens/backend` | 8005 |
+| Main Site | `apps/devforge-site/frontend` | (N/A) |
+| File Cleaner | `apps/filecleaner/frontend` | 8001 |
+| Invoice Follow | `apps/invoicefollow/frontend` | 8002 |
+| Price Tracker | `apps/pricetrackr/frontend` | 8003 |
+| Webhook Monitor | `apps/webhookmonitor/frontend` | 8004 |
+| Feedback Lens | `apps/feedbacklens/frontend` | 8005 |
 
+
+Producto	URL de Frontend (Vercel)	Backend Vinculado (Render)
+Empire (Main Site)	devforge-empire.vercel.app	Vinculado ✅
+Invoice Follow-up	invoice-follow.vercel.app	Vinculado ✅
+Price Tracker	price-trackr-delta.vercel.app	Vinculado ✅
+Webhook Monitor	webhook-monitor.vercel.app	Vinculado ✅
+File Cleaner	file-cleaner-ten.vercel.app	Vinculado ✅
+Feedback Analyzer	feedback-lens-eight.vercel.app	Vinculado ✅

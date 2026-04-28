@@ -69,28 +69,18 @@ Usa las versiones fijas para garantizar compatibilidad entre apps.
 ```
 
 ### `next.config.mjs`
-**Crucial:** Se debe usar `output: "export"` para facilitar el despliegue local desde Windows (evita errores de symlinks/EPERM).
+La configuración debe transpirar los paquetes compartidos del monorepo.
 ```javascript
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: ["@devforge/core", "@devforge/ui"],
-  output: "export",
   images: {
-    unoptimized: true, // Requerido para output: export
     remotePatterns: [{ protocol: "https", hostname: "images.unsplash.com" }],
   },
 };
 export default nextConfig;
 ```
-
-### `vercel.json`
-Configura el build para que Vercel sepa que es una exportación estática.
-```json
-{
-  "buildCommand": "next build",
-  "outputDirectory": "out"
-}
-```
+*(Nota: Ya no usamos `vercel.json` por app ni `output: "export"`. El despliegue se maneja desde la raíz del monorepo).*
 
 ---
 
@@ -144,25 +134,19 @@ Usa los métodos de `@devforge/core` correctamente.
 
 ---
 
-## 5. Despliegue (Estrategia Local Segura)
+## 5. Despliegue (Estrategia Monorepo en Vercel)
 
-Para evitar errores de permisos en Windows, el despliegue se hace mediante build local y subida del pre-built:
+El despliegue ya no requiere builds locales ni exportaciones estáticas. Se configura directamente en Vercel para que construya desde la raíz del monorepo:
 
-1.  **Linkear el proyecto** (solo la primera vez):
-    ```bash
-    cd apps/[nombre-app]/frontend
-    vercel link --yes
-    ```
+1. En Vercel, crea un nuevo proyecto e importa el repositorio.
+2. En **Project Settings**, configura lo siguiente:
+   * **Root Directory**: *(vacío)*
+   * **Framework Preset**: `Next.js`
+   * **Build Command**: `pnpm build --filter=[nombre-app]`
+   * **Output Directory**: `apps/[nombre-app]/frontend/.next`
+   * **Install Command**: `pnpm install`
 
-2.  **Configurar Framework** (asegúrate de que en `.vercel/project.json` el framework sea `null` para que use el `out` folder):
-    *   `"framework": null`
-    *   `"outputDirectory": "out"`
-
-3.  **Build y Deploy**:
-    ```bash
-    vercel build --prod --yes
-    vercel deploy --prebuilt --prod --yes
-    ```
+De esta forma, Vercel descargará todo el repositorio, instalará las dependencias de los paquetes compartidos y construirá únicamente la app especificada mediante Turborepo.
 
 ---
 

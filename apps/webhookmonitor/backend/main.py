@@ -3,12 +3,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "pa
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import Field, SQLModel, select
+from sqlmodel import Field, SQLModel, select, delete
 from typing import Optional
 from datetime import datetime, timezone
 import json, uuid
 
 from backend_core import create_app, get_current_user, get_session, User
+from pydantic import BaseModel
 
 class WebhookEndpoint(SQLModel, table=True):
     __tablename__ = "webhook_endpoints"
@@ -26,7 +27,38 @@ class WebhookRequest(SQLModel, table=True):
     body: str = ""
     received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+class WebhookSettings(SQLModel, table=True):
+    __tablename__ = "webhook_settings"
+    user_id: int = Field(primary_key=True)
+    forward_url: str = Field(default="")
+
+class WebhookPrefsUpdate(BaseModel):
+    forward_url: str
+
 webhook_router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+settings_router = APIRouter(prefix="/settings", tags=["settings"])
+
+@settings_router.get("/webhook-prefs")
+async def get_webhook_prefs(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == user.id))
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = WebhookSettings(user_id=user.id)
+        session.add(settings)
+        await session.flush()
+    return {"forward_url": settings.forward_url}
+
+@settings_router.put("/webhook-prefs")
+async def update_webhook_prefs(body: WebhookPrefsUpdate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == user.id))
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = WebhookSettings(user_id=user.id, forward_url=body.forward_url)
+    else:
+        settings.forward_url = body.forward_url
+    session.add(settings)
+    await session.flush()
+    return {"forward_url": settings.forward_url}
 
 @webhook_router.get("/endpoint")
 async def get_endpoint(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
@@ -48,6 +80,16 @@ async def list_requests(user: User = Depends(get_current_user), session: AsyncSe
     result = await session.execute(select(WebhookRequest).where(WebhookRequest.endpoint_id == ep.id).order_by(WebhookRequest.received_at.desc()).limit(100))
     return [{"id": r.id, "method": r.method, "path": r.path, "headers": json.loads(r.headers_json), "body": r.body, "received_at": r.received_at.isoformat()} for r in result.scalars().all()]
 
+@webhook_router.delete("/requests")
+async def delete_requests(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
+    ep = ep_result.scalar_one_or_none()
+    if not ep:
+        return {"status": "ok"}
+    await session.execute(delete(WebhookRequest).where(WebhookRequest.endpoint_id == ep.id))
+    await session.flush()
+    return {"status": "deleted"}
+
 # Public ingestion endpoint
 ingestion_router = APIRouter(tags=["ingestion"])
 
@@ -64,7 +106,7 @@ async def ingest_webhook(slug: str, request: Request, session: AsyncSession = De
     await session.flush()
     return {"status": "received", "id": req.id}
 
-app = create_app(title="Webhook Monitor", description="Receive, inspect, and replay webhooks", domain_routers=[webhook_router, ingestion_router])
+app = create_app(title="Webhook Monitor", description="Receive, inspect, and replay webhooks", domain_routers=[webhook_router, ingestion_router, settings_router])
 
 if __name__ == "__main__":
     import uvicorn
