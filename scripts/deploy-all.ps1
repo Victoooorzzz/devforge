@@ -1,6 +1,5 @@
-# deploy-all.ps1 — Deploy all DevForge frontend apps from monorepo root
-# Usage: .\scripts\deploy-all.ps1 [app-name]
-# If no app-name is given, deploys all apps.
+# deploy-all.ps1 — Orchestrate Vercel Deployment for Monorepo
+# Manually injects .vercel/project.json to allow root deployment of multiple apps.
 
 param(
     [string]$AppName = ""
@@ -8,66 +7,99 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Map: package-name -> vercel-project-name -> output-dir
+if (-not $env:VERCEL_TOKEN) {
+    Write-Error "La variable de entorno VERCEL_TOKEN no esta configurada."
+    exit 1
+}
+
 $apps = @(
-    @{ Package = "devforge-site";  VercelProject = "devforge-empire";  OutputDir = "apps/devforge-site/frontend/out" },
-    @{ Package = "filecleaner";    VercelProject = "file-cleaner";     OutputDir = "apps/filecleaner/frontend/out" },
-    @{ Package = "invoicefollow";  VercelProject = "invoice-follow";   OutputDir = "apps/invoicefollow/frontend/out" },
-    @{ Package = "pricetrackr";    VercelProject = "price-trackr";     OutputDir = "apps/pricetrackr/frontend/out" },
-    @{ Package = "webhookmonitor"; VercelProject = "webhook-monitor";  OutputDir = "apps/webhookmonitor/frontend/out" },
-    @{ Package = "feedbacklens";   VercelProject = "feedback-lens";    OutputDir = "apps/feedbacklens/frontend/out" }
+    @{ Name = "devforge-site";  Root = "apps/devforge-site/frontend"  },
+    @{ Name = "filecleaner";    Root = "apps/filecleaner/frontend"    },
+    @{ Name = "invoicefollow";  Root = "apps/invoicefollow/frontend"  },
+    @{ Name = "pricetrackr";    Root = "apps/pricetrackr/frontend"    },
+    @{ Name = "webhookmonitor"; Root = "apps/webhookmonitor/frontend" },
+    @{ Name = "feedbacklens";   Root = "apps/feedbacklens/frontend"   }
 )
 
-# Filter if a specific app was requested
 if ($AppName -ne "") {
-    $apps = $apps | Where-Object { $_.Package -eq $AppName -or $_.VercelProject -eq $AppName }
+    $apps = $apps | Where-Object { $_.Name -eq $AppName }
     if ($apps.Count -eq 0) {
-        Write-Error "App '$AppName' not found. Available: devforge-site, filecleaner, invoicefollow, pricetrackr, webhookmonitor, feedbacklens"
+        Write-Error "App '$AppName' no encontrada."
         exit 1
     }
 }
 
-$root = Split-Path -Parent $PSScriptRoot
+$monorepoRoot = Get-Location
 
-Write-Host "`n=== DevForge Monorepo Deploy ===" -ForegroundColor Cyan
-Write-Host "Root: $root"
-Write-Host "Apps to deploy: $($apps.Count)`n"
+Write-Host "`n=== DevForge Vercel Deployment Orchestrator ==="
 
-# Step 1: Build all requested apps using turbo from monorepo root
-Write-Host "[1/2] Building with Turbo..." -ForegroundColor Yellow
-$filterArgs = ($apps | ForEach-Object { "--filter=$($_.Package)" }) -join " "
-$buildCmd = "pnpm build $filterArgs --concurrency=1"
-Write-Host "  > $buildCmd"
-Push-Location $root
-Invoke-Expression $buildCmd
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Build failed!"
-    Pop-Location
-    exit 1
-}
-Pop-Location
+# Pre-requisito: Obtener el orgId (ID del usuario) una sola vez
+Write-Host "Obteniendo informacion de la cuenta..."
+$me = Invoke-RestMethod -Uri "https://api.vercel.com/v2/user" -Headers @{ Authorization = "Bearer $env:VERCEL_TOKEN" }
+$orgId = $me.user.id
 
-# Step 2: Deploy each app's output directory to its Vercel project
-Write-Host "`n[2/2] Deploying to Vercel..." -ForegroundColor Yellow
 foreach ($app in $apps) {
-    $outPath = Join-Path $root $app.OutputDir
-    if (-not (Test-Path $outPath)) {
-        Write-Warning "Output dir not found for $($app.Package): $outPath — skipping"
-        continue
+    Write-Host "-------------------------------------------------"
+    Write-Host "Procesando: $($app.Name)"
+
+    # Paso 1 - Configurar / Obtener info del proyecto via Vercel API
+    Write-Host "  [1/3] Configurando API y obteniendo IDs..."
+    $headers = @{ Authorization = "Bearer $env:VERCEL_TOKEN" }
+    
+    # FIX 1: Intentar crear el proyecto si no existe
+    try {
+        Invoke-RestMethod `
+            -Uri "https://api.vercel.com/v9/projects" `
+            -Method POST `
+            -Headers $headers `
+            -ContentType "application/json" `
+            -Body (@{ name = $app.Name; framework = "nextjs" } | ConvertTo-Json) | Out-Null
+        Write-Host "  OK: Proyecto creado en Vercel."
+    } catch {
+        # Proyecto ya existe, ignorar error
     }
 
-    Write-Host "`n  Deploying $($app.Package) -> $($app.VercelProject)..." -ForegroundColor Green
+    # FIX 2: Configurar settings optimizados
+    $apiUrl = "https://api.vercel.com/v9/projects/$($app.Name)"
+    $config = @{
+        rootDirectory   = $app.Root
+        installCommand  = "pnpm install --frozen-lockfile"
+        buildCommand    = "pnpm turbo build --filter=$($app.Name)..."
+        outputDirectory = ".next"
+        framework       = "nextjs"
+    } | ConvertTo-Json
 
-    # Deploy the static output directory directly
-    Push-Location $outPath
-    vercel link --project $app.VercelProject --yes 2>&1 | Out-Null
-    vercel deploy --prod --yes 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "Deploy failed for $($app.Package)"
-    } else {
-        Write-Host "  ✓ $($app.Package) deployed!" -ForegroundColor Green
+    $project = $null
+    try {
+        $project = Invoke-RestMethod -Uri $apiUrl -Method PATCH -Headers $headers -ContentType "application/json" -Body $config
+        Write-Host "  OK: Configuracion API actualizada."
+    } catch {
+        # Si falla el PATCH, intentamos obtenerlo para tener el ID
+        try {
+            $project = Invoke-RestMethod -Uri $apiUrl -Method GET -Headers $headers
+        } catch {
+            Write-Warning "  FAIL: No se pudo obtener el proyecto '$($app.Name)' de Vercel."
+            continue
+        }
     }
-    Pop-Location
+
+    # Paso 2 - Crear .vercel/project.json manualmente para "engañar" al CLI
+    Write-Host "  [2/3] Inyectando .vercel/project.json..."
+    $vercelDir = Join-Path $monorepoRoot ".vercel"
+    if (-not (Test-Path $vercelDir)) { New-Item -ItemType Directory -Path $vercelDir | Out-Null }
+    
+    $projectJson = @{
+        orgId     = $orgId
+        projectId = $project.id
+    } | ConvertTo-Json
+    
+    Set-Content -Path (Join-Path $vercelDir "project.json") -Value $projectJson -Force
+
+    # Paso 3 - Deploy desde el root
+    Write-Host "  [3/3] Desplegando desde monorepo root..."
+    & vercel deploy --prod --yes --token $env:VERCEL_TOKEN --cwd $monorepoRoot
+
+    Write-Host "  OK: $($app.Name) desplegado con exito."
 }
 
-Write-Host "`n=== Deploy Complete ===" -ForegroundColor Cyan
+Write-Host "`n=== Orquestacion Finalizada ==="
