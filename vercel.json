@@ -1,5 +1,6 @@
 {
   "buildCommand": "pnpm build --filter=devforge-site",
-  "outputDirectory": "apps/devforge-site/frontend/.next",
-  "installCommand": "pnpm install"
+  "outputDirectory": "apps/devforge-site/frontend/out",
+  "installCommand": "pnpm install",
+  "framework": null
 }
