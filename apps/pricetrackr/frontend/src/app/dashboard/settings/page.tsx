@@ -53,14 +53,14 @@ export default function SettingsPage() {
     trackEvent("subscription_manage_clicked");
     if (profile.has_active_subscription) {
       try {
-        const { data } = await apiClient.get("/lemonsqueezy/portal");
+        const { data } = await apiClient.get("/lemonsqueezy/portal") as { data: { portal_url: string } };
         window.open(data.portal_url, "_blank");
       } catch (err) {
         alert("Failed to open portal");
       }
     } else {
       try {
-        const { data } = await apiClient.post("/lemonsqueezy/checkout", { variant_id: "default" });
+        const { data } = await apiClient.post("/lemonsqueezy/checkout", { variant_id: "default" }) as { data: { checkout_url: string } };
         window.open(data.checkout_url, "_blank");
       } catch (err) {
         alert("Failed to start checkout");
