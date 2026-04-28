@@ -1,4 +1,6 @@
 {
-  "buildCommand": "next build",
-  "outputDirectory": ".next"
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm turbo build --filter=devforge-site...",
+  "outputDirectory": ".next",
+  "framework": "nextjs"
 }

@@ -67,6 +67,7 @@ foreach ($app in $apps) {
         buildCommand    = "pnpm turbo build --filter=$($app.Name)..."
         outputDirectory = ".next"
         framework       = "nextjs"
+        nodeVersion     = "20.x"
     } | ConvertTo-Json
 
     $project = $null
