@@ -9,14 +9,20 @@ export default function SettingsPage() {
 
   useEffect(() => {
     Promise.all([
-      apiClient.get("/auth/profile").then((r) => setProfile({
-        name: r.data.name || "",
-        email: r.data.email || "",
-        has_active_subscription: r.data.has_active_subscription
-      })),
-      apiClient.get("/settings/webhook-prefs").then((r) => setWebhookSettings({
-        forward_url: r.data.forward_url || ""
-      }))
+      apiClient.get("/auth/profile").then((r) => {
+        const data = r.data as { name: string; email: string; has_active_subscription: boolean };
+        setProfile({
+          name: data.name || "",
+          email: data.email || "",
+          has_active_subscription: data.has_active_subscription
+        });
+      }),
+      apiClient.get("/settings/webhook-prefs").then((r) => {
+        const data = r.data as { forward_url: string };
+        setWebhookSettings({
+          forward_url: data.forward_url || ""
+        });
+      })
     ]).finally(() => setLoading(false));
   }, []);
 

@@ -9,15 +9,21 @@ export default function SettingsPage() {
 
   useEffect(() => {
     Promise.all([
-      apiClient.get("/auth/profile").then((r) => setProfile({
-        name: r.data.name || "",
-        email: r.data.email || "",
-        has_active_subscription: r.data.has_active_subscription
-      })),
-      apiClient.get("/settings/feedback-prefs").then((r) => setFeedbackSettings({
-        custom_prompt: r.data.custom_prompt || "",
-        negative_threshold: r.data.negative_threshold ?? 0.5
-      }))
+      apiClient.get("/auth/profile").then((r) => {
+        const data = r.data as { name: string; email: string; has_active_subscription: boolean };
+        setProfile({
+          name: data.name || "",
+          email: data.email || "",
+          has_active_subscription: data.has_active_subscription
+        });
+      }),
+      apiClient.get("/settings/feedback-prefs").then((r) => {
+        const data = r.data as { custom_prompt: string; negative_threshold: number };
+        setFeedbackSettings({
+          custom_prompt: data.custom_prompt || "",
+          negative_threshold: data.negative_threshold ?? 0.5
+        });
+      })
     ]).finally(() => setLoading(false));
   }, []);
 

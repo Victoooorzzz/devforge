@@ -9,15 +9,21 @@ export default function SettingsPage() {
 
   useEffect(() => {
     Promise.all([
-      apiClient.get("/auth/profile").then((r) => setProfile({
-        name: r.data.name || "",
-        email: r.data.email || "",
-        has_active_subscription: r.data.has_active_subscription
-      })),
-      apiClient.get("/settings/tracker-prefs").then((r) => setTrackerSettings({
-        alert_email: r.data.alert_email || "",
-        frequency: r.data.frequency || "24h"
-      }))
+      apiClient.get("/auth/profile").then((r) => {
+        const data = r.data as { name: string; email: string; has_active_subscription: boolean };
+        setProfile({
+          name: data.name || "",
+          email: data.email || "",
+          has_active_subscription: data.has_active_subscription
+        });
+      }),
+      apiClient.get("/settings/tracker-prefs").then((r) => {
+        const data = r.data as { alert_email: string; frequency: string };
+        setTrackerSettings({
+          alert_email: data.alert_email || "",
+          frequency: data.frequency || "24h"
+        });
+      })
     ]).finally(() => setLoading(false));
   }, []);
 

@@ -7,11 +7,14 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiClient.get("/auth/profile").then((r) => setProfile({
-      name: r.data.name || "",
-      email: r.data.email || "",
-      has_active_subscription: r.data.has_active_subscription
-    })).finally(() => setLoading(false));
+    apiClient.get("/auth/profile").then((r) => {
+      const data = r.data as { name: string; email: string; has_active_subscription: boolean };
+      setProfile({
+        name: data.name || "",
+        email: data.email || "",
+        has_active_subscription: data.has_active_subscription
+      });
+    }).finally(() => setLoading(false));
   }, []);
 
   const handleProfileSave = async (e: React.FormEvent) => {
