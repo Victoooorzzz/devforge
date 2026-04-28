@@ -36,7 +36,7 @@ Write-Host "Apps to deploy: $($apps.Count)`n"
 # Step 1: Build all requested apps using turbo from monorepo root
 Write-Host "[1/2] Building with Turbo..." -ForegroundColor Yellow
 $filterArgs = ($apps | ForEach-Object { "--filter=$($_.Package)" }) -join " "
-$buildCmd = "pnpm build $filterArgs"
+$buildCmd = "pnpm build $filterArgs --concurrency=1"
 Write-Host "  > $buildCmd"
 Push-Location $root
 Invoke-Expression $buildCmd
