@@ -119,58 +119,50 @@ export default function LandingPage() {
 
       {/* Pricing */}
       <section id="pricing" className="py-24 px-6 border-t border-white/5 bg-white/[0.02]">
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-3xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-5xl font-bold mb-4">Pricing built for developers.</h2>
             <p className="text-neutral-400">Everything you need to ship stable integrations.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* Starter */}
-            <div className="glass p-10 rounded-3xl border border-white/10 flex flex-col">
+          <div className="max-w-lg mx-auto">
+            {/* Pro Plan - Single Option */}
+            <div className="glass p-10 rounded-3xl border-2 border-accent relative flex flex-col overflow-hidden shadow-[0_0_50px_rgba(130,19,70,0.2)]">
+              <div className="absolute top-0 right-0 bg-accent text-black text-[10px] font-bold px-4 py-1.5 uppercase tracking-widest rounded-bl-xl">
+                Standard Access
+              </div>
               <div className="mb-8">
-                <h3 className="text-xl font-bold mb-2">Starter</h3>
+                <h3 className="text-2xl font-bold mb-2">Developer Pro</h3>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-bold">$9.99</span>
+                  <span className="text-5xl font-bold">$9.99</span>
                   <span className="text-neutral-400">/mo</span>
                 </div>
-                <p className="text-sm text-neutral-400 mt-4">Perfect for individual developers and side projects.</p>
+                <p className="text-sm text-neutral-400 mt-4 leading-relaxed">
+                  Deep inspection and unlimited replay capabilities. Includes a 7-day free trial.
+                </p>
               </div>
-              <ul className="space-y-4 mb-10 flex-1">
-                {["100,000 Requests/mo", "7-Day Retention", "Basic Replay", "1 Endpoint", "Standard Support"].map((item) => (
+              <ul className="space-y-4 mb-10">
+                {[
+                  "Unlimited Webhook Requests",
+                  "90-Day Payload Retention",
+                  "Advanced Replay Scripts",
+                  "Unlimited Endpoints",
+                  "Team Collaboration Tools",
+                  "Priority Developer Support"
+                ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">
-                    <Check size={16} className="text-accent" /> {item}
+                    <Check size={18} className="text-accent" /> {item}
                   </li>
                 ))}
               </ul>
-              <Link href="/register?plan=starter" className="btn-primary py-4 text-center">
-                Start 7-Day Free Trial
-              </Link>
-            </div>
-
-            {/* Pro */}
-            <div className="glass p-10 rounded-3xl border-2 border-accent/50 relative flex flex-col overflow-hidden">
-              <div className="absolute top-0 right-0 bg-accent text-black text-[10px] font-bold px-3 py-1 uppercase tracking-widest rounded-bl-xl">
-                Most Popular
+              <div className="flex flex-col gap-4">
+                <Link href="/register" className="btn-primary py-4 text-center font-bold text-lg">
+                  Start 7-Day Free Trial
+                </Link>
+                <p className="text-[10px] text-center text-neutral-500 uppercase tracking-widest">
+                  Cancel anytime during trial • No hidden fees
+                </p>
               </div>
-              <div className="mb-8">
-                <h3 className="text-xl font-bold mb-2">Pro</h3>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-bold">$9.99</span>
-                  <span className="text-neutral-400">/mo</span>
-                </div>
-                <p className="text-sm text-neutral-400 mt-4">Advanced monitoring for professional software teams.</p>
-              </div>
-              <ul className="space-y-4 mb-10 flex-1">
-                {["Unlimited Requests", "90-Day Retention", "Advanced Replay Scripts", "Unlimited Endpoints", "Team Collaboration", "Priority Support"].map((item) => (
-                  <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">
-                    <Check size={16} className="text-accent" /> {item}
-                  </li>
-                ))}
-              </ul>
-              <Link href="/register?plan=pro" className="btn-primary py-4 text-center">
-                Get Started with Pro
-              </Link>
             </div>
           </div>
         </div>

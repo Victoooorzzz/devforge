@@ -5,6 +5,7 @@ import hashlib
 import logging
 import json
 import httpx
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -169,12 +170,24 @@ async def _activate_user(user_id: str, attributes: dict, session: AsyncSession, 
     if user:
         user.is_active = True
         user.lemonsqueezy_customer_id = str(attributes.get("customer_id"))
-        # If converting from trial to paid, clear the trial end date
+        
+        # Sync trial end date if provided by LS
+        trial_end = attributes.get("trial_ends_at")
+        if trial_end:
+            # LS format is usually ISO8601 string: 2023-11-20T12:00:00.000000Z
+            try:
+                user.trial_ends_at = datetime.fromisoformat(trial_end.replace("Z", "+00:00"))
+            except Exception as e:
+                logger.error(f"Error parsing trial_ends_at: {e}")
+        
+        # If explicitly not a trial anymore (e.g. converted to paid), we can clear it 
+        # or just let it expire. Clearing it is cleaner.
         if not is_trial:
             user.trial_ends_at = None
+            
         session.add(user)
         await session.flush()
-        logger.info(f"Activated user {user.email} (trial={is_trial})")
+        logger.info(f"Activated user {user.email} (trial={is_trial}, ends={user.trial_ends_at})")
 
 async def _deactivate_user(user_id: str, session: AsyncSession):
     if not user_id:

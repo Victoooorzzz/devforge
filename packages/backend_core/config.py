@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     app_name: str = "DevForge Product"
     debug: bool = False
     frontend_url: str = "http://localhost:3000"
+    allowed_origins: str = "http://localhost:3000,http://localhost:3001"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 

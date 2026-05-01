@@ -161,7 +161,7 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
     user = User(
         email=body.email,
         hashed_password=hash_password(body.password),
-        trial_ends_at=datetime.now(timezone.utc) + timedelta(days=7),
+        is_active=False,
     )
     session.add(user)
     await session.flush()

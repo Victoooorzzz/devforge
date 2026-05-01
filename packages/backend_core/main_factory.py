@@ -49,7 +49,7 @@ def create_app(
     # CORS
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.frontend_url],
+        allow_origins=settings.allowed_origins.split(","),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

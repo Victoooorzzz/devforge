@@ -155,41 +155,54 @@ export default function LandingPage() {
       </section>
 
       {/* Pricing */}
-      <section className="section-container pb-24">
-        <h2 className="heading-section text-3xl text-center mb-3">Simple pricing</h2>
-        <p className="text-center mb-12" style={{ color: "var(--color-text-secondary)" }}>
-          Start free. Upgrade when you need more.
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto">
-          {PLANS.map((plan) => (
-            <div
-              key={plan.name}
-              className="surface-card p-8 flex flex-col"
-              style={plan.highlighted ? { border: `1px solid var(--color-accent)`, borderRadius: "var(--radius-lg)" } : { border: "1px solid var(--color-border)", borderRadius: "var(--radius-lg)" }}
-            >
-              {plan.highlighted && (
-                <div className="badge mb-4 self-start">Most popular</div>
-              )}
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-1" style={{ color: "var(--color-text)" }}>{plan.name}</h3>
-                <p className="text-sm mb-4" style={{ color: "var(--color-text-secondary)" }}>{plan.description}</p>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-bold" style={{ color: "var(--color-text)" }}>{plan.price}</span>
-                  <span className="text-sm" style={{ color: "var(--color-text-secondary)" }}>/{plan.period}</span>
-                </div>
+      <section id="pricing" className="py-24 px-6 border-t border-white/5 bg-white/[0.02]">
+        <div className="max-w-3xl mx-auto">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-5xl font-bold mb-4">Simple, powerful pricing.</h2>
+            <p className="text-neutral-400">Everything you need to understand your user feedback deeply.</p>
+          </div>
+
+          <div className="max-w-lg mx-auto">
+            {/* Pro Plan - Single Option */}
+            <div className="glass p-10 rounded-3xl border-2 border-[#821346] relative flex flex-col overflow-hidden shadow-[0_0_50px_rgba(130,19,70,0.2)]">
+              <div className="absolute top-0 right-0 bg-[#821346] text-white text-[10px] font-bold px-4 py-1.5 uppercase tracking-widest rounded-bl-xl">
+                Unlimited Analysis
               </div>
-              <ul className="space-y-3 mb-8 flex-1">
-                {plan.features.map((feat) => (
-                  <li key={feat} className="flex items-center gap-2 text-sm" style={{ color: "var(--color-text-secondary)" }}>
-                    <span style={{ color: "var(--color-accent)" }}>✓</span> {feat}
+              <div className="mb-8">
+                <h3 className="text-2xl font-bold mb-2">Lens Pro</h3>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-5xl font-bold">$9.99</span>
+                  <span className="text-neutral-400">/mo</span>
+                </div>
+                <p className="text-sm text-neutral-400 mt-4 leading-relaxed">
+                  Deep sentiment analysis and theme clustering. Includes a 7-day free trial.
+                </p>
+              </div>
+              <ul className="space-y-4 mb-10">
+                {[
+                  "Unlimited Feedback Analyses",
+                  "Advanced Sentiment Detection",
+                  "Theme & Pattern Clustering",
+                  "Full Dashboard Access",
+                  "REST API Integration",
+                  "Priority AI Processing",
+                  "Priority 24/7 Support"
+                ].map((item) => (
+                  <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">
+                    <Zap size={16} className="text-[#821346]" /> {item}
                   </li>
                 ))}
               </ul>
-              <Link href={plan.href} className={plan.highlighted ? "btn-primary text-center" : "btn-secondary text-center"}>
-                {plan.cta}
-              </Link>
+              <div className="flex flex-col gap-4">
+                <Link href="/register" className="bg-[#821346] text-white py-4 text-center font-bold text-lg hover:bg-[#821346]/90 transition-colors uppercase tracking-wider rounded-sm">
+                  Start 7-Day Free Trial
+                </Link>
+                <p className="text-[10px] text-center text-neutral-500 uppercase tracking-widest">
+                  Cancel anytime during trial • No hidden fees
+                </p>
+              </div>
             </div>
-          ))}
+          </div>
         </div>
       </section>
 
