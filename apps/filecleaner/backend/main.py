@@ -11,6 +11,7 @@ import pandas as pd
 import io
 import boto3
 
+from fastapi.concurrency import run_in_threadpool
 from backend_core import create_app, get_current_user, get_session, User
 
 # --- Models ---
@@ -52,21 +53,25 @@ async def upload_file(
 
     is_csv = record.original_name.lower().endswith('.csv')
     try:
-        if is_csv:
-            df = pd.read_csv(io.BytesIO(content))
-        else:
-            df = pd.read_excel(io.BytesIO(content))
+        def process_dataframe(file_content: bytes, is_csv_format: bool):
+            if is_csv_format:
+                df = pd.read_csv(io.BytesIO(file_content))
+            else:
+                df = pd.read_excel(io.BytesIO(file_content))
+                
+            df.dropna(how='all', inplace=True)
+            df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
+            df.drop_duplicates(inplace=True)
             
-        df.dropna(how='all', inplace=True)
-        df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
-        df.drop_duplicates(inplace=True)
-        
-        out_buf = io.BytesIO()
-        if is_csv:
-            df.to_csv(out_buf, index=False)
-        else:
-            df.to_excel(out_buf, index=False)
-        out_buf.seek(0)
+            buf = io.BytesIO()
+            if is_csv_format:
+                df.to_csv(buf, index=False)
+            else:
+                df.to_excel(buf, index=False)
+            buf.seek(0)
+            return buf
+
+        out_buf = await run_in_threadpool(process_dataframe, content, is_csv)
         
         bucket_name = os.getenv("R2_BUCKET_NAME")
         if bucket_name:

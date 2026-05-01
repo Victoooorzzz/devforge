@@ -5,7 +5,7 @@ const products: ProductInfo[] = [
   {
     name: "File Cleaner",
     tagline: "Upload, process, and clean your files in seconds",
-    domain: "file-cleaner-ten.vercel.app",
+    domain: "filecleaner.devforgeapp.pro",
     accentColor: "#F59E0B",
     price: 9,
     status: "live",
@@ -13,7 +13,7 @@ const products: ProductInfo[] = [
   {
     name: "Invoice Follow-up",
     tagline: "Track invoices and automate payment reminders",
-    domain: "invoice-follow.vercel.app",
+    domain: "invoicefollow.devforgeapp.pro",
     accentColor: "#10B981",
     price: 12,
     status: "live",
@@ -21,7 +21,7 @@ const products: ProductInfo[] = [
   {
     name: "Price Tracker",
     tagline: "Monitor competitor prices and get instant alerts",
-    domain: "price-trackr-delta.vercel.app",
+    domain: "pricetrackr.devforgeapp.pro",
     accentColor: "#EF4444",
     price: 15,
     status: "live",
@@ -29,7 +29,7 @@ const products: ProductInfo[] = [
   {
     name: "Webhook Monitor",
     tagline: "Receive, inspect, and replay webhooks in real time",
-    domain: "webhook-monitor.vercel.app",
+    domain: "webhookmonitor.devforgeapp.pro",
     accentColor: "#6366F1",
     price: 19,
     status: "live",
@@ -37,7 +37,7 @@ const products: ProductInfo[] = [
   {
     name: "Feedback Analyzer",
     tagline: "Collect feedback and get AI-powered sentiment analysis",
-    domain: "feedback-lens-eight.vercel.app",
+    domain: "feedbacklens.devforgeapp.pro",
     accentColor: "#8B5CF6",
     price: 19,
     status: "live",
@@ -46,7 +46,7 @@ const products: ProductInfo[] = [
 
 export default function HomePage() {
   return (
-    <Layout productName="DevForge" productDomain="devforge.io" navLinks={[{ label: "Products", href: "#products" }]} ctaText="Explore" ctaHref="#products">
+    <Layout productName="DevForge" productDomain="devforgeapp.pro" navLinks={[{ label: "Products", href: "#products" }]} ctaText="Explore" ctaHref="#products">
       <LandingHero
         badge="5 Products. 1 Vision."
         headline="Indie SaaS Tools for Developers & Freelancers"

@@ -32,7 +32,20 @@ class User(SQLModel, table=True):
     lemonsqueezy_customer_id: Optional[str] = Field(default=None, index=True)
 
     is_active: bool = Field(default=False)
+    trial_ends_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def is_on_trial(self) -> bool:
+        """True if the user has an active free trial (not yet expired)."""
+        if self.trial_ends_at is None:
+            return False
+        return datetime.now(timezone.utc) < self.trial_ends_at
+
+    @property
+    def has_access(self) -> bool:
+        """True if the user has a paid subscription OR an active trial."""
+        return self.is_active or self.is_on_trial
 
 
 # --- Schemas ---
@@ -56,6 +69,9 @@ class UserResponse(BaseModel):
     id: int
     email: str
     is_active: bool
+    is_on_trial: bool
+    has_access: bool
+    trial_ends_at: Optional[datetime]
     created_at: datetime
 
 class ProfileUpdateRequest(BaseModel):
@@ -67,7 +83,10 @@ class ProfileResponse(BaseModel):
     email: str
     name: Optional[str]
     is_active: bool
+    is_on_trial: bool
+    has_access: bool
     has_active_subscription: bool
+    trial_ends_at: Optional[datetime]
     created_at: datetime
     lemonsqueezy_customer_id: Optional[str]
 
@@ -142,6 +161,7 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
     user = User(
         email=body.email,
         hashed_password=hash_password(body.password),
+        trial_ends_at=datetime.now(timezone.utc) + timedelta(days=7),
     )
     session.add(user)
     await session.flush()
@@ -173,7 +193,10 @@ async def get_profile(user: User = Depends(get_current_user)):
         email=user.email,
         name=user.name,
         is_active=user.is_active,
+        is_on_trial=user.is_on_trial,
+        has_access=user.has_access,
         has_active_subscription=user.is_active,
+        trial_ends_at=user.trial_ends_at,
         created_at=user.created_at,
         lemonsqueezy_customer_id=user.lemonsqueezy_customer_id,
     )
@@ -201,7 +224,10 @@ async def update_profile(body: ProfileUpdateRequest, user: User = Depends(get_cu
         email=user.email,
         name=user.name,
         is_active=user.is_active,
+        is_on_trial=user.is_on_trial,
+        has_access=user.has_access,
         has_active_subscription=user.is_active,
+        trial_ends_at=user.trial_ends_at,
         created_at=user.created_at,
         lemonsqueezy_customer_id=user.lemonsqueezy_customer_id,
     )

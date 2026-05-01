@@ -95,7 +95,7 @@ export function generateSoftwareAppJsonLd(config: {
     creator: {
       "@type": "Organization",
       name: "DevForge",
-      url: "https://devforge.io",
+      url: "https://devforgeapp.pro",
     },
   };
 }
@@ -105,7 +105,7 @@ export function generateOrganizationJsonLd(): Record<string, unknown> {
     "@context": "https://schema.org",
     "@type": "Organization",
     name: "DevForge",
-    url: "https://devforge.io",
+    url: "https://devforgeapp.pro",
     description: "Indie SaaS Tools for Developers and Freelancers",
     sameAs: [],
   };

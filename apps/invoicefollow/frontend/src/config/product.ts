@@ -1,8 +1,8 @@
 export const product = {
   name: "Invoice Follow-up",
   tagline: "Track invoices and automate payment reminders",
-  domain: "invoicefollow.io",
-  url: "https://invoicefollow.io",
+  domain: "invoicefollow.devforgeapp.pro",
+  url: "https://invoicefollow.devforgeapp.pro",
   accentColor: "#10B981",
   keyword: "invoice follow up tool",
   seoTitle: "Invoice Follow-up — Automated Payment Reminders | DevForge",
@@ -44,5 +44,5 @@ export const product = {
     { label: "Invoices", href: "/dashboard" },
     { label: "Settings", href: "/dashboard/settings" },
   ],
-  plausibleDomain: "invoicefollow.io",
+  plausibleDomain: "invoicefollow.devforgeapp.pro",
 } as const;

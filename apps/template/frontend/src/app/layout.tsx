@@ -68,7 +68,7 @@ export default function RootLayout({
               creator: {
                 "@type": "Organization",
                 name: "DevForge",
-                url: "https://devforge.io",
+                url: "https://devforgeapp.pro",
               },
             }),
           }}

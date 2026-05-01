@@ -1,8 +1,8 @@
 export const product = {
   name: "Price Tracker",
   tagline: "Monitor competitor prices and get instant alerts",
-  domain: "pricetrackr.io",
-  url: "https://pricetrackr.io",
+  domain: "pricetrackr.devforgeapp.pro",
+  url: "https://pricetrackr.devforgeapp.pro",
   accentColor: "#EF4444",
   keyword: "price tracker tool",
   seoTitle: "Price Tracker — Monitor Competitor Prices & Get Alerts | DevForge",
@@ -44,5 +44,5 @@ export const product = {
     { label: "Trackers", href: "/dashboard" },
     { label: "Settings", href: "/dashboard/settings" },
   ],
-  plausibleDomain: "pricetrackr.io",
+  plausibleDomain: "pricetrackr.devforgeapp.pro",
 } as const;

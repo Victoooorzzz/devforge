@@ -79,7 +79,7 @@ export function Layout({
 
             <div className="flex items-center gap-6">
               <a
-                href="https://devforge.io"
+                href="https://devforgeapp.pro"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm transition-colors duration-200 hover:opacity-80"

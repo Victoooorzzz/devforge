@@ -66,6 +66,11 @@ async def update_feedback_prefs(body: FeedbackPrefsUpdate, user: User = Depends(
 def _serialize(entry: FeedbackEntry) -> dict:
     return {"id": entry.id, "text": entry.text, "sentiment": entry.sentiment, "confidence": entry.confidence, "themes": json.loads(entry.themes_json), "created_at": entry.created_at.isoformat()}
 
+class FeedbackAnalysis(BaseModel):
+    sentiment: str
+    confidence: float
+    themes: List[str]
+
 @feedback_router.post("")
 async def create_feedback(body: FeedbackCreate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     if not user.is_active:
@@ -110,19 +115,23 @@ async def analyze_feedback(entry_id: int, user: User = Depends(get_current_user)
             f_settings = s_res.scalar_one_or_none()
             user_prompt = f_settings.custom_prompt if f_settings and f_settings.custom_prompt else "Analyze the following user feedback."
             
-            prompt = f"""{user_prompt} Return ONLY valid JSON with this structure:
-{{"sentiment": "positive" | "negative" | "neutral", "confidence": 0.0-1.0, "themes": ["theme1", "theme2"]}}
-
+            prompt = f"""{user_prompt}
+            
 Feedback: "{entry.text}"
 """
-            response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-            text = response.text.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-            analysis = json.loads(text)
-            entry.sentiment = analysis.get("sentiment", "neutral")
-            entry.confidence = float(analysis.get("confidence", 0.5))
-            entry.themes_json = json.dumps(analysis.get("themes", []))
+            response = client.models.generate_content(
+                model="gemini-2.0-flash", 
+                contents=prompt,
+                config={
+                    'response_mime_type': 'application/json',
+                    'response_schema': FeedbackAnalysis,
+                }
+            )
+            
+            analysis = response.parsed
+            entry.sentiment = analysis.sentiment
+            entry.confidence = analysis.confidence
+            entry.themes_json = json.dumps(analysis.themes)
         except Exception as exc:
             logger.error("Gemini analysis failed: %s", exc)
             entry.sentiment = "neutral"

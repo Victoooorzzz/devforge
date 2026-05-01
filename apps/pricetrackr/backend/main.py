@@ -7,8 +7,13 @@ from sqlmodel import Field, SQLModel, select
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone
+import asyncio
+import logging
 
 from backend_core import create_app, get_current_user, get_session, User, scraper
+from backend_core.email_service import send_email
+
+logger = logging.getLogger(__name__)
 
 class TrackedUrl(SQLModel, table=True):
     __tablename__ = "tracked_urls"
@@ -63,18 +68,46 @@ async def update_tracker_prefs(body: TrackerPrefsUpdate, user: User = Depends(ge
     return {"alert_email": settings.alert_email, "frequency": settings.frequency}
 
 async def run_price_updates():
-    """Background task to update all prices."""
+    """Background task to update all prices safely and send alerts."""
     from backend_core.database import SessionLocal
     async with SessionLocal() as session:
         result = await session.execute(select(TrackedUrl).where(TrackedUrl.status == "active"))
         trackers = result.scalars().all()
         for t in trackers:
-            new_price = await scraper.fetch_price(t.url)
-            if new_price and new_price != t.current_price:
-                t.previous_price = t.current_price
-                t.current_price = new_price
-                t.last_checked = datetime.now(timezone.utc)
-                session.add(t)
+            try:
+                new_price = await scraper.fetch_price(t.url)
+
+                if new_price and new_price != t.current_price:
+                    t.previous_price = t.current_price
+                    t.current_price = new_price
+                    t.last_checked = datetime.now(timezone.utc)
+                    session.add(t)
+
+                    # Send price-change alert if user configured an email
+                    settings_req = await session.execute(
+                        select(TrackerSettings).where(TrackerSettings.user_id == t.user_id)
+                    )
+                    user_settings = settings_req.scalar_one_or_none()
+
+                    if user_settings and user_settings.alert_email:
+                        direction = "dropped" if new_price < (t.previous_price or 0) else "changed"
+                        await send_email(
+                            to_email=user_settings.alert_email,
+                            subject=f"Price Alert: {t.label} has {direction}!",
+                            content=(
+                                f"The price of {t.label} has {direction} "
+                                f"from ${t.previous_price:,.2f} to ${t.current_price:,.2f}.\n\n"
+                                f"Check it out: {t.url}"
+                            )
+                        )
+                        logger.info(f"Alert sent to {user_settings.alert_email} for {t.label}")
+
+            except Exception as e:
+                logger.error(f"Error scraping {t.url}: {e}")
+
+            # Anti-ban: mandatory pause between requests
+            await asyncio.sleep(3)
+
         await session.commit()
 
 @tracker_router.post("")

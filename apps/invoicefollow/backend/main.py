@@ -24,12 +24,13 @@ class Invoice(SQLModel, table=True):
     due_date: date
     status: str = Field(default="pending")
     reminders_sent: int = Field(default=0)
+    last_reminder_date: Optional[date] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class InvoiceSettings(SQLModel, table=True):
     __tablename__ = "invoice_settings"
     user_id: int = Field(primary_key=True)
-    email_template: str = Field(default="Hello, your invoice is due. Please settle it soon.")
+    email_template: str = Field(default="Hello {client_name}, your invoice for {amount} is past due. Please settle it soon.")
 
 class InvoiceCreate(BaseModel):
     client_name: str
@@ -68,6 +69,7 @@ async def update_invoice_template(body: InvoiceTemplateUpdate, user: User = Depe
 async def send_overdue_reminders():
     """Background task specifically for Railway (Long-running process)."""
     from backend_core.database import SessionLocal
+    from datetime import timedelta
     async with SessionLocal() as session:
         today = date.today()
         # Find pending invoices past due date
@@ -76,13 +78,29 @@ async def send_overdue_reminders():
         )
         overdue_list = result.scalars().all()
         for inv in overdue_list:
+            # Anti-Spam: Only send if never sent or at least 3 days passed
+            if inv.last_reminder_date and (today - inv.last_reminder_date).days < 3:
+                continue
+
+            # Get user custom template
+            settings_req = await session.execute(
+                select(InvoiceSettings).where(InvoiceSettings.user_id == inv.user_id)
+            )
+            user_settings = settings_req.scalar_one_or_none()
+            
+            raw_template = user_settings.email_template if user_settings else "Hello {client_name}, your invoice for {amount} is past due. Please settle it soon."
+            
+            # Personalize template
+            final_content = raw_template.replace("{amount}", f"${inv.amount:,.2f}").replace("{client_name}", inv.client_name)
+
             logger.info(f"Sending reminder for invoice {inv.id} to {inv.client_email}")
             await send_email(
                 to_email=inv.client_email,
                 subject=f"Action Required: Overdue Invoice for {inv.client_name}",
-                content=f"Hello, your invoice for {inv.amount} is past due. Please settle it soon."
+                content=final_content
             )
             inv.reminders_sent += 1
+            inv.last_reminder_date = today
             session.add(inv)
         await session.commit()
 

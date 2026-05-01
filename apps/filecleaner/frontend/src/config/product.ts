@@ -1,8 +1,8 @@
 export const product = {
   name: "File Cleaner",
   tagline: "Upload, process, and clean your files in seconds",
-  domain: "filecleaner.io",
-  url: "https://filecleaner.io",
+  domain: "filecleaner.devforgeapp.pro",
+  url: "https://filecleaner.devforgeapp.pro",
   accentColor: "#F59E0B",
   keyword: "file cleaner tool",
   seoTitle: "File Cleaner — Upload, Process & Clean Files Instantly | DevForge",
@@ -48,5 +48,5 @@ export const product = {
     { label: "Dashboard", href: "/dashboard" },
     { label: "Settings", href: "/dashboard/settings" },
   ],
-  plausibleDomain: "filecleaner.io",
+  plausibleDomain: "filecleaner.devforgeapp.pro",
 } as const;

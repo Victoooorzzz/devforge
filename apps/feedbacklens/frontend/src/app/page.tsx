@@ -120,7 +120,7 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="border-t py-8" style={{ borderColor: "var(--color-border)" }}>
         <div className="section-container flex items-center justify-between text-sm" style={{ color: "var(--color-text-secondary)" }}>
-          <span>© 2025 FeedbackLens · Part of <a href="https://devforge.io" className="underline">DevForge</a></span>
+          <span>© 2025 FeedbackLens · Part of <a href="https://devforgeapp.pro" className="underline">DevForge</a></span>
           <div className="flex gap-6">
             <Link href="/login">Sign in</Link>
             <Link href="/register">Register</Link>

@@ -1,8 +1,8 @@
 export const product = {
   name: "Feedback Analyzer",
   tagline: "Collect feedback and get AI-powered sentiment analysis",
-  domain: "feedbacklens.io",
-  url: "https://feedbacklens.io",
+  domain: "feedbacklens.devforgeapp.pro",
+  url: "https://feedbacklens.devforgeapp.pro",
   accentColor: "#8B5CF6",
   keyword: "feedback analyzer AI",
   seoTitle: "Feedback Analyzer — AI Sentiment Analysis for User Feedback | DevForge",
@@ -44,5 +44,5 @@ export const product = {
     { label: "Feedback", href: "/dashboard" },
     { label: "Settings", href: "/dashboard/settings" },
   ],
-  plausibleDomain: "feedbacklens.io",
+  plausibleDomain: "feedbacklens.devforgeapp.pro",
 } as const;

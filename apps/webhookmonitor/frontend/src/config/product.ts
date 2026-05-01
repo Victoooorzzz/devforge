@@ -1,8 +1,8 @@
 export const product = {
   name: "Webhook Monitor",
   tagline: "Receive, inspect, and replay webhooks in real time",
-  domain: "webhookmonitor.io",
-  url: "https://webhookmonitor.io",
+  domain: "webhookmonitor.devforgeapp.pro",
+  url: "https://webhookmonitor.devforgeapp.pro",
   accentColor: "#6366F1",
   keyword: "webhook monitor tool",
   seoTitle: "Webhook Monitor — Inspect & Replay Webhooks in Real Time | DevForge",
@@ -44,5 +44,5 @@ export const product = {
     { label: "Requests", href: "/dashboard" },
     { label: "Settings", href: "/dashboard/settings" },
   ],
-  plausibleDomain: "webhookmonitor.io",
+  plausibleDomain: "webhookmonitor.devforgeapp.pro",
 } as const;
