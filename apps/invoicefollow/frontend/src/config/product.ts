@@ -26,7 +26,7 @@ export const product = {
     planName: "Pro",
     price: 9.99,
     description: "Unlimited invoices & reminders",
-    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_INVOICEFOLLOW || "",
+    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID || process.env.NEXT_PUBLIC_LS_VARIANT_ID_INVOICEFOLLOW || "",
     features: [
       { text: "Unlimited invoices", included: true },
       { text: "Automated email reminders", included: true },

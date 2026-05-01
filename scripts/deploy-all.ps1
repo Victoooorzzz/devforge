@@ -99,7 +99,8 @@ foreach ($app in $apps) {
     }
 
     # Paso 2 - Crear .vercel/project.json manualmente para "engañar" al CLI
-    Write-Host "  [2/3] Inyectando .vercel/project.json..."
+    # MOVEMOS ESTO ANTES de inyectar variables para que el CLI sepa a que proyecto referirse
+    Write-Host "  [1.5/3] Inyectando .vercel/project.json..."
     $vercelDir = Join-Path $monorepoRoot ".vercel"
     if (-not (Test-Path $vercelDir)) { New-Item -ItemType Directory -Path $vercelDir | Out-Null }
     
@@ -109,6 +110,32 @@ foreach ($app in $apps) {
     } | ConvertTo-Json
     
     Set-Content -Path (Join-Path $vercelDir "project.json") -Value $projectJson -Force
+
+    # Paso 1.8 - Inyectar variables de entorno criticas via CLI
+    Write-Host "  [1.8/3] Inyectando variables de entorno..."
+    $variantKey = "NEXT_PUBLIC_LS_VARIANT_ID_$($app.Name.ToUpper())"
+    $variantValue = Get-ChildItem Env: | Where-Object { $_.Name -eq $variantKey } | Select-Object -ExpandProperty Value
+    
+    # Temporarily allow errors (Vercel CLI writes progress to stderr)
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
+    if ($env:NEXT_PUBLIC_API_URL) {
+        Write-Host "    - Sincronizando NEXT_PUBLIC_API_URL..."
+        & vercel env rm NEXT_PUBLIC_API_URL production --token $env:VERCEL_TOKEN --yes --cwd $monorepoRoot 2>$null | Out-Null
+        & vercel env add NEXT_PUBLIC_API_URL production "$($env:NEXT_PUBLIC_API_URL)" --token $env:VERCEL_TOKEN --cwd $monorepoRoot 2>$null | Out-Null
+    }
+
+    if ($variantValue) {
+        Write-Host "    - Sincronizando LS Variant ID ($variantKey)..."
+        & vercel env rm NEXT_PUBLIC_LS_VARIANT_ID production --token $env:VERCEL_TOKEN --yes --cwd $monorepoRoot 2>$null | Out-Null
+        & vercel env add NEXT_PUBLIC_LS_VARIANT_ID production "$variantValue" --token $env:VERCEL_TOKEN --cwd $monorepoRoot 2>$null | Out-Null
+        
+        & vercel env rm $variantKey production --token $env:VERCEL_TOKEN --yes --cwd $monorepoRoot 2>$null | Out-Null
+        & vercel env add $variantKey production "$variantValue" --token $env:VERCEL_TOKEN --cwd $monorepoRoot 2>$null | Out-Null
+    }
+
+    $ErrorActionPreference = $oldEAP
 
     # Paso 3 - Deploy desde el root
     Write-Host "  [3/3] Desplegando desde monorepo root..."

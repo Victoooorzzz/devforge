@@ -26,7 +26,7 @@ export const product = {
     planName: "Pro",
     price: 9.99,
     description: "Unlimited feedback & AI analysis",
-    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_FEEDBACKLENS || "",
+    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID || process.env.NEXT_PUBLIC_LS_VARIANT_ID_FEEDBACKLENS || "",
     features: [
       { text: "Unlimited feedback entries", included: true },
       { text: "AI sentiment analysis", included: true },

@@ -26,7 +26,7 @@ export const product = {
     planName: "Pro",
     price: 9.99,
     description: "Track up to 100 URLs",
-    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_PRICETRACKR || "",
+    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID || process.env.NEXT_PUBLIC_LS_VARIANT_ID_PRICETRACKR || "",
     features: [
       { text: "100 tracked URLs", included: true },
       { text: "Hourly price checks", included: true },

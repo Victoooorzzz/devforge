@@ -52,7 +52,7 @@ export async function fetchWithAuth(
 
 export async function login(email: string, password: string): Promise<{ success: boolean; token?: string; error?: string }> {
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/auth/login`, {
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -73,7 +73,7 @@ export async function login(email: string, password: string): Promise<{ success:
 
 export async function register(data: { email: string; password: string; [key: string]: any }): Promise<{ success: boolean; error?: string }> {
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/auth/register`, {
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
