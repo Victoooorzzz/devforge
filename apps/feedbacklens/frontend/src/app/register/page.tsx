@@ -4,6 +4,7 @@ import Link from "next/link";
 import { setToken, apiClient } from "@devforge/core";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
+import { product } from "@/config/product";
 
 interface RegisterResponse {
   access_token: string;
@@ -11,8 +12,7 @@ interface RegisterResponse {
 
 function RegisterForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const plan = searchParams.get("plan") || "free";
+  const plan = "pro";
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -33,12 +33,22 @@ function RegisterForm() {
         app: "feedbacklens",
       });
       setToken(data.access_token);
-      // If pro plan, redirect to checkout; otherwise go to dashboard
-      if (plan === "pro") {
-        router.push("/dashboard?checkout=1");
-      } else {
-        router.push("/dashboard");
+      
+      // Automatically start checkout for the Pro Trial
+      try {
+        const { data: checkoutData } = await apiClient.post("/lemonsqueezy/checkout", {
+          variant_id: product.pricing.lsVariantId
+        }) as { data: { checkout_url: string } };
+        
+        if (checkoutData.checkout_url) {
+          window.location.href = checkoutData.checkout_url;
+          return;
+        }
+      } catch (checkoutErr) {
+        console.error("Failed to initiate checkout:", checkoutErr);
       }
+      
+      router.push("/dashboard");
     } catch (err: any) {
       setError(err?.detail || "Could not create account. Try again.");
     } finally {
@@ -55,19 +65,18 @@ function RegisterForm() {
             FeedbackLens
           </Link>
           <p className="text-sm mt-2" style={{ color: "var(--color-text-secondary)" }}>
-            {plan === "pro" ? "Start your 7-day free Pro trial" : "Create your free account"}
+            Start your 7-day free Pro trial
           </p>
         </div>
 
-        {plan === "pro" && (
-          <div className="badge mb-6 w-full justify-center text-center py-2 rounded-md" style={{ backgroundColor: "var(--color-accent-dim)", color: "var(--color-accent)" }}>
-            7-day free trial · Then $9.99/month · Cancel anytime
-          </div>
-        )}
+        <div className="badge mb-6 w-full justify-center text-center py-2 rounded-md" style={{ backgroundColor: "var(--color-accent-dim)", color: "var(--color-accent)" }}>
+          7-day free trial · Then $9.99/month · Cancel anytime
+        </div>
 
         {/* Form */}
         <div className="surface-card p-8 rounded-lg" style={{ border: "1px solid var(--color-border)" }}>
           <form onSubmit={handleSubmit} className="space-y-4">
+            <input type="hidden" name="plan" value="pro" />
             <div>
               <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-text)" }}>
                 Name
@@ -119,7 +128,7 @@ function RegisterForm() {
             )}
 
             <button type="submit" disabled={loading} className="btn-primary w-full justify-center mt-2 disabled:opacity-60">
-              {loading ? "Creating account..." : plan === "pro" ? "Start Free Trial" : "Create Free Account"}
+              {loading ? "Creating account..." : "Start 7-Day Free Trial"}
             </button>
           </form>
         </div>
