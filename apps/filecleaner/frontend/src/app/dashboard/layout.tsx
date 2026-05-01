@@ -23,8 +23,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="min-h-screen bg-black flex">
       {/* Sidebar */}
       <aside className="w-64 border-r border-white/5 p-6 flex flex-col">
-        <Link href="/" className="text-xl font-bold tracking-tighter mb-8 block">
-          File<span className="text-accent">Cleaner</span>
+        <Link href="/" className="flex items-center gap-3 mb-8">
+          <img src="/devforge-logo-white.svg" alt="DevForge" className="h-5 w-auto" />
+          <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3">
+            File<span className="text-accent">Cleaner</span>
+          </span>
         </Link>
 
         <nav className="space-y-1 flex-1">

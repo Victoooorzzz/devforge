@@ -3,10 +3,10 @@ export const product = {
   tagline: "Upload, process, and clean your files in seconds",
   domain: "filecleaner.devforgeapp.pro",
   url: "https://filecleaner.devforgeapp.pro",
-  accentColor: "#F59E0B",
+  accentColor: "#821346",
   keyword: "file cleaner tool",
   seoTitle: "File Cleaner — Upload, Process & Clean Files Instantly | DevForge",
-  seoDescription: "Upload files, remove metadata, compress images, convert formats. Fast, private, and developer-friendly. Only $9/mo.",
+  seoDescription: "Upload files, remove metadata, compress images, convert formats. Fast, private, and developer-friendly. Only $9.99/mo.",
   navLinks: [
     { label: "Features", href: "#features" },
     { label: "Pricing", href: "#pricing" },
@@ -15,7 +15,7 @@ export const product = {
     badge: "Privacy-First",
     headline: "Clean Your Files. Keep Your Sanity.",
     subtitle: "Strip metadata, compress images, convert formats — all in one click. Files are processed in-memory and never stored.",
-    ctaText: "Start Free Trial",
+    ctaText: "Start 7-Day Free Trial",
     ctaHref: "/register",
     secondaryCtaText: "See Features",
     secondaryCtaHref: "#features",
@@ -27,7 +27,7 @@ export const product = {
   ],
   pricing: {
     planName: "Pro",
-    price: 9,
+    price: 9.99,
     description: "Unlimited file processing",
     lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_FILECLEANER || "",
     features: [

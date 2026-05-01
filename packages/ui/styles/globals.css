@@ -23,9 +23,9 @@
     --color-border: #262626;
 
     /* Accent — injected per product via product.ts */
-    --color-accent: #6366F1;
-    --color-accent-dim: rgba(99, 102, 241, 0.15);
-    --color-accent-glow: rgba(99, 102, 241, 0.08);
+    --color-accent: #821346;
+    --color-accent-dim: rgba(130, 19, 70, 0.15);
+    --color-accent-glow: rgba(130, 19, 70, 0.08);
 
     /* Radii */
     --radius-sm: 0.375rem;
@@ -338,3 +338,16 @@
     }
   }
 }
+
+@keyframes scan {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(55vh); opacity: 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+

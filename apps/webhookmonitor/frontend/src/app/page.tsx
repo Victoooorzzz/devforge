@@ -8,8 +8,11 @@ export default function LandingPage() {
       {/* Navbar */}
       <nav className="fixed top-0 w-full z-50 glass border-b border-white/5">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link href="/" className="text-xl font-bold tracking-tighter">
-            Webhook<span className="text-accent">Monitor</span>
+          <Link href="/" className="flex items-center gap-3">
+            <img src="/devforge-logo-white.svg" alt="DevForge" className="h-6 w-auto" />
+            <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3">
+              Webhook<span className="text-accent">Monitor</span>
+            </span>
           </Link>
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-neutral-400">
             <Link href="#features" className="hover:text-white transition-colors">Features</Link>
@@ -21,25 +24,66 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero Section */}
-      <section className="pt-32 pb-20 px-6">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-xs font-medium mb-6">
-            <Eye size={14} />
-            <span>Developer-First Webhook Debugging</span>
+      <section className="pt-32 pb-20 px-6 min-h-[85vh] flex flex-col justify-center">
+        <div className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          <div className="text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-xs font-mono mb-6 uppercase tracking-widest">
+              <Eye size={14} />
+              <span>Developer-First Webhook Debugging</span>
+            </div>
+            <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent">
+              Intercept & Inspect.
+            </h1>
+            <p className="text-lg text-neutral-400 mb-10 font-mono text-sm leading-relaxed">
+              Stop guessing why your integrations are failing. Monitor incoming requests in real-time, inspect payloads, and replay webhooks to debug your local environment.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <Link href="/register" className="btn-primary px-8 py-4 text-sm font-mono text-center">
+                Initialize System
+              </Link>
+            </div>
           </div>
-          <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent">
-            Intercept, inspect, and replay webhooks.
-          </h1>
-          <p className="text-lg md:text-xl text-neutral-400 mb-10 max-w-2xl mx-auto">
-            Stop guessing why your integrations are failing. Monitor incoming requests in real-time, inspect payloads, and replay webhooks to debug your local environment.
-          </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/register" className="btn-primary px-8 py-4 text-lg w-full sm:w-auto text-center">
-              Start Free Trial
-            </Link>
-            <Link href="#features" className="px-8 py-4 text-lg font-medium text-neutral-400 hover:text-white transition-colors">
-              See Platform Features →
-            </Link>
+          
+          {/* Terminal UI */}
+          <div className="relative w-full rounded-lg overflow-hidden bg-[#0A0A0A] border border-[#282627] shadow-2xl font-mono text-xs">
+            {/* Terminal Header */}
+            <div className="h-8 bg-[#191718] border-b border-[#282627] flex items-center px-4 gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500/80"></div>
+              <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80"></div>
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500/80"></div>
+              <span className="ml-4 text-[#7F7A7C]">webhook-monitor-stream</span>
+            </div>
+            
+            {/* Terminal Body */}
+            <div className="p-4 flex flex-col gap-3 min-h-[300px]">
+              <div className="flex items-start gap-3">
+                <span className="text-[#7F7A7C]">14:02:11</span>
+                <span className="text-[#10B981]">POST</span>
+                <span className="text-white">/api/webhooks/stripe</span>
+                <span className="text-[#10B981] ml-auto">200 OK</span>
+              </div>
+              <div className="pl-16 text-[#7F7A7C] whitespace-pre">
+                {"{\n  \"type\": \"payment_intent.succeeded\",\n  \"data\": {\n    \"object\": {\n      \"id\": \"pi_3Mtw...\",\n      \"amount\": 999\n    }\n  }\n}"}
+              </div>
+              
+              <div className="flex items-start gap-3 mt-2">
+                <span className="text-[#7F7A7C]">14:02:15</span>
+                <span className="text-[#10B981]">POST</span>
+                <span className="text-white">/api/webhooks/github</span>
+                <span className="text-[#EF4444] ml-auto">401 ERR</span>
+              </div>
+              <div className="pl-16 text-[#EF4444]/80">
+                Error: Signature verification failed
+              </div>
+
+              <div className="flex items-start gap-3 mt-4">
+                <span className="text-[#7F7A7C]">Listening for incoming webhooks...</span>
+                <div className="w-2 h-4 bg-[#821346] animate-pulse"></div>
+              </div>
+            </div>
+            
+            {/* Glow Effect */}
+            <div className="absolute inset-0 bg-[#821346]/5 pointer-events-none"></div>
           </div>
         </div>
       </section>

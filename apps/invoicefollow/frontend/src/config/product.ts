@@ -3,16 +3,16 @@ export const product = {
   tagline: "Track invoices and automate payment reminders",
   domain: "invoicefollow.devforgeapp.pro",
   url: "https://invoicefollow.devforgeapp.pro",
-  accentColor: "#10B981",
+  accentColor: "#821346",
   keyword: "invoice follow up tool",
   seoTitle: "Invoice Follow-up — Automated Payment Reminders | DevForge",
-  seoDescription: "Stop chasing payments manually. Track invoices, set reminder schedules, and automate follow-ups via email. Only $12/mo.",
+  seoDescription: "Stop chasing payments manually. Track invoices, set reminder schedules, and automate follow-ups via email. Only $9.99/mo.",
   navLinks: [{ label: "Features", href: "#features" }, { label: "Pricing", href: "#pricing" }],
   hero: {
     badge: "Get Paid Faster",
     headline: "Never Chase a Payment Again.",
     subtitle: "Add your invoices, set a reminder schedule, and let us handle the follow-ups. Get paid faster without the awkward emails.",
-    ctaText: "Start Free Trial",
+    ctaText: "Start 7-Day Free Trial",
     ctaHref: "/register",
     secondaryCtaText: "See How It Works",
     secondaryCtaHref: "#features",
@@ -24,7 +24,7 @@ export const product = {
   ],
   pricing: {
     planName: "Pro",
-    price: 12,
+    price: 9.99,
     description: "Unlimited invoices & reminders",
     lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_INVOICEFOLLOW || "",
     features: [

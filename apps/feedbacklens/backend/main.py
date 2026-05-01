@@ -143,7 +143,7 @@ Feedback: "{entry.text}"
     await session.refresh(entry)
     return _serialize(entry)
 
-app = create_app(title="Feedback Analyzer", description="AI-powered sentiment analysis for user feedback", domain_routers=[feedback_router, settings_router])
+app = create_app(title="Feedback Lens", description="AI-powered sentiment analysis for user feedback", domain_routers=[feedback_router, settings_router])
 
 if __name__ == "__main__":
     import uvicorn

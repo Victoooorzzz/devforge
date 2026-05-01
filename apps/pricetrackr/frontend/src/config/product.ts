@@ -3,16 +3,16 @@ export const product = {
   tagline: "Monitor competitor prices and get instant alerts",
   domain: "pricetrackr.devforgeapp.pro",
   url: "https://pricetrackr.devforgeapp.pro",
-  accentColor: "#EF4444",
+  accentColor: "#821346",
   keyword: "price tracker tool",
   seoTitle: "Price Tracker — Monitor Competitor Prices & Get Alerts | DevForge",
-  seoDescription: "Track product prices across the web. Get email alerts when prices drop or change. Perfect for competitive intelligence. Only $15/mo.",
+  seoDescription: "Track product prices across the web. Get email alerts when prices drop or change. Perfect for competitive intelligence. Only $9.99/mo.",
   navLinks: [{ label: "Features", href: "#features" }, { label: "Pricing", href: "#pricing" }],
   hero: {
     badge: "Competitive Edge",
     headline: "Know When Prices Move. Instantly.",
     subtitle: "Add URLs to track, set your thresholds, and get notified the moment prices change. Stay ahead of competitors and never miss a deal.",
-    ctaText: "Start Free Trial",
+    ctaText: "Start 7-Day Free Trial",
     ctaHref: "/register",
     secondaryCtaText: "See Features",
     secondaryCtaHref: "#features",
@@ -24,7 +24,7 @@ export const product = {
   ],
   pricing: {
     planName: "Pro",
-    price: 15,
+    price: 9.99,
     description: "Track up to 100 URLs",
     lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_PRICETRACKR || "",
     features: [

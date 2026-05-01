@@ -23,8 +23,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Sidebar */}
       <aside className="w-56 flex-shrink-0 flex flex-col border-r" style={{ backgroundColor: "var(--color-surface)", borderColor: "var(--color-border)" }}>
         <div className="h-16 flex items-center px-5 border-b" style={{ borderColor: "var(--color-border)" }}>
-          <Link href="/" className="text-base font-bold" style={{ color: "var(--color-accent)" }}>
-            FeedbackLens
+          <Link href="/" className="flex items-center gap-3">
+            <img src="/devforge-logo-white.svg" alt="DevForge" className="h-5 w-auto" />
+            <span className="text-base font-bold border-l border-white/10 pl-3">
+              Feedback<span style={{ color: "var(--color-accent)" }}>Lens</span>
+            </span>
           </Link>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1">

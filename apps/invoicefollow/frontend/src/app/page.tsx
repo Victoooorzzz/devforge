@@ -8,8 +8,11 @@ export default function LandingPage() {
       {/* Navbar */}
       <nav className="fixed top-0 w-full z-50 glass border-b border-white/5">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link href="/" className="text-xl font-bold tracking-tighter">
-            Invoice<span className="text-accent">Follow</span>
+          <Link href="/" className="flex items-center gap-3">
+            <img src="/devforge-logo-white.svg" alt="DevForge" className="h-6 w-auto" />
+            <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3">
+              Invoice<span className="text-accent">Follow</span>
+            </span>
           </Link>
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-neutral-400">
             <Link href="#features" className="hover:text-white transition-colors">Features</Link>
@@ -21,25 +24,95 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero Section */}
-      <section className="pt-32 pb-20 px-6">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-xs font-medium mb-6">
-            <Clock size={14} />
-            <span>Never miss a payment again</span>
+      <section className="pt-32 pb-20 px-6 min-h-[85vh] flex flex-col justify-center">
+        <div className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          <div className="text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-xs font-medium mb-6 uppercase tracking-widest">
+              <Clock size={14} />
+              <span>Never miss a payment again</span>
+            </div>
+            <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent">
+              Automated tracking for invoices.
+            </h1>
+            <p className="text-lg md:text-xl text-neutral-400 mb-10">
+              Get paid on time with smart reminders, automated follow-ups, and real-time payment status monitoring.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <Link href="/register" className="btn-primary px-8 py-4 text-center">
+                Access Dashboard
+              </Link>
+            </div>
           </div>
-          <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent">
-            Automated tracking for all your invoices.
-          </h1>
-          <p className="text-lg md:text-xl text-neutral-400 mb-10 max-w-2xl mx-auto">
-            Get paid on time with smart reminders, automated follow-ups, and real-time payment status monitoring.
-          </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/register" className="btn-primary px-8 py-4 text-lg w-full sm:w-auto text-center">
-              Start Free Trial
-            </Link>
-            <Link href="#features" className="px-8 py-4 text-lg font-medium text-neutral-400 hover:text-white transition-colors">
-              How it works →
-            </Link>
+          
+          {/* Dashboard UI */}
+          <div className="relative w-full rounded-lg overflow-hidden bg-[#0A0A0A] border border-[#282627] shadow-2xl flex flex-col font-sans">
+            <div className="h-12 bg-[#191718] border-b border-[#282627] flex items-center justify-between px-6">
+              <span className="text-white font-medium text-sm tracking-wide">RECENT INVOICES</span>
+              <div className="flex gap-2">
+                <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
+                <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
+                <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
+              </div>
+            </div>
+            
+            <div className="p-6">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="text-neutral-500 border-b border-[#282627]">
+                    <th className="pb-3 font-medium uppercase text-xs tracking-wider">Invoice</th>
+                    <th className="pb-3 font-medium uppercase text-xs tracking-wider">Client</th>
+                    <th className="pb-3 font-medium uppercase text-xs tracking-wider">Amount</th>
+                    <th className="pb-3 font-medium uppercase text-xs tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="text-neutral-300">
+                  <tr className="border-b border-[#282627]/50">
+                    <td className="py-4 font-mono text-xs">INV-2024-089</td>
+                    <td className="py-4 font-medium">Acme Corp</td>
+                    <td className="py-4 font-mono text-white">$4,500.00</td>
+                    <td className="py-4">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm bg-red-500/10 border border-red-500/20 text-red-500 text-[10px] font-bold uppercase tracking-widest">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+                        Overdue
+                      </span>
+                    </td>
+                  </tr>
+                  <tr className="border-b border-[#282627]/50 bg-white/[0.02]">
+                    <td className="py-4 font-mono text-xs">INV-2024-090</td>
+                    <td className="py-4 font-medium">Globex Inc</td>
+                    <td className="py-4 font-mono text-white">$1,250.00</td>
+                    <td className="py-4">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm bg-[#821346]/10 border border-[#821346]/30 text-[#821346] text-[10px] font-bold uppercase tracking-widest">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#821346]"></span>
+                        Pending
+                      </span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-4 font-mono text-xs">INV-2024-088</td>
+                    <td className="py-4 font-medium">Stark Ind.</td>
+                    <td className="py-4 font-mono text-white">$8,900.00</td>
+                    <td className="py-4">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm bg-green-500/10 border border-green-500/20 text-green-500 text-[10px] font-bold uppercase tracking-widest">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                        Paid
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              
+              <div className="mt-6 p-4 rounded border border-accent/20 bg-accent/5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Zap className="text-accent" size={16} />
+                  <span className="text-xs text-neutral-300">Automated follow-up sent to <strong className="text-white">Acme Corp</strong>.</span>
+                </div>
+                <span className="text-xs text-neutral-500 font-mono">Just now</span>
+              </div>
+            </div>
+            
+            {/* Glow Effect */}
+            <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-transparent to-[#821346]/5 pointer-events-none"></div>
           </div>
         </div>
       </section>

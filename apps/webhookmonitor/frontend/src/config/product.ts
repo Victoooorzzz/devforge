@@ -3,16 +3,16 @@ export const product = {
   tagline: "Receive, inspect, and replay webhooks in real time",
   domain: "webhookmonitor.devforgeapp.pro",
   url: "https://webhookmonitor.devforgeapp.pro",
-  accentColor: "#6366F1",
+  accentColor: "#821346",
   keyword: "webhook monitor tool",
   seoTitle: "Webhook Monitor — Inspect & Replay Webhooks in Real Time | DevForge",
-  seoDescription: "Debug webhooks without ngrok. Get a unique URL, inspect every request in real time, and replay failed payloads. Only $19/mo.",
+  seoDescription: "Debug webhooks without ngrok. Get a unique URL, inspect every request in real time, and replay failed payloads. Only $9.99/mo.",
   navLinks: [{ label: "Features", href: "#features" }, { label: "Pricing", href: "#pricing" }],
   hero: {
     badge: "Developer Tool",
     headline: "Debug Webhooks Without the Pain.",
     subtitle: "Get a unique endpoint URL, see every incoming request in real time with full headers and body, and replay any payload with one click.",
-    ctaText: "Start Free Trial",
+    ctaText: "Start 7-Day Free Trial",
     ctaHref: "/register",
     secondaryCtaText: "See Features",
     secondaryCtaHref: "#features",
@@ -24,7 +24,7 @@ export const product = {
   ],
   pricing: {
     planName: "Pro",
-    price: 19,
+    price: 9.99,
     description: "Unlimited endpoints & requests",
     lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID_WEBHOOKMONITOR || "",
     features: [

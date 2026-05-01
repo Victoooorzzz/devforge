@@ -12,6 +12,7 @@ interface NavItem {
 
 interface DashboardShellProps {
   productName: string;
+  logoSrc?: string;
   navItems: NavItem[];
   userName: string;
   userEmail: string;
@@ -21,6 +22,7 @@ interface DashboardShellProps {
 
 export function DashboardShell({
   productName,
+  logoSrc,
   navItems,
   userName,
   userEmail,
@@ -40,10 +42,11 @@ export function DashboardShell({
       >
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center h-16 px-6">
+          <div className="flex items-center h-16 px-6 gap-3">
+            {logoSrc && <img src={logoSrc} alt="DevForge" className="h-5 w-auto" />}
             <a
               href="/dashboard"
-              className="text-lg font-bold tracking-tight"
+              className={`text-lg font-bold tracking-tight ${logoSrc ? 'border-l border-white/10 pl-3' : ''}`}
               style={{ color: "var(--color-text)" }}
             >
               {productName}
