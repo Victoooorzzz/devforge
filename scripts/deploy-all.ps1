@@ -7,8 +7,21 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Load .env if it exists
+$envFile = Join-Path (Get-Item -Path $PSScriptRoot).Parent.FullName ".env"
+if (Test-Path $envFile) {
+    Write-Host "Cargando variables desde .env..."
+    Get-Content $envFile | ForEach-Object {
+        if ($_ -match "^\s*([^#\s][^=]*)\s*=\s*['""]?(.*?)['""]?\s*$") {
+            $key = $matches[1].Trim()
+            $val = $matches[2].Trim()
+            [Environment]::SetEnvironmentVariable($key, $val, "Process")
+        }
+    }
+}
+
 if (-not $env:VERCEL_TOKEN) {
-    Write-Error "La variable de entorno VERCEL_TOKEN no esta configurada."
+    Write-Error "La variable de entorno VERCEL_TOKEN no esta configurada. Agregala a tu archivo .env como VERCEL_TOKEN=tu_token"
     exit 1
 }
 
@@ -29,9 +42,10 @@ if ($AppName -ne "") {
     }
 }
 
-$monorepoRoot = Get-Location
+$monorepoRoot = (Get-Item -Path $PSScriptRoot).Parent.FullName
 
 Write-Host "`n=== DevForge Vercel Deployment Orchestrator ==="
+Write-Host "Root detectado: $monorepoRoot"
 
 # Pre-requisito: Obtener el orgId (ID del usuario) una sola vez
 Write-Host "Obteniendo informacion de la cuenta..."
