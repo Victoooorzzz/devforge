@@ -87,7 +87,7 @@ export default function LandingPage() {
               <div className="mb-8">
                 <h3 className="text-xl font-bold mb-2">Starter</h3>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-bold">$19</span>
+                  <span className="text-4xl font-bold">$9.99</span>
                   <span className="text-neutral-400">/mo</span>
                 </div>
                 <p className="text-sm text-neutral-400 mt-4">For solo sellers and boutique stores.</p>
@@ -100,7 +100,7 @@ export default function LandingPage() {
                 ))}
               </ul>
               <Link href="/register?plan=starter" className="btn-primary py-4 text-center">
-                Start 14-Day Free Trial
+                Start 7-Day Free Trial
               </Link>
             </div>
 
@@ -112,7 +112,7 @@ export default function LandingPage() {
               <div className="mb-8">
                 <h3 className="text-xl font-bold mb-2">Pro</h3>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-bold">$49</span>
+                  <span className="text-4xl font-bold">$9.99</span>
                   <span className="text-neutral-400">/mo</span>
                 </div>
                 <p className="text-sm text-neutral-400 mt-4">Enterprise-grade tracking for large retailers.</p>

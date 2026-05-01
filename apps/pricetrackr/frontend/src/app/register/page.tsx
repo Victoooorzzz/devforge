@@ -46,7 +46,7 @@ function RegisterForm() {
           <Link href="/" className="text-2xl font-bold tracking-tighter mb-2 inline-block">
             Price<span className="text-accent">Trackr</span>
           </Link>
-          <p className="text-sm text-neutral-400">Start your 14-day free trial</p>
+          <p className="text-sm text-neutral-400">Start your 7-day free trial</p>
         </div>
 
         <form onSubmit={handleRegister} className="space-y-4">
@@ -96,7 +96,7 @@ function RegisterForm() {
                     : "border-white/5 bg-white/5 text-neutral-400 hover:bg-white/10"
                 }`}
               >
-                Pro ($19/mo)
+                Pro ($9.99/mo)
               </button>
             </div>
           </div>

@@ -12,6 +12,8 @@ interface LayoutProps {
   navLinks?: NavLink[];
   ctaText?: string;
   ctaHref?: string;
+  logoSrc?: string;
+  logoAlt?: string;
   children: React.ReactNode;
 }
 
@@ -21,6 +23,8 @@ export function Layout({
   navLinks = [],
   ctaText = "Get Started",
   ctaHref = "/register",
+  logoSrc,
+  logoAlt,
   children,
 }: LayoutProps) {
   return (
@@ -29,10 +33,13 @@ export function Layout({
         <nav className="section-container flex items-center justify-between h-16">
           <a
             href="/"
-            className="text-lg font-bold tracking-tight"
+            className="flex items-center gap-2 text-lg font-bold tracking-tight"
             style={{ color: "var(--color-text)" }}
           >
-            {productName}
+            {logoSrc ? (
+              <img src={logoSrc} alt={logoAlt || productName} className="h-6 w-auto" />
+            ) : null}
+            {!logoSrc && productName}
           </a>
 
           <div className="hidden md:flex items-center gap-8">

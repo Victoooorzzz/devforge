@@ -46,7 +46,14 @@ const products: ProductInfo[] = [
 
 export default function HomePage() {
   return (
-    <Layout productName="DevForge" productDomain="devforgeapp.pro" navLinks={[{ label: "Products", href: "#products" }]} ctaText="Explore" ctaHref="#products">
+    <Layout 
+      productName="DevForge" 
+      productDomain="devforgeapp.pro" 
+      logoSrc="/devforge-logo-white.svg"
+      navLinks={[{ label: "Products", href: "#products" }]} 
+      ctaText="Explore" 
+      ctaHref="#products"
+    >
       <LandingHero
         badge="5 Products. 1 Vision."
         headline="Indie SaaS Tools for Developers & Freelancers"
@@ -81,7 +88,7 @@ export default function HomePage() {
           <div className="flex flex-wrap justify-center gap-8 mt-12">
             {[
               { value: "5", label: "Products" },
-              { value: "$9–19", label: "/month" },
+              { value: "$9.99", label: "/month" },
               { value: "100%", label: "Indie Built" },
             ].map((stat) => (
               <div key={stat.label}>

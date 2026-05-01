@@ -11,7 +11,7 @@ const FEATURES = [
 const PLANS = [
   {
     name: "Free",
-    price: "$0",
+    price: "$9.99",
     period: "forever",
     description: "Perfect to get started",
     features: ["50 feedback analyses/month", "Sentiment detection", "Basic themes", "Dashboard access"],
@@ -21,7 +21,7 @@ const PLANS = [
   },
   {
     name: "Pro",
-    price: "$19",
+    price: "$9.99",
     period: "per month",
     description: "For growing products",
     features: ["Unlimited analyses", "Advanced theme clustering", "Priority AI processing", "API access", "CSV export", "Email support"],
