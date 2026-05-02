@@ -37,14 +37,14 @@ class User(SQLModel, table=True):
     is_email_verified: bool = Field(default=False)
     verification_code: Optional[str] = Field(default=None)
     trial_ends_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
     @property
     def is_on_trial(self) -> bool:
         """True if the user has an active free trial (not yet expired)."""
         if self.trial_ends_at is None:
             return False
-        return datetime.now(timezone.utc) < self.trial_ends_at
+        return datetime.utcnow() < self.trial_ends_at
 
     @property
     def has_access(self) -> bool:
@@ -114,7 +114,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 # --- JWT Utilities ---
 
 def create_access_token(user_id: int, email: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expiration_minutes)
+    expire = datetime.utcnow() + timedelta(minutes=settings.jwt_expiration_minutes)
     payload = {
         "sub": str(user_id),
         "email": email,
