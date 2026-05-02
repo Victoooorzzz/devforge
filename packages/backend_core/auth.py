@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -160,7 +160,7 @@ async def get_current_user(
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
 @auth_router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, session: AsyncSession = Depends(get_session)):
+async def register(body: RegisterRequest, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session)):
     existing = await session.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -182,24 +182,22 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
     await session.flush()
     await session.refresh(user)
 
-    # Send verification email
-    try:
-        await send_email(
-            to=user.email,
-            subject="Verifica tu cuenta en DevForge",
-            html_body=f"""
-            <div style="font-family: sans-serif; padding: 20px; border: 1px solid #6366f1; border-radius: 12px;">
-                <h2 style="color: #4338ca;">Bienvenido a DevForge</h2>
-                <p>Tu código de verificación es:</p>
-                <div style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #6366f1; margin: 20px 0;">
-                    {v_code}
-                </div>
-                <p>Ingresa este código en la aplicación para activar tu cuenta.</p>
+    # Send verification email in background
+    background_tasks.add_task(
+        send_email,
+        to=user.email,
+        subject="Verifica tu cuenta en DevForge",
+        html_body=f"""
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #6366f1; border-radius: 12px;">
+            <h2 style="color: #4338ca;">Bienvenido a DevForge</h2>
+            <p>Tu código de verificación es:</p>
+            <div style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #6366f1; margin: 20px 0;">
+                {v_code}
             </div>
-            """
-        )
-    except Exception as e:
-        print(f"Error sending verification email: {e}")
+            <p>Ingresa este código en la aplicación para activar tu cuenta.</p>
+        </div>
+        """
+    )
 
     token = create_access_token(user.id, user.email)
     return TokenResponse(access_token=token, is_email_verified=False)
