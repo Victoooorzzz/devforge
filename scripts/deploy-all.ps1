@@ -79,7 +79,8 @@ $apps = @(
     @{ Name = "invoicefollow"; Root = "apps/invoicefollow/frontend" },
     @{ Name = "pricetrackr"; Root = "apps/pricetrackr/frontend" },
     @{ Name = "webhookmonitor"; Root = "apps/webhookmonitor/frontend" },
-    @{ Name = "feedbacklens"; Root = "apps/feedbacklens/frontend" }
+    @{ Name = "feedbacklens"; Root = "apps/feedbacklens/frontend" },
+    @{ Name = "template"; Root = "apps/template/frontend" }
 )
 
 if ($AppName -ne "") {
