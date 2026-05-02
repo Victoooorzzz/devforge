@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     lemonsqueezy_api_key: str = ""
     lemonsqueezy_store_id: str = ""
     lemonsqueezy_webhook_secret: str = ""
+    
+    # Variant IDs for each app (matched with .env)
+    next_public_ls_variant_id_filecleaner: str = ""
+    next_public_ls_variant_id_invoicefollow: str = ""
+    next_public_ls_variant_id_pricetrackr: str = ""
+    next_public_ls_variant_id_webhookmonitor: str = ""
+    next_public_ls_variant_id_feedbacklens: str = ""
 
     # Stripe (Optional)
     stripe_secret_key: str = ""

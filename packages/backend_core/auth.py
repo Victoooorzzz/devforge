@@ -57,6 +57,7 @@ class User(SQLModel, table=True):
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
+    app_name: Optional[str] = None # filecleaner, invoicefollow, etc.
 
 
 class LoginRequest(BaseModel):
@@ -68,6 +69,7 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     is_email_verified: bool = False
+    checkout_url: Optional[str] = None
 
 
 class VerifyRequest(BaseModel):
@@ -200,7 +202,31 @@ async def register(body: RegisterRequest, background_tasks: BackgroundTasks, ses
     )
 
     token = create_access_token(user.id, user.email)
-    return TokenResponse(access_token=token, is_email_verified=False)
+    
+    # Generate checkout URL if app_name is provided
+    checkout_url = None
+    if body.app_name:
+        from .lemonsqueezy_handler import create_ls_checkout
+        variant_id = None
+        app = body.app_name.lower()
+        
+        if "filecleaner" in app: variant_id = settings.next_public_ls_variant_id_filecleaner
+        elif "invoicefollow" in app: variant_id = settings.next_public_ls_variant_id_invoicefollow
+        elif "pricetrackr" in app: variant_id = settings.next_public_ls_variant_id_pricetrackr
+        elif "webhookmonitor" in app: variant_id = settings.next_public_ls_variant_id_webhookmonitor
+        elif "feedbacklens" in app: variant_id = settings.next_public_ls_variant_id_feedbacklens
+        
+        if variant_id:
+            try:
+                checkout_url = await create_ls_checkout(user.id, user.email, variant_id)
+            except Exception as e:
+                print(f"Error creating checkout URL: {e}")
+
+    return TokenResponse(
+        access_token=token, 
+        is_email_verified=False,
+        checkout_url=checkout_url
+    )
 
 
 @auth_router.post("/verify", response_model=TokenResponse)

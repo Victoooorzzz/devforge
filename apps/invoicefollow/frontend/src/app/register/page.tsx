@@ -20,33 +20,27 @@ function RegisterForm() {
     setError("");
 
     try {
-      const { success, error: authError, isEmailVerified } = await auth.register({
+      const { success, error: authError, isEmailVerified, checkoutUrl } = await auth.register({
         email,
         password,
+        app_name: "invoicefollow",
         plan: "pro",
         trial: true
       });
 
       if (success) {
+        trackEvent("user_signup", { plan, trial: plan === "starter" });
+
+        if (checkoutUrl) {
+          window.location.href = checkoutUrl;
+          return;
+        }
+
         if (isEmailVerified === false) {
           router.push("/verify");
           return;
         }
-        trackEvent("user_signup", { plan, trial: plan === "starter" });
         
-        // Automatically start checkout for the Pro Trial
-        try {
-          const { data } = await apiClient.post("/lemonsqueezy/checkout", {
-            variant_id: product.pricing.lsVariantId
-          }) as { data: { checkout_url: string } };
-          
-          if (data.checkout_url) {
-            window.location.href = data.checkout_url;
-            return;
-          }
-        } catch (checkoutErr) {
-          console.error("Failed to initiate checkout:", checkoutErr);
-        }
         router.push("/dashboard");
       } else {
         setError(authError || "Registration failed");

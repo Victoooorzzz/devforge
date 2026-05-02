@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { apiClient, setToken, trackEvent } from "@devforge/core";
+import { auth, trackEvent } from "@devforge/core";
+import { useRouter } from "next/navigation";
 import { product } from "@/config/product";
 
 export default function RegisterPage() {
@@ -9,22 +9,38 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
     try {
-      const { data } = await apiClient.post<{ access_token: string }>("/auth/register", { email, password });
-      setToken(data.access_token);
-      if (data.is_email_verified === false) {
-        router.push("/verify");
-        return;
+      const { success, error: authError, isEmailVerified, checkoutUrl } = await auth.register({ 
+        email, 
+        password,
+        app_name: "template" 
+      });
+      
+      if (success) {
+        trackEvent("trial_started");
+        
+        if (checkoutUrl) {
+          window.location.href = checkoutUrl;
+          return;
+        }
+
+        if (isEmailVerified === false) {
+          router.push("/verify");
+          return;
+        }
+        
+        window.location.href = "/dashboard";
+      } else {
+        setError(authError || "Registration failed");
       }
-      trackEvent("trial_started");
-      window.location.href = "/dashboard";
     } catch (err: unknown) {
-      setError((err as { detail?: string }).detail || "Registration failed");
+      setError("Registration failed");
     } finally {
       setLoading(false);
     }

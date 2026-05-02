@@ -1,15 +1,12 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
-import { setToken, apiClient } from "@devforge/core";
+import { auth, trackEvent } from "@devforge/core";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { product } from "@/config/product";
 
-interface RegisterResponse {
-  is_email_verified: boolean;
-  access_token: string;
-}
+// RegisterResponse removed, using auth.register types
 
 function RegisterForm() {
   const router = useRouter();
@@ -26,36 +23,31 @@ function RegisterForm() {
     setError("");
     setLoading(true);
     try {
-      const { data } = await apiClient.post<RegisterResponse>("/auth/register", {
+      const { success, error: authError, isEmailVerified, checkoutUrl } = await auth.register({
         name,
         email,
         password,
-        plan,
-        app: "feedbacklens",
+        app_name: "feedbacklens",
+        plan: "pro",
       });
-      setToken(data.access_token);
-      if (data.is_email_verified === false) {
-        router.push("/verify");
-        return;
-      }
-      
-      // Automatically start checkout for the Pro Trial
-      try {
-        const { data: checkoutData } = await apiClient.post("/lemonsqueezy/checkout", {
-          variant_id: product.pricing.lsVariantId
-        }) as { data: { checkout_url: string } };
-        
-        if (checkoutData.checkout_url) {
-          window.location.href = checkoutData.checkout_url;
+
+      if (success) {
+        if (checkoutUrl) {
+          window.location.href = checkoutUrl;
           return;
         }
-      } catch (checkoutErr) {
-        console.error("Failed to initiate checkout:", checkoutErr);
+
+        if (isEmailVerified === false) {
+          router.push("/verify");
+          return;
+        }
+        
+        router.push("/dashboard");
+      } else {
+        setError(authError || "Registration failed");
       }
-      
-      router.push("/dashboard");
     } catch (err: any) {
-      setError(err?.detail || "Could not create account. Try again.");
+      setError("Could not create account. Try again.");
     } finally {
       setLoading(false);
     }

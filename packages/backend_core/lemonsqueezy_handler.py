@@ -6,12 +6,12 @@ import logging
 import json
 import httpx
 from datetime import datetime
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from .auth import User, get_current_user
 from .config import get_settings
 from .database import get_session
 
@@ -36,7 +36,8 @@ class PortalResponse(BaseModel):
 
 # --- API Interaction ---
 
-async def create_ls_checkout(user: User, variant_id: str):
+async def create_ls_checkout(user_id: int, user_email: str, variant_id: str):
+    """Creates a checkout link in LemonSqueezy for a user."""
     headers = {
         "Accept": "application/vnd.api+json",
         "Content-Type": "application/vnd.api+json",
@@ -48,9 +49,9 @@ async def create_ls_checkout(user: User, variant_id: str):
             "type": "checkouts",
             "attributes": {
                 "checkout_data": {
-                    "email": user.email,
+                    "email": user_email,
                     "custom": {
-                        "user_id": str(user.id)
+                        "user_id": str(user_id)
                     }
                 }
             },
@@ -85,13 +86,20 @@ async def create_ls_checkout(user: User, variant_id: str):
 @ls_router.post("/checkout", response_model=CheckoutResponse)
 async def create_checkout(
     body: CheckoutRequest,
-    user: User = Depends(get_current_user),
+    request: Request,
 ):
-    url = await create_ls_checkout(user, body.variant_id)
+    # Import locally to avoid circular dependency
+    from .auth import get_current_user
+    user = await get_current_user(await request.app.state.security_dependency(request))
+    
+    url = await create_ls_checkout(user.id, user.email, body.variant_id)
     return CheckoutResponse(checkout_url=url)
 
 @ls_router.get("/portal", response_model=PortalResponse)
-async def get_portal(user: User = Depends(get_current_user)):
+async def get_portal(request: Request):
+    from .auth import get_current_user
+    user = await get_current_user(await request.app.state.security_dependency(request))
+
     if not user.lemonsqueezy_customer_id:
         raise HTTPException(status_code=400, detail="User has no active subscription")
     
@@ -123,7 +131,6 @@ async def handle_ls_webhook(
     if not signature:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing signature")
 
-    # Verify signature
     secret = settings.lemonsqueezy_webhook_secret.encode()
     digest = hmac.new(secret, payload, hashlib.sha256).hexdigest()
 
@@ -138,66 +145,55 @@ async def handle_ls_webhook(
 
     logger.info(f"LS webhook received: {event_name} for user {user_id}")
 
+    # Use local import for User
+    from .auth import User
+
     if event_name in ("subscription_created", "subscription_updated", "subscription_resumed"):
-        sub_status = attributes.get("status")  # "on_trial", "active", "past_due", "cancelled", "expired"
+        sub_status = attributes.get("status")
 
         if sub_status in ("on_trial", "active"):
             await _activate_user(user_id, attributes, session, is_trial=(sub_status == "on_trial"))
         elif sub_status in ("expired", "cancelled", "unpaid", "past_due"):
-            # past_due/unpaid usually means they lost access until payment succeeds
             await _deactivate_user(user_id, session)
 
     elif event_name in ("subscription_cancelled", "subscription_expired", "subscription_terminated"):
         await _deactivate_user(user_id, session)
 
     elif event_name == "subscription_payment_success":
-        # Ensure user is active if a payment finally went through
         await _activate_user(user_id, attributes, session)
 
     elif event_name == "subscription_payment_failed":
-        # Maybe notify user, but for now just deactivate to be safe
         await _deactivate_user(user_id, session)
     
     return {"status": "ok"}
 
 async def _activate_user(user_id: str, attributes: dict, session: AsyncSession, is_trial: bool = False):
-    if not user_id:
-        return
-    
+    if not user_id: return
+    from .auth import User
     result = await session.execute(select(User).where(User.id == int(user_id)))
     user = result.scalar_one_or_none()
-
     if user:
         user.is_active = True
         user.lemonsqueezy_customer_id = str(attributes.get("customer_id"))
-        
-        # Sync trial end date if provided by LS
         trial_end = attributes.get("trial_ends_at")
         if trial_end:
-            # LS format is usually ISO8601 string: 2023-11-20T12:00:00.000000Z
             try:
                 user.trial_ends_at = datetime.fromisoformat(trial_end.replace("Z", "+00:00"))
             except Exception as e:
                 logger.error(f"Error parsing trial_ends_at: {e}")
-        
-        # If explicitly not a trial anymore (e.g. converted to paid), we can clear it 
-        # or just let it expire. Clearing it is cleaner.
         if not is_trial:
             user.trial_ends_at = None
-            
         session.add(user)
         await session.flush()
-        logger.info(f"Activated user {user.email} (trial={is_trial}, ends={user.trial_ends_at})")
+        logger.info(f"Activated user {user.email} (trial={is_trial})")
 
 async def _deactivate_user(user_id: str, session: AsyncSession):
-    if not user_id:
-        return
-    
+    if not user_id: return
+    from .auth import User
     result = await session.execute(select(User).where(User.id == int(user_id)))
     user = result.scalar_one_or_none()
-
     if user:
         user.is_active = False
         session.add(user)
         await session.flush()
-        logger.info(f"Deactivated user {user.email} (subscription ended)")
+        logger.info(f"Deactivated user {user.email}")

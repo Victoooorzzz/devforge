@@ -94,7 +94,7 @@ export async function verify(code: string): Promise<{ success: boolean; error?: 
   }
 }
 
-export async function register(data: { email: string; password: string; [key: string]: any }): Promise<{ success: boolean; error?: string; isEmailVerified?: boolean }> {
+export async function register(data: { email: string; password: string; app_name?: string; [key: string]: any }): Promise<{ success: boolean; error?: string; isEmailVerified?: boolean; checkoutUrl?: string }> {
   try {
     const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/register`, {
       method: 'POST',
@@ -108,7 +108,11 @@ export async function register(data: { email: string; password: string; [key: st
       if (result.access_token) {
         setToken(result.access_token);
       }
-      return { success: true, isEmailVerified: result.is_email_verified };
+      return { 
+        success: true, 
+        isEmailVerified: result.is_email_verified,
+        checkoutUrl: result.checkout_url 
+      };
     }
 
     return { success: false, error: result.detail || 'Registration failed' };
