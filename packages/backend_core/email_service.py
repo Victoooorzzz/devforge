@@ -1,48 +1,43 @@
 # packages/backend-core/email_service.py
 
 import logging
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-
+import resend
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
 
-
 async def send_email(to: str, subject: str, html_body: str) -> bool:
+    """
+    Sends an email using the Resend SDK.
+    Bypasses SMTP port blocking issues by using HTTPS.
+    """
     settings = get_settings()
 
-    if not settings.smtp_host:
-        logger.warning("SMTP not configured, skipping email to %s: %s", to, subject)
+    # Use SMTP_PASSWORD as the API key if it's the Resend key
+    # In .env it is: re_PztWswJC_3wtU7cUbk4noRoznokcxZmMw
+    api_key = settings.smtp_password
+    
+    if not api_key:
+        logger.warning("Resend API Key (SMTP_PASSWORD) not configured, skipping email to %s", to)
         return False
 
-    msg = MIMEMultipart("alternative")
-    msg["From"] = settings.smtp_from or settings.smtp_user
-    msg["To"] = to
-    msg["Subject"] = subject
-
-    text_part = MIMEText(
-        html_body.replace("<br>", "\n").replace("</p>", "\n"),
-        "plain",
-        "utf-8",
-    )
-    html_part = MIMEText(html_body, "html", "utf-8")
-
-    msg.attach(text_part)
-    msg.attach(html_part)
+    resend.api_key = api_key
+    
+    from_email = settings.smtp_from or "onboarding@resend.dev"
 
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
-            server.ehlo()
-            if settings.smtp_port != 25:
-                server.starttls()
-                server.ehlo()
-            if settings.smtp_user and settings.smtp_password:
-                server.login(settings.smtp_user, settings.smtp_password)
-            server.sendmail(msg["From"], [to], msg.as_string())
-        logger.info("Email sent to %s: %s", to, subject)
+        # Resend SDK call is synchronous, but since we call it from BackgroundTasks, 
+        # it runs in a threadpool and doesn't block the event loop.
+        params = {
+            "from": from_email,
+            "to": to,
+            "subject": subject,
+            "html": html_body,
+        }
+        
+        response = resend.Emails.send(params)
+        logger.info("Email sent via Resend SDK to %s. ID: %s", to, getattr(response, "id", "unknown"))
         return True
     except Exception as exc:
-        logger.error("Failed to send email to %s: %s", to, exc)
+        logger.error("Failed to send email via Resend SDK to %s: %s", to, exc)
         return False
