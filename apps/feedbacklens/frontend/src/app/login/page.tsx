@@ -5,6 +5,7 @@ import { setToken, apiClient } from "@devforge/core";
 import { useRouter } from "next/navigation";
 
 interface LoginResponse {
+  is_email_verified: boolean;
   access_token: string;
 }
 
@@ -22,6 +23,10 @@ export default function LoginPage() {
     try {
       const { data } = await apiClient.post<LoginResponse>("/auth/login", { email, password });
       setToken(data.access_token);
+      if (data.is_email_verified === false) {
+        router.push("/verify");
+        return;
+      }
       router.push("/dashboard");
     } catch (err: any) {
       setError(err?.detail || "Invalid email or password");

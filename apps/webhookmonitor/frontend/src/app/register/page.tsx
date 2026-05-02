@@ -28,6 +28,10 @@ function RegisterForm() {
       });
 
       if (success) {
+        if (isEmailVerified === false) {
+          router.push("/verify");
+          return;
+        }
         trackEvent("user_signup", { plan, trial: plan === "starter" });
         // Automatically start checkout for the Pro Trial
         try {

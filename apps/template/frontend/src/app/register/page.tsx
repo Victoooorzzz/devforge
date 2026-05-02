@@ -17,6 +17,10 @@ export default function RegisterPage() {
     try {
       const { data } = await apiClient.post<{ access_token: string }>("/auth/register", { email, password });
       setToken(data.access_token);
+      if (data.is_email_verified === false) {
+        router.push("/verify");
+        return;
+      }
       trackEvent("trial_started");
       window.location.href = "/dashboard";
     } catch (err: unknown) {

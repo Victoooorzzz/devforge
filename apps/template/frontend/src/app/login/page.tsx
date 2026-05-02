@@ -22,6 +22,10 @@ export default function LoginPage() {
         password,
       });
       setToken(data.access_token);
+      if (data.is_email_verified === false) {
+        router.push("/verify");
+        return;
+      }
       trackEvent("trial_started");
       window.location.href = "/dashboard";
     } catch (err: unknown) {

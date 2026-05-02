@@ -19,6 +19,10 @@ export default function LoginPage() {
     try {
       const { success, error: authError, isEmailVerified } = await auth.login(email, password);
       if (success) {
+        if (isEmailVerified === false) {
+          router.push("/verify");
+          return;
+        }
         trackEvent("user_login", { method: "email" });
         router.push("/dashboard");
       } else {

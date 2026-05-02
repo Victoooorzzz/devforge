@@ -7,6 +7,7 @@ import { Suspense } from "react";
 import { product } from "@/config/product";
 
 interface RegisterResponse {
+  is_email_verified: boolean;
   access_token: string;
 }
 
@@ -33,6 +34,10 @@ function RegisterForm() {
         app: "feedbacklens",
       });
       setToken(data.access_token);
+      if (data.is_email_verified === false) {
+        router.push("/verify");
+        return;
+      }
       
       // Automatically start checkout for the Pro Trial
       try {
