@@ -258,7 +258,10 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
         )
 
     token = create_access_token(user.id, user.email)
-    return TokenResponse(access_token=token)
+    return TokenResponse(
+        access_token=token,
+        is_email_verified=user.is_email_verified
+    )
 
 
 @auth_router.get("/profile", response_model=ProfileResponse)

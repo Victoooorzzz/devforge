@@ -3,7 +3,7 @@
 import logging
 
 import stripe
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -91,6 +91,7 @@ webhook_router = APIRouter(tags=["webhooks"])
 @webhook_router.post("/webhooks/stripe")
 async def handle_stripe_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ):
     payload = await request.body()
@@ -116,7 +117,7 @@ async def handle_stripe_webhook(
     elif event_type == "customer.subscription.deleted":
         await _handle_subscription_deleted(event_data, session)
     elif event_type == "invoice.payment_failed":
-        await _handle_payment_failed(event_data, session)
+        await _handle_payment_failed(event_data, session, background_tasks)
     else:
         logger.info("Unhandled Stripe event type: %s", event_type)
 
@@ -157,7 +158,7 @@ async def _handle_subscription_deleted(data: dict, session: AsyncSession) -> Non
         logger.info("Deactivated user %s after subscription cancellation", user.email)
 
 
-async def _handle_payment_failed(data: dict, session: AsyncSession) -> None:
+async def _handle_payment_failed(data: dict, session: AsyncSession, background_tasks: BackgroundTasks) -> None:
     customer_id = data.get("customer")
     if not customer_id:
         return
@@ -168,7 +169,8 @@ async def _handle_payment_failed(data: dict, session: AsyncSession) -> None:
     user = result.scalar_one_or_none()
 
     if user and settings.smtp_host:
-        await send_email(
+        background_tasks.add_task(
+            send_email,
             to=user.email,
             subject="Payment Failed - Action Required",
             html_body=f"""
@@ -187,4 +189,4 @@ async def _handle_payment_failed(data: dict, session: AsyncSession) -> None:
             </div>
             """,
         )
-        logger.info("Sent payment failure email to %s", user.email)
+        logger.info("Scheduled payment failure email to %s", user.email)

@@ -1,0 +1,6 @@
+{
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm turbo build --filter=template...",
+  "outputDirectory": ".next",
+  "framework": "nextjs"
+}

@@ -34,8 +34,8 @@ async def upload_file(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Active subscription required")
+    if not user.has_access:
+        raise HTTPException(status_code=403, detail="Active subscription or trial required")
 
     content = await file.read()
     if len(content) > 50 * 1024 * 1024:

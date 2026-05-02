@@ -94,7 +94,7 @@ async def send_overdue_reminders():
             final_content = raw_template.replace("{amount}", f"${inv.amount:,.2f}").replace("{client_name}", inv.client_name)
 
             logger.info(f"Sending reminder for invoice {inv.id} to {inv.client_email}")
-            await send_email(
+            send_email(
                 to=inv.client_email,
                 subject=f"Action Required: Overdue Invoice for {inv.client_name}",
                 html_body=final_content
@@ -106,8 +106,8 @@ async def send_overdue_reminders():
 
 @invoice_router.post("")
 async def create_invoice(body: InvoiceCreate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Active subscription required")
+    if not user.has_access:
+        raise HTTPException(status_code=403, detail="Active subscription or trial required")
     inv = Invoice(user_id=user.id, client_name=body.client_name, client_email=body.client_email, amount=body.amount, due_date=body.due_date)
     session.add(inv)
     await session.flush()

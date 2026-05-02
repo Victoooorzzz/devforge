@@ -91,7 +91,7 @@ async def run_price_updates():
 
                     if user_settings and user_settings.alert_email:
                         direction = "dropped" if new_price < (t.previous_price or 0) else "changed"
-                        await send_email(
+                        send_email(
                             to=user_settings.alert_email,
                             subject=f"Price Alert: {t.label} has {direction}!",
                             html_body=(
@@ -112,8 +112,8 @@ async def run_price_updates():
 
 @tracker_router.post("")
 async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Active subscription required")
+    if not user.has_access:
+        raise HTTPException(status_code=403, detail="Active subscription or trial required")
     
     # Fetch initial price
     initial_price = await scraper.fetch_price(body.url)

@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { apiClient, setToken, trackEvent } from "@devforge/core";
+import { useRouter } from "next/navigation";
 import { product } from "@/config/product";
 
 export default function LoginPage() {
@@ -10,6 +11,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -17,7 +19,7 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const { data } = await apiClient.post<{ access_token: string }>("/auth/login", {
+      const { data } = await apiClient.post<{ access_token: string; is_email_verified: boolean }>("/auth/login", {
         email,
         password,
       });

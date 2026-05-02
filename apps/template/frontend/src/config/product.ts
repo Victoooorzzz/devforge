@@ -4,7 +4,39 @@
 // This is the ONLY file that changes between products (besides dashboard/ and backend/).
 // Modify these values when cloning the template for a new product.
 
-export const product = {
+export interface Product {
+  name: string;
+  tagline: string;
+  domain: string;
+  url: string;
+  accentColor: string;
+  keyword: string;
+  seoTitle: string;
+  seoDescription: string;
+  navLinks: { label: string; href: string }[];
+  hero: {
+    badge: string;
+    headline: string;
+    subtitle: string;
+    ctaText: string;
+    ctaHref: string;
+    secondaryCtaText: string;
+    secondaryCtaHref: string;
+  };
+  features: { title: string; description: string }[];
+  pricing: {
+    planName: string;
+    price: number;
+    description: string;
+    lsVariantId: string;
+    features: { text: string; included: boolean }[];
+  };
+  testimonials: { quote: string; name: string; role: string }[];
+  dashboardNav: { label: string; href: string }[];
+  plausibleDomain: string;
+}
+
+export const product: Product = {
   // Brand
   name: "Product Name",
   tagline: "Your product tagline goes here",
@@ -93,4 +125,4 @@ export const product = {
 
   // Analytics
   plausibleDomain: "product.io",
-} as const;
+};

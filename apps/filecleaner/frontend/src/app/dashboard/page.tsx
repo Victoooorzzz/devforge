@@ -65,8 +65,8 @@ export default function DashboardPage() {
         const formData = new FormData();
         formData.append("file", file);
         setFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, status: "processing" } : f));
-        const { data } = await uploadFile("/files/upload", formData) as { data: { download_url: string }; status: number };
-        setFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, status: "complete", downloadUrl: data.download_url } : f));
+        const { data } = await uploadFile("/files/upload", formData) as { data: { id: number, download_url: string }; status: number };
+        setFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, id: data.id.toString(), status: "complete", downloadUrl: data.download_url } : f));
       } catch {
         setFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, status: "error" } : f));
       }

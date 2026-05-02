@@ -73,8 +73,8 @@ class FeedbackAnalysis(BaseModel):
 
 @feedback_router.post("")
 async def create_feedback(body: FeedbackCreate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Active subscription required")
+    if not user.has_access:
+        raise HTTPException(status_code=403, detail="Active subscription or trial required")
     entry = FeedbackEntry(user_id=user.id, text=body.text)
     session.add(entry)
     await session.flush()
