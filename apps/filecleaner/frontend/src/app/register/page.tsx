@@ -20,7 +20,7 @@ function RegisterForm() {
     setError("");
 
     try {
-      const { success, error: authError } = await auth.register({
+      const { success, error: authError, isEmailVerified } = await auth.register({
         email,
         password,
         plan: "pro",

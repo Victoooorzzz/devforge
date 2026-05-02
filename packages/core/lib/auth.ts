@@ -50,7 +50,7 @@ export async function fetchWithAuth(
   return response;
 }
 
-export async function login(email: string, password: string): Promise<{ success: boolean; token?: string; error?: string }> {
+export async function login(email: string, password: string): Promise<{ success: boolean; token?: string; error?: string; isEmailVerified?: boolean }> {
   try {
     const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/login`, {
       method: 'POST',
@@ -62,7 +62,7 @@ export async function login(email: string, password: string): Promise<{ success:
 
     if (response.ok) {
       setToken(data.access_token);
-      return { success: true, token: data.access_token };
+      return { success: true, token: data.access_token, isEmailVerified: data.is_email_verified };
     }
 
     return { success: false, error: data.detail || 'Login failed' };
@@ -71,7 +71,30 @@ export async function login(email: string, password: string): Promise<{ success:
   }
 }
 
-export async function register(data: { email: string; password: string; [key: string]: any }): Promise<{ success: boolean; error?: string }> {
+export async function verify(code: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const response = await fetchWithAuth(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+      if (data.access_token) {
+        setToken(data.access_token);
+      }
+      return { success: true };
+    }
+
+    return { success: false, error: data.detail || 'Verification failed' };
+  } catch (err) {
+    return { success: false, error: 'Connection error' };
+  }
+}
+
+export async function register(data: { email: string; password: string; [key: string]: any }): Promise<{ success: boolean; error?: string; isEmailVerified?: boolean }> {
   try {
     const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/register`, {
       method: 'POST',
@@ -85,7 +108,7 @@ export async function register(data: { email: string; password: string; [key: st
       if (result.access_token) {
         setToken(result.access_token);
       }
-      return { success: true };
+      return { success: true, isEmailVerified: result.is_email_verified };
     }
 
     return { success: false, error: result.detail || 'Registration failed' };

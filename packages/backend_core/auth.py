@@ -11,7 +11,9 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
 
+import random
 from .config import get_settings
+from .email_service import send_email
 from .database import get_session
 
 settings = get_settings()
@@ -32,6 +34,8 @@ class User(SQLModel, table=True):
     lemonsqueezy_customer_id: Optional[str] = Field(default=None, index=True)
 
     is_active: bool = Field(default=False)
+    is_email_verified: bool = Field(default=False)
+    verification_code: Optional[str] = Field(default=None)
     trial_ends_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -63,12 +67,18 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    is_email_verified: bool = False
+
+
+class VerifyRequest(BaseModel):
+    code: str
 
 
 class UserResponse(BaseModel):
     id: int
     email: str
     is_active: bool
+    is_email_verified: bool
     is_on_trial: bool
     has_access: bool
     trial_ends_at: Optional[datetime]
@@ -83,6 +93,7 @@ class ProfileResponse(BaseModel):
     email: str
     name: Optional[str]
     is_active: bool
+    is_email_verified: bool
     is_on_trial: bool
     has_access: bool
     has_active_subscription: bool
@@ -148,7 +159,6 @@ async def get_current_user(
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
-
 @auth_router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest, session: AsyncSession = Depends(get_session)):
     existing = await session.execute(select(User).where(User.email == body.email))
@@ -158,17 +168,58 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
             detail="Email already registered",
         )
 
+    # Generate verification code
+    v_code = str(random.randint(100000, 999999))
+    
     user = User(
         email=body.email,
         hashed_password=hash_password(body.password),
         is_active=False,
+        is_email_verified=False,
+        verification_code=v_code
     )
     session.add(user)
     await session.flush()
     await session.refresh(user)
 
+    # Send verification email
+    try:
+        await send_email(
+            to=user.email,
+            subject="Verifica tu cuenta en DevForge",
+            html_body=f"""
+            <div style="font-family: sans-serif; padding: 20px; border: 1px solid #6366f1; border-radius: 12px;">
+                <h2 style="color: #4338ca;">Bienvenido a DevForge</h2>
+                <p>Tu código de verificación es:</p>
+                <div style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #6366f1; margin: 20px 0;">
+                    {v_code}
+                </div>
+                <p>Ingresa este código en la aplicación para activar tu cuenta.</p>
+            </div>
+            """
+        )
+    except Exception as e:
+        print(f"Error sending verification email: {e}")
+
     token = create_access_token(user.id, user.email)
-    return TokenResponse(access_token=token)
+    return TokenResponse(access_token=token, is_email_verified=False)
+
+
+@auth_router.post("/verify", response_model=TokenResponse)
+async def verify_email(body: VerifyRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    if user.verification_code != body.code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Código de verificación incorrecto",
+        )
+    
+    user.is_email_verified = True
+    user.verification_code = None
+    session.add(user)
+    await session.commit()
+    
+    token = create_access_token(user.id, user.email)
+    return TokenResponse(access_token=token, is_email_verified=True)
 
 
 @auth_router.post("/login", response_model=TokenResponse)

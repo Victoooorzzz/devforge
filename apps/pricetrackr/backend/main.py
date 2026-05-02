@@ -92,12 +92,12 @@ async def run_price_updates():
                     if user_settings and user_settings.alert_email:
                         direction = "dropped" if new_price < (t.previous_price or 0) else "changed"
                         await send_email(
-                            to_email=user_settings.alert_email,
+                            to=user_settings.alert_email,
                             subject=f"Price Alert: {t.label} has {direction}!",
-                            content=(
+                            html_body=(
                                 f"The price of {t.label} has {direction} "
-                                f"from ${t.previous_price:,.2f} to ${t.current_price:,.2f}.\n\n"
-                                f"Check it out: {t.url}"
+                                f"from ${t.previous_price:,.2f} to ${t.current_price:,.2f}.<br><br>"
+                                f"Check it out: <a href='{t.url}'>{t.url}</a>"
                             )
                         )
                         logger.info(f"Alert sent to {user_settings.alert_email} for {t.label}")

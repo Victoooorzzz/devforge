@@ -1,11 +1,11 @@
-export { setToken, getToken, removeToken, isAuthenticated, fetchWithAuth, login, register } from "./lib/auth";
+export { setToken, getToken, removeToken, isAuthenticated, fetchWithAuth, login, register, verify } from "./lib/auth";
 export { apiClient, uploadFile } from "./lib/api";
 export { createCheckoutSession, redirectToCheckout } from "./lib/payments";
 
 export { trackEvent, PlausibleScript } from "./lib/analytics";
 export { generateMetadata, generateSoftwareAppJsonLd, generateOrganizationJsonLd } from "./lib/seo";
 
-import { setToken, getToken, removeToken, isAuthenticated, fetchWithAuth, login, register } from "./lib/auth";
+import { setToken, getToken, removeToken, isAuthenticated, fetchWithAuth, login, register, verify } from "./lib/auth";
 
 export const auth = {
   setToken,
@@ -15,5 +15,6 @@ export const auth = {
   isAuthenticated,
   fetchWithAuth,
   login,
-  register
+  register,
+  verify
 };

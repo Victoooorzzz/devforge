@@ -95,9 +95,9 @@ async def send_overdue_reminders():
 
             logger.info(f"Sending reminder for invoice {inv.id} to {inv.client_email}")
             await send_email(
-                to_email=inv.client_email,
+                to=inv.client_email,
                 subject=f"Action Required: Overdue Invoice for {inv.client_name}",
-                content=final_content
+                html_body=final_content
             )
             inv.reminders_sent += 1
             inv.last_reminder_date = today
