@@ -5,15 +5,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime, timezone
-import asyncio
-import logging
+import asyncio, logging
 
 from backend_core import create_app, get_current_user, get_session, User, scraper
+from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 
 logger = logging.getLogger(__name__)
+
+# SQL migrations needed for new columns on existing DB:
+# ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS min_price FLOAT;
+# ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS in_stock BOOLEAN;
+# (PriceHistory is a new table — created automatically by SQLModel)
+
 
 class TrackedUrl(SQLModel, table=True):
     __tablename__ = "tracked_urls"
@@ -23,9 +29,21 @@ class TrackedUrl(SQLModel, table=True):
     label: str
     current_price: Optional[float] = None
     previous_price: Optional[float] = None
+    min_price: Optional[float] = None          # historical minimum
+    in_stock: Optional[bool] = None            # stock status
     last_checked: Optional[datetime] = None
     status: str = Field(default="active")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class PriceHistory(SQLModel, table=True):
+    __tablename__ = "price_history"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tracker_id: int = Field(index=True)
+    price: Optional[float] = None
+    in_stock: Optional[bool] = None
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 
 class TrackerSettings(SQLModel, table=True):
     __tablename__ = "tracker_settings"
@@ -33,16 +51,20 @@ class TrackerSettings(SQLModel, table=True):
     alert_email: str = Field(default="")
     frequency: str = Field(default="24h")
 
+
 class TrackerCreate(BaseModel):
     url: str
     label: str
+
 
 class TrackerPrefsUpdate(BaseModel):
     alert_email: str
     frequency: str
 
+
 tracker_router = APIRouter(prefix="/trackers", tags=["trackers"])
 settings_router = APIRouter(prefix="/settings", tags=["settings"])
+
 
 @settings_router.get("/tracker-prefs")
 async def get_tracker_prefs(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
@@ -53,6 +75,7 @@ async def get_tracker_prefs(user: User = Depends(get_current_user), session: Asy
         session.add(settings)
         await session.flush()
     return {"alert_email": settings.alert_email, "frequency": settings.frequency}
+
 
 @settings_router.put("/tracker-prefs")
 async def update_tracker_prefs(body: TrackerPrefsUpdate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
@@ -67,73 +90,149 @@ async def update_tracker_prefs(body: TrackerPrefsUpdate, user: User = Depends(ge
     await session.flush()
     return {"alert_email": settings.alert_email, "frequency": settings.frequency}
 
+
 async def run_price_updates():
-    """Background task to update all prices safely and send alerts."""
-    from backend_core.database import SessionLocal
-    async with SessionLocal() as session:
+    """Cron job: actualiza precios, detecta mínimos históricos y cambios de stock."""
+    async with get_managed_session() as session:
         result = await session.execute(select(TrackedUrl).where(TrackedUrl.status == "active"))
         trackers = result.scalars().all()
+
         for t in trackers:
             try:
                 new_price = await scraper.fetch_price(t.url)
+                new_stock = await scraper.fetch_stock(t.url)
+                now = datetime.now(timezone.utc)
 
-                if new_price and new_price != t.current_price:
+                price_changed = new_price is not None and new_price != t.current_price
+                stock_changed = new_stock is not None and new_stock != t.in_stock
+
+                if price_changed:
                     t.previous_price = t.current_price
                     t.current_price = new_price
-                    t.last_checked = datetime.now(timezone.utc)
+                    # Track historical minimum
+                    if t.min_price is None or new_price < t.min_price:
+                        t.min_price = new_price
+
+                if new_stock is not None:
+                    t.in_stock = new_stock
+
+                if price_changed or stock_changed:
+                    t.last_checked = now
                     session.add(t)
 
-                    # Send price-change alert if user configured an email
-                    settings_req = await session.execute(
-                        select(TrackerSettings).where(TrackerSettings.user_id == t.user_id)
+                    # Record in price history
+                    history = PriceHistory(
+                        tracker_id=t.id,
+                        price=new_price,
+                        in_stock=new_stock,
+                        recorded_at=now,
                     )
-                    user_settings = settings_req.scalar_one_or_none()
+                    session.add(history)
 
-                    if user_settings and user_settings.alert_email:
-                        direction = "dropped" if new_price < (t.previous_price or 0) else "changed"
+                # --- Alerts ---
+                settings_res = await session.execute(
+                    select(TrackerSettings).where(TrackerSettings.user_id == t.user_id)
+                )
+                user_settings = settings_res.scalar_one_or_none()
+                alert_email = user_settings.alert_email if user_settings else ""
+
+                if alert_email:
+                    # Price drop alert
+                    if price_changed and t.previous_price and new_price < t.previous_price:
+                        direction = "bajó"
                         send_email(
-                            to=user_settings.alert_email,
-                            subject=f"Price Alert: {t.label} has {direction}!",
+                            to=alert_email,
+                            subject=f"📉 Bajada de precio: {t.label}",
                             html_body=(
-                                f"The price of {t.label} has {direction} "
-                                f"from ${t.previous_price:,.2f} to ${t.current_price:,.2f}.<br><br>"
-                                f"Check it out: <a href='{t.url}'>{t.url}</a>"
+                                f"<p>El precio de <strong>{t.label}</strong> {direction} "
+                                f"de <strong>${t.previous_price:,.2f}</strong> a <strong>${new_price:,.2f}</strong>.</p>"
+                                f"<p>{'🎯 ¡Es el mínimo histórico registrado!' if new_price == t.min_price else ''}</p>"
+                                f"<p><a href='{t.url}'>Ver producto</a></p>"
                             )
                         )
-                        logger.info(f"Alert sent to {user_settings.alert_email} for {t.label}")
+
+                    # Back in stock alert
+                    if stock_changed and new_stock is True and t.in_stock is False:
+                        send_email(
+                            to=alert_email,
+                            subject=f"✅ Volvió al stock: {t.label}",
+                            html_body=(
+                                f"<p><strong>{t.label}</strong> volvió a estar disponible.</p>"
+                                f"<p>Precio actual: <strong>${new_price:,.2f}</strong></p>" if new_price else ""
+                                f"<p><a href='{t.url}'>Ver producto</a></p>"
+                            )
+                        )
+                        logger.info(f"Stock alert sent for {t.label}")
 
             except Exception as e:
-                logger.error(f"Error scraping {t.url}: {e}")
+                logger.error(f"Error updating {t.url}: {e}")
 
-            # Anti-ban: mandatory pause between requests
-            await asyncio.sleep(3)
+            await asyncio.sleep(3)  # Anti-ban
 
         await session.commit()
+
 
 @tracker_router.post("")
 async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     if not user.has_access:
         raise HTTPException(status_code=403, detail="Active subscription or trial required")
-    
-    # Fetch initial price
+
     initial_price = await scraper.fetch_price(body.url)
-    
+    initial_stock = await scraper.fetch_stock(body.url)
+
     t = TrackedUrl(
-        user_id=user.id, 
-        url=body.url, 
+        user_id=user.id,
+        url=body.url,
         label=body.label,
         current_price=initial_price,
-        last_checked=datetime.now(timezone.utc) if initial_price else None
+        min_price=initial_price,
+        in_stock=initial_stock,
+        last_checked=datetime.now(timezone.utc) if initial_price else None,
     )
     session.add(t)
     await session.flush()
     await session.refresh(t)
+
+    # Record initial price history point
+    if initial_price:
+        history = PriceHistory(tracker_id=t.id, price=initial_price, in_stock=initial_stock)
+        session.add(history)
+        await session.flush()
+
     return t
+
 
 @tracker_router.get("/list")
 async def list_trackers(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(TrackedUrl).where(TrackedUrl.user_id == user.id).order_by(TrackedUrl.created_at.desc()))
     return result.scalars().all()
+
+
+@tracker_router.get("/{tracker_id}/history")
+async def get_price_history(tracker_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    """Retorna los últimos 30 puntos del historial de precios para graficar."""
+    # Verify ownership
+    t_res = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id))
+    t = t_res.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+
+    hist_res = await session.execute(
+        select(PriceHistory)
+        .where(PriceHistory.tracker_id == tracker_id)
+        .order_by(PriceHistory.recorded_at.asc())
+        .limit(30)
+    )
+    history = hist_res.scalars().all()
+    return [
+        {
+            "price": h.price,
+            "in_stock": h.in_stock,
+            "recorded_at": h.recorded_at.isoformat(),
+        }
+        for h in history
+    ]
+
 
 @tracker_router.delete("/{tracker_id}")
 async def delete_tracker(tracker_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
@@ -144,19 +243,18 @@ async def delete_tracker(tracker_id: int, user: User = Depends(get_current_user)
     await session.delete(t)
     return {"status": "deleted"}
 
+
 app = create_app(
-    title="Price Tracker", 
-    description="Monitor competitor prices and get alerts", 
+    title="Price Tracker",
+    description="Monitor competitor prices and get alerts",
     domain_routers=[tracker_router, settings_router]
 )
 
 @app.on_event("startup")
 async def schedule_price_jobs():
     app.state.scheduler.add_job(
-        run_price_updates,
-        "interval",
-        hours=24,
-        id="price_update_job"
+        run_price_updates, "interval", hours=24,
+        id="price_update_job", replace_existing=True
     )
 
 if __name__ == "__main__":
