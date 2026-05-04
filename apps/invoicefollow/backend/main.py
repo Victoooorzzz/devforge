@@ -1,4 +1,4 @@
-import sys, os
+﻿import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,7 +19,7 @@ class Invoice(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(index=True)
     client_name: str
-    client_email: str = Field(default="test@example.com") # Necesario para recordatorios
+    client_email: str = Field(default="")
     amount: float
     due_date: date
     status: str = Field(default="pending")

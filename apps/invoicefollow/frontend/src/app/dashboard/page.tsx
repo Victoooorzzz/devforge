@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState, useEffect } from "react";
 import { apiClient, trackEvent } from "@devforge/core";
 
@@ -14,7 +14,7 @@ interface Invoice {
 export default function DashboardPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ client_name: "", amount: "", due_date: "" });
+  const [form, setForm] = useState({ client_name: "", client_email: "", amount: "", due_date: "" });
   const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
@@ -24,9 +24,9 @@ export default function DashboardPage() {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     trackEvent("feature_used", { feature_name: "add_invoice" });
-    const { data } = await apiClient.post<Invoice>("/invoices", { client_name: form.client_name, amount: parseFloat(form.amount), due_date: form.due_date });
+    const { data } = await apiClient.post<Invoice>("/invoices", { client_name: form.client_name, client_email: form.client_email, amount: parseFloat(form.amount), due_date: form.due_date });
     setInvoices((prev) => [data, ...prev]);
-    setForm({ client_name: "", amount: "", due_date: "" });
+    setForm({ client_name: "", client_email: "", amount: "", due_date: "" });
     setShowForm(false);
   };
 
@@ -69,7 +69,8 @@ export default function DashboardPage() {
 
       {showForm && (
         <form onSubmit={handleAdd} className="p-6 rounded-lg mb-8 grid grid-cols-1 md:grid-cols-4 gap-4 items-end" style={{ backgroundColor: "var(--color-surface)" }}>
-          <div><label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Client</label><input value={form.client_name} onChange={(e) => setForm({ ...form, client_name: e.target.value })} className="input-field" required /></div>
+          <div><label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Client Name</label><input value={form.client_name} onChange={(e) => setForm({ ...form, client_name: e.target.value })} className="input-field" required /></div>
+          <div><label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Client Email</label><input type="email" value={form.client_email} onChange={(e) => setForm({ ...form, client_email: e.target.value })} className="input-field" required /></div>
           <div><label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Amount ($)</label><input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="input-field" required /></div>
           <div><label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Due Date</label><input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} className="input-field" required /></div>
           <button type="submit" className="btn-primary">Save</button>

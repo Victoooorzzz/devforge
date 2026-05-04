@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState, useCallback, useEffect } from "react";
 import { uploadFile, trackEvent, apiClient } from "@devforge/core";
 
@@ -95,11 +95,11 @@ export default function DashboardPage() {
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={(e) => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files); }}
-        onClick={() => { const input = document.createElement("input"); input.type = "file"; input.multiple = true; input.onchange = (e) => { const f = (e.target as HTMLInputElement).files; if (f) handleFiles(f); }; input.click(); }}
+        onClick={() => { const input = document.createElement("input"); input.type = "file"; input.accept = ".csv,.xlsx,.xls"; input.multiple = true; input.onchange = (e) => { const f = (e.target as HTMLInputElement).files; if (f) handleFiles(f); }; input.click(); }}
       >
         <svg className="mx-auto mb-4" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: "var(--color-text-secondary)" }}><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         <p className="text-sm font-medium mb-1" style={{ color: "var(--color-text)" }}>Drop files here or click to upload</p>
-        <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>PNG, JPEG, WebP, PDF — up to 50 MB each</p>
+        <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>CSV and Excel files (.csv, .xlsx, .xls) — up to 50 MB</p>
       </div>
 
       {/* File List */}
