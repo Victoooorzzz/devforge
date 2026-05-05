@@ -5,13 +5,13 @@ import hmac
 import hashlib
 import os
 
-BASE_URL = "https://devforge-universal-backend.onrender.com"
+BASE_URL = "http://127.0.0.1:8001"
 WEBHOOK_SECRET = "devforge_secure_webhook_2026" # Hardcoded from previous context for the test
 TEST_EMAIL = f"e2e_test_{int(time.time())}@devforge.app"
 TEST_PASS = "TestPassword123!"
 
 print("="*50)
-print("🚀 INICIANDO TEST END-TO-E2E EN PRODUCCIÓN (Render)")
+print("🚀 INICIANDO TEST END-TO-E2E LOCAL")
 print("="*50)
 
 # 1. Register
@@ -36,6 +36,7 @@ headers = {"Authorization": f"Bearer {token}"}
 # 3. Check Profile (Before Payment)
 print("\n3️⃣ Perfil antes del pago (Debe ser TRIAL o INACTIVE)")
 res_prof1 = requests.get(f"{BASE_URL}/auth/profile", headers=headers)
+print(f"Status: {res_prof1.status_code}, Text: {res_prof1.text[:200]}")
 prof1 = res_prof1.json()
 user_id = prof1.get("id")
 print(f"Estado de suscripción: {prof1.get('subscription_status')}")
