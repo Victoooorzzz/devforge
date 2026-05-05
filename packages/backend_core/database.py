@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
 from .config import get_settings
+from .outbox_models import SystemOutbox, InvoiceMagicLink
 
 settings = get_settings()
 

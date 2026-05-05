@@ -5,13 +5,13 @@ import hmac
 import hashlib
 import os
 
-BASE_URL = "http://127.0.0.1:8001"
+BASE_URL = "https://devforge-universal-backend.onrender.com"
 WEBHOOK_SECRET = "devforge_secure_webhook_2026" # Hardcoded from previous context for the test
 TEST_EMAIL = f"e2e_test_{int(time.time())}@devforge.app"
 TEST_PASS = "TestPassword123!"
 
 print("="*50)
-print("🚀 INICIANDO TEST END-TO-E2E LOCAL")
+print("🚀 INICIANDO TEST END-TO-E2E EN PRODUCCIÓN (Render)")
 print("="*50)
 
 # 1. Register

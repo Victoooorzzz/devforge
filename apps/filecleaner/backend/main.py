@@ -15,16 +15,48 @@ import logging
 from fastapi.concurrency import run_in_threadpool
 from backend_core import create_app, get_current_user, get_session, User, require_user_access
 from backend_core.database import get_managed_session
+from backend_core.outbox_models import SystemOutbox
+from backend_core.worker import register_job_handler
 
 logger = logging.getLogger(__name__)
 
-# SQL migrations needed for new columns:
-# ALTER TABLE processed_files ADD COLUMN IF NOT EXISTS rows_original INTEGER DEFAULT 0;
-# ALTER TABLE processed_files ADD COLUMN IF NOT EXISTS rows_clean INTEGER DEFAULT 0;
-# ALTER TABLE processed_files ADD COLUMN IF NOT EXISTS duplicates_removed INTEGER DEFAULT 0;
-# ALTER TABLE processed_files ADD COLUMN IF NOT EXISTS empty_removed INTEGER DEFAULT 0;
 # ALTER TABLE processed_files ADD COLUMN IF NOT EXISTS whitespace_fixed INTEGER DEFAULT 0;
 # ALTER TABLE processed_files ADD COLUMN IF NOT EXISTS job_status VARCHAR DEFAULT 'queued';
+
+async def cron_cleanup_files():
+    """
+    Periodic task to delete files older than 24 hours from S3/R2 and database.
+    """
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    
+    async with get_managed_session() as session:
+        result = await session.execute(
+            select(ProcessedFile).where(ProcessedFile.created_at < cutoff)
+        )
+        old_files = result.scalars().all()
+        
+        if not old_files:
+            return 0
+            
+        bucket_name = os.getenv("R2_BUCKET_NAME")
+        s3 = _get_s3_client()
+        
+        count = 0
+        for f in old_files:
+            # Delete from R2
+            if bucket_name:
+                for prefix in ["raw", "cleaned", "magic-clean"]:
+                    try:
+                        s3.delete_object(Bucket=bucket_name, Key=f"{prefix}/{f.id}_{f.original_name}")
+                    except:
+                        pass
+            # Delete from DB
+            await session.delete(f)
+            count += 1
+            
+        await session.commit()
+        return count
 
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB
 
@@ -72,8 +104,19 @@ def _save_df(df: pd.DataFrame, filename: str) -> io.BytesIO:
     return buf
 
 
-async def _process_file_background(record_id: int, content: bytes, filename: str):
-    """Background task: processes the file and updates the DB record."""
+async def handle_process_csv(payload: dict):
+    record_id = payload["record_id"]
+    object_key = payload["object_key"]
+    filename = payload["filename"]
+    
+    bucket_name = os.getenv("R2_BUCKET_NAME")
+    s3 = _get_s3_client()
+    
+    # Download raw file
+    raw_buf = io.BytesIO()
+    s3.download_fileobj(bucket_name, object_key, raw_buf)
+    content = raw_buf.getvalue()
+
     async with get_managed_session() as session:
         record = await session.get(ProcessedFile, record_id)
         if not record:
@@ -113,11 +156,8 @@ async def _process_file_background(record_id: int, content: bytes, filename: str
                 process_dataframe, content, filename
             )
 
-            bucket_name = os.getenv("R2_BUCKET_NAME")
-            if bucket_name:
-                s3 = _get_s3_client()
-                object_name = f"cleaned/{record.id}_{filename}"
-                s3.upload_fileobj(out_buf, bucket_name, object_name)
+            object_name = f"cleaned/{record.id}_{filename}"
+            s3.upload_fileobj(out_buf, bucket_name, object_name)
 
             record.status = "complete"
             record.download_url = f"/files/{record.id}/download"
@@ -134,6 +174,8 @@ async def _process_file_background(record_id: int, content: bytes, filename: str
 
         session.add(record)
         await session.commit()
+
+register_job_handler("filecleaner", "process_csv", handle_process_csv)
 
 
 # --- Routers ---
@@ -170,8 +212,28 @@ async def upload_file(
     await session.commit()
     await session.refresh(record)
 
-    # Fire and forget — response is immediate
-    background_tasks.add_task(_process_file_background, record.id, content, record.original_name)
+    # Upload raw to R2
+    bucket_name = os.getenv("R2_BUCKET_NAME")
+    if not bucket_name:
+        raise HTTPException(status_code=500, detail="Storage not configured")
+        
+    s3 = _get_s3_client()
+    raw_key = f"raw/{record.id}_{record.original_name}"
+    s3.upload_fileobj(io.BytesIO(content), bucket_name, raw_key)
+
+    # Enqueue to system_outbox
+    job = SystemOutbox(
+        app_name="filecleaner",
+        job_type="process_csv",
+        payload={
+            "record_id": record.id,
+            "object_key": raw_key,
+            "filename": record.original_name
+        },
+        priority=5
+    )
+    session.add(job)
+    await session.commit()
 
     return {"id": record.id, "status": "queued", "name": record.original_name}
 
@@ -318,71 +380,105 @@ async def magic_clean(
     await session.commit()
     await session.refresh(record)
 
-    async def magic_background(rec_id: int, file_content: bytes, fname: str):
-        async with get_managed_session() as bg_session:
-            rec = await bg_session.get(ProcessedFile, rec_id)
-            if not rec:
-                return
-            try:
-                import re
-                rec.status = "processing"
-                bg_session.add(rec)
-                await bg_session.commit()
+    # Upload raw to R2
+    bucket_name = os.getenv("R2_BUCKET_NAME")
+    if not bucket_name:
+        raise HTTPException(status_code=500, detail="Storage not configured")
+        
+    s3 = _get_s3_client()
+    raw_key = f"raw/{record.id}_{record.original_name}"
+    s3.upload_fileobj(io.BytesIO(content), bucket_name, raw_key)
 
-                def run_magic(fc: bytes, fn: str):
-                    df = _load_df(fc, fn)
-                    for col in df.columns:
-                        col_lower = col.lower()
-                        s = df[col]
-                        if any(k in col_lower for k in ["email", "correo", "mail"]):
-                            df[col] = s.astype(str).str.strip().str.lower()
-                        elif any(k in col_lower for k in ["phone", "telefono", "tel", "celular"]):
-                            def norm_phone(v):
-                                if pd.isna(v): return v
-                                d = re.sub(r"\D", "", str(v))
-                                if len(d) == 9: return f"+51 {d[:3]} {d[3:6]} {d[6:]}"
-                                if len(d) == 10: return f"+1 ({d[:3]}) {d[3:6]}-{d[6:]}"
-                                return d if d else str(v)
-                            df[col] = s.apply(norm_phone)
-                        elif any(k in col_lower for k in ["price", "precio", "amount", "monto", "cost", "total"]):
-                            def clean_price(v):
-                                if pd.isna(v): return v
-                                cleaned = re.sub(r"[^\d.,]", "", str(v)).replace(",", ".")
-                                try: return float(cleaned)
-                                except: return v
-                            df[col] = s.apply(clean_price)
-                        elif any(k in col_lower for k in ["date", "fecha", "created", "updated"]):
-                            df[col] = pd.to_datetime(s, dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d').where(
-                                pd.to_datetime(s, dayfirst=True, errors='coerce').notna(), other=s.astype(str)
-                            )
-                        elif any(k in col_lower for k in ["name", "nombre", "city", "ciudad"]):
-                            df[col] = s.astype(str).str.strip().str.title()
-                    rows_before = len(df)
-                    df.dropna(how='all', inplace=True)
-                    df.drop_duplicates(inplace=True)
-                    return df, rows_before, len(df)
+    # Enqueue to system_outbox
+    job = SystemOutbox(
+        app_name="filecleaner",
+        job_type="magic_clean",
+        payload={
+            "record_id": record.id,
+            "object_key": raw_key,
+            "filename": record.original_name
+        },
+        priority=5
+    )
+    session.add(job)
+    await session.commit()
 
-                df_clean, rows_orig, rows_clean = await run_in_threadpool(run_magic, file_content, fname)
-                out_buf = _save_df(df_clean, fname)
+    return {"id": record.id, "status": "queued"}
 
-                bucket_name = os.getenv("R2_BUCKET_NAME")
-                if bucket_name:
-                    s3 = _get_s3_client()
-                    object_name = f"magic-clean/{rec.id}_{fname}"
-                    s3.upload_fileobj(out_buf, bucket_name, object_name)
+async def handle_magic_clean(payload: dict):
+    record_id = payload["record_id"]
+    object_key = payload["object_key"]
+    filename = payload["filename"]
+    
+    bucket_name = os.getenv("R2_BUCKET_NAME")
+    s3 = _get_s3_client()
+    
+    # Download raw file
+    raw_buf = io.BytesIO()
+    s3.download_fileobj(bucket_name, object_key, raw_buf)
+    content = raw_buf.getvalue()
 
-                rec.status = "complete"
-                rec.download_url = f"/files/{rec.id}/download"
-                rec.rows_original = rows_orig
-                rec.rows_clean = rows_clean
-            except Exception as e:
-                rec.status = "error"
-                rec.error_message = str(e)[:500]
+    async with get_managed_session() as bg_session:
+        rec = await bg_session.get(ProcessedFile, record_id)
+        if not rec:
+            return
+        try:
+            import re
+            rec.status = "processing"
             bg_session.add(rec)
             await bg_session.commit()
 
-    background_tasks.add_task(magic_background, record.id, content, record.original_name)
-    return {"id": record.id, "status": "queued"}
+            def run_magic(fc: bytes, fn: str):
+                df = _load_df(fc, fn)
+                for col in df.columns:
+                    col_lower = col.lower()
+                    s = df[col]
+                    if any(k in col_lower for k in ["email", "correo", "mail"]):
+                        df[col] = s.astype(str).str.strip().str.lower()
+                    elif any(k in col_lower for k in ["phone", "telefono", "tel", "celular"]):
+                        def norm_phone(v):
+                            if pd.isna(v): return v
+                            d = re.sub(r"\D", "", str(v))
+                            if len(d) == 9: return f"+51 {d[:3]} {d[3:6]} {d[6:]}"
+                            if len(d) == 10: return f"+1 ({d[:3]}) {d[3:6]}-{d[6:]}"
+                            return d if d else str(v)
+                        df[col] = s.apply(norm_phone)
+                    elif any(k in col_lower for k in ["price", "precio", "amount", "monto", "cost", "total"]):
+                        def clean_price(v):
+                            if pd.isna(v): return v
+                            cleaned = re.sub(r"[^\d.,]", "", str(v)).replace(",", ".")
+                            try: return float(cleaned)
+                            except: return v
+                        df[col] = s.apply(clean_price)
+                    elif any(k in col_lower for k in ["date", "fecha", "created", "updated"]):
+                        df[col] = pd.to_datetime(s, dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d').where(
+                            pd.to_datetime(s, dayfirst=True, errors='coerce').notna(), other=s.astype(str)
+                        )
+                    elif any(k in col_lower for k in ["name", "nombre", "city", "ciudad"]):
+                        df[col] = s.astype(str).str.strip().str.title()
+                rows_before = len(df)
+                df.dropna(how='all', inplace=True)
+                df.drop_duplicates(inplace=True)
+                return df, rows_before, len(df)
+
+            df_clean, rows_orig, rows_clean = await run_in_threadpool(run_magic, content, filename)
+            out_buf = _save_df(df_clean, filename)
+
+            object_name = f"magic-clean/{rec.id}_{filename}"
+            s3.upload_fileobj(out_buf, bucket_name, object_name)
+
+            rec.status = "complete"
+            rec.download_url = f"/files/{rec.id}/download"
+            rec.rows_original = rows_orig
+            rec.rows_clean = rows_clean
+        except Exception as e:
+            logger.error(f"Magic clean failed for {record_id}: {e}", exc_info=True)
+            rec.status = "error"
+            rec.error_message = str(e)[:500]
+        bg_session.add(rec)
+        await bg_session.commit()
+
+register_job_handler("filecleaner", "magic_clean", handle_magic_clean)
 
 
 @file_router.get("/{file_id}/download")

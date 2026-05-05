@@ -30,6 +30,7 @@ from apps.feedbacklens.backend.main import (
 from apps.filecleaner.backend.main import (
     file_router,
     ProcessedFile,
+    cron_cleanup_files as file_cleanup_cron,
 )
 
 # InvoiceFollow
@@ -39,7 +40,7 @@ from apps.invoicefollow.backend.main import (
     public_router as iv_public_router,
     Invoice,
     InvoiceSettings,
-    send_overdue_reminders,
+    cron_enqueue_reminders as invoice_cron,
 )
 
 # PriceTrackr
@@ -49,7 +50,7 @@ from apps.pricetrackr.backend.main import (
     TrackedUrl,
     PriceHistory,
     TrackerSettings,
-    run_price_updates,
+    cron_update_prices as price_cron
 )
 
 # WebhookMonitor
@@ -60,6 +61,8 @@ from apps.webhookmonitor.backend.main import (
     WebhookEndpoint,
     WebhookRequest,
     WebhookSettings,
+    cron_silence_check as webhook_silence_cron,
+    cron_cleanup_logs as webhook_cleanup_cron
 )
 
 # Admin
@@ -95,8 +98,58 @@ app = create_app(
     domain_routers=all_domain_routers
 )
 
-# El orquestador ya no usa APScheduler local para ser compatible con Vercel/Serverless.
-# Los jobs se ejecutan llamando a los endpoints /cron/* de cada router.
+# --- Master Enqueuer for cron-job.org ---
+@app.post("/worker/enqueue-periodic", tags=["Worker"])
+async def enqueue_periodic_tasks(authorization: str = None):
+    """
+    Master trigger for all periodic tasks across all products.
+    Should be called every hour by cron-job.org.
+    """
+    expected = settings.cron_secret
+    if expected and authorization != f"Bearer {expected}":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    results = {}
+    
+    # 1. PriceTrackr: Check which prices need updating
+    try:
+        await price_cron()
+        results["pricetrackr"] = "enqueued"
+    except Exception as e:
+        results["pricetrackr"] = f"error: {str(e)}"
+        
+    # 2. InvoiceFollow: Check for overdue invoices
+    try:
+        await invoice_cron()
+        results["invoicefollow"] = "enqueued"
+    except Exception as e:
+        results["invoicefollow"] = f"error: {str(e)}"
+        
+    # 3. FeedbackLens: Send weekly summaries (internally checks day of week)
+    try:
+        from apps.feedbacklens.backend.main import weekly_summary_cron
+        await weekly_summary_cron()
+        results["feedbacklens"] = "enqueued"
+    except Exception as e:
+        results["feedbacklens"] = f"error: {str(e)}"
+
+    # 4. WebhookMonitor: Silence checks and log cleanup
+    try:
+        await webhook_silence_cron()
+        await webhook_cleanup_cron()
+        results["webhookmonitor"] = "enqueued"
+    except Exception as e:
+        results["webhookmonitor"] = f"error: {str(e)}"
+
+    # 5. FileCleaner: Delete files older than 24h
+    try:
+        count = await file_cleanup_cron()
+        results["filecleaner"] = f"cleaned {count} files"
+    except Exception as e:
+        results["filecleaner"] = f"error: {str(e)}"
+
+    return {"status": "success", "results": results}
 
 if __name__ == "__main__":
     import uvicorn

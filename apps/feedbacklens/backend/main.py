@@ -13,6 +13,8 @@ from collections import Counter
 from backend_core import create_app, get_current_user, get_session, get_settings, User, require_user_access
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
+from backend_core.outbox_models import SystemOutbox
+from backend_core.worker import register_job_handler
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -265,7 +267,7 @@ async def list_feedback(user: User = Depends(require_user_access), session: Asyn
 @feedback_router.post("/{entry_id}/analyze")
 async def analyze_feedback(entry_id: int, user: User = Depends(require_user_access), session: AsyncSession = Depends(get_session)):
     """
-    Analyze feedback using Gemini (platform key) → VADER → keyword fallback.
+    Enqueues feedback analysis using Gemini / VADER fallback.
     Users never need to provide an API key.
     """
     result = await session.execute(
@@ -275,27 +277,58 @@ async def analyze_feedback(entry_id: int, user: User = Depends(require_user_acce
     if not entry:
         raise HTTPException(status_code=404, detail="Not found")
 
-    # Fetch user's custom prompt
-    s_res = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == user.id))
-    prefs = s_res.scalar_one_or_none()
-    custom_prompt = prefs.custom_prompt if prefs else ""
+    job = SystemOutbox(
+        app_name="feedbacklens",
+        job_type="analyze_feedback",
+        payload={"entry_id": entry.id, "user_id": user.id},
+        status="pending",
+        max_attempts=3
+    )
+    session.add(job)
+    await session.commit()
+    
+    return {"status": "queued", "message": "Analysis queued in system_outbox"}
 
-    # Try Gemini first, then VADER, then keyword
-    analysis = await _analyze_with_gemini(entry.text, custom_prompt)
-    if analysis is None:
-        analysis = _analyze_with_vader(entry.text)
 
-    entry.sentiment = analysis["sentiment"]
-    entry.confidence = analysis["confidence"]
-    entry.themes_json = json.dumps(analysis["themes"])
-    entry.is_urgent = analysis["is_urgent"]
-    entry.draft_reply = analysis.get("draft_reply")
-    entry.analysis_engine = analysis["engine"]
+async def process_feedback_analysis(payload: dict):
+    entry_id = payload.get("entry_id")
+    user_id = payload.get("user_id")
+    
+    if not entry_id or not user_id:
+        raise ValueError("Missing entry_id or user_id in payload")
+        
+    async with get_managed_session() as session:
+        result = await session.execute(
+            select(FeedbackEntry).where(FeedbackEntry.id == entry_id, FeedbackEntry.user_id == user_id)
+        )
+        entry = result.scalar_one_or_none()
+        if not entry:
+            return {"status": "skipped", "reason": "entry not found"}
 
-    session.add(entry)
-    await session.flush()
-    await session.refresh(entry)
-    return _serialize(entry)
+        # Fetch user's custom prompt
+        s_res = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == user_id))
+        prefs = s_res.scalar_one_or_none()
+        custom_prompt = prefs.custom_prompt if prefs else ""
+
+        # Try Gemini first, then VADER, then keyword
+        analysis = await _analyze_with_gemini(entry.text, custom_prompt)
+        if analysis is None:
+            analysis = _analyze_with_vader(entry.text)
+
+        entry.sentiment = analysis["sentiment"]
+        entry.confidence = analysis["confidence"]
+        entry.themes_json = json.dumps(analysis["themes"])
+        entry.is_urgent = analysis["is_urgent"]
+        entry.draft_reply = analysis.get("draft_reply")
+        entry.analysis_engine = analysis["engine"]
+
+        session.add(entry)
+        await session.commit()
+        
+    return {"status": "success", "entry_id": entry_id, "engine": analysis["engine"]}
+
+# Register the handler
+register_job_handler("feedbacklens", "analyze_feedback", process_feedback_analysis)
 
 
 @feedback_router.get("/summary/weekly")

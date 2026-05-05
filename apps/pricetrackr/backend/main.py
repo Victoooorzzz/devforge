@@ -12,6 +12,8 @@ import asyncio, logging
 from backend_core import create_app, get_current_user, get_session, User, scraper, require_user_access
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
+from backend_core.worker import register_job_handler
+from backend_core.outbox_models import SystemOutbox
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +112,7 @@ async def update_tracker_prefs(body: TrackerPrefsUpdate, user: User = Depends(ge
 
 
 async def run_price_updates():
-    """Cron job: updates prices and stock for trackers whose next_check_at <= NOW()."""
+    """Cron job: enqueues price checks for trackers whose next_check_at <= NOW()."""
     from datetime import timedelta
     async with get_managed_session() as session:
         now = datetime.now(timezone.utc)
@@ -122,86 +124,112 @@ async def run_price_updates():
             )
         )
         trackers = result.scalars().all()
-        logger.info(f"Price cron: {len(trackers)} trackers due for check")
+        logger.info(f"Price cron: {len(trackers)} trackers due for check, enqueueing jobs...")
 
         for t in trackers:
-            try:
-                new_price = await scraper.fetch_price(t.url)
-                new_stock = await scraper.fetch_stock(t.url)
-                now = datetime.now(timezone.utc)
-
-                price_changed = new_price is not None and new_price != t.current_price
-                stock_changed = new_stock is not None and new_stock != t.in_stock
-
-                if price_changed:
-                    t.previous_price = t.current_price
-                    t.current_price = new_price
-                    # Track historical minimum
-                    if t.min_price is None or new_price < t.min_price:
-                        t.min_price = new_price
-
-                if new_stock is not None:
-                    t.in_stock = new_stock
-
-                if price_changed or stock_changed:
-                    t.last_checked = now
-                    session.add(t)
-
-                    # Record in price history
-                    history = PriceHistory(
-                        tracker_id=t.id,
-                        price=new_price,
-                        in_stock=new_stock,
-                        recorded_at=now,
-                    )
-                    session.add(history)
-
-                # --- Alerts ---
-                settings_res = await session.execute(
-                    select(TrackerSettings).where(TrackerSettings.user_id == t.user_id)
-                )
-                user_settings = settings_res.scalar_one_or_none()
-                alert_email = user_settings.alert_email if user_settings else ""
-
-                if alert_email:
-                    # Price drop alert
-                    if price_changed and t.previous_price and new_price < t.previous_price:
-                        direction = "bajó"
-                        send_email(
-                            to=alert_email,
-                            subject=f"📉 Bajada de precio: {t.label}",
-                            html_body=(
-                                f"<p>El precio de <strong>{t.label}</strong> {direction} "
-                                f"de <strong>${t.previous_price:,.2f}</strong> a <strong>${new_price:,.2f}</strong>.</p>"
-                                f"<p>{'🎯 ¡Es el mínimo histórico registrado!' if new_price == t.min_price else ''}</p>"
-                                f"<p><a href='{t.url}'>Ver producto</a></p>"
-                            )
-                        )
-
-                    # Back in stock alert
-                    if stock_changed and new_stock is True and t.in_stock is False:
-                        send_email(
-                            to=alert_email,
-                            subject=f"✅ Volvió al stock: {t.label}",
-                            html_body=(
-                                f"<p><strong>{t.label}</strong> volvió a estar disponible.</p>"
-                                f"<p>Precio actual: <strong>${new_price:,.2f}</strong></p>" if new_price else ""
-                                f"<p><a href='{t.url}'>Ver producto</a></p>"
-                            )
-                        )
-                        logger.info(f"Stock alert sent for {t.label}")
-
-            except Exception as e:
-                logger.error(f"Error updating {t.url}: {e}")
-            finally:
-                # Always update next_check_at based on individual tracker frequency
-                from datetime import timedelta
-                t.next_check_at = datetime.now(timezone.utc) + timedelta(hours=t.check_frequency_hours)
-                session.add(t)
-
-            await asyncio.sleep(3)  # Anti-ban delay
+            job = SystemOutbox(
+                app_name="pricetrackr",
+                job_type="price_check",
+                payload={"tracker_id": t.id, "url": t.url},
+                status="pending"
+            )
+            session.add(job)
+            
+            # Anti-duplicate: Set next check to future immediately
+            t.next_check_at = datetime.now(timezone.utc) + timedelta(hours=t.check_frequency_hours)
+            session.add(t)
 
         await session.commit()
+
+
+async def process_price_check(payload: dict):
+    tracker_id = payload.get("tracker_id")
+    url = payload.get("url")
+    if not tracker_id or not url:
+        raise ValueError("Missing tracker_id or url in payload")
+
+    async with get_managed_session() as session:
+        result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id))
+        t = result.scalar_one_or_none()
+        if not t or t.status != "active":
+            return {"status": "skipped", "reason": "Tracker inactive or deleted"}
+
+        try:
+            new_price = await scraper.fetch_price(t.url)
+            new_stock = await scraper.fetch_stock(t.url)
+            now = datetime.now(timezone.utc)
+
+            price_changed = new_price is not None and new_price != t.current_price
+            stock_changed = new_stock is not None and new_stock != t.in_stock
+
+            if price_changed:
+                t.previous_price = t.current_price
+                t.current_price = new_price
+                # Track historical minimum
+                if t.min_price is None or new_price < t.min_price:
+                    t.min_price = new_price
+
+            if new_stock is not None:
+                t.in_stock = new_stock
+
+            if price_changed or stock_changed:
+                t.last_checked = now
+                session.add(t)
+
+                # Record in price history
+                history = PriceHistory(
+                    tracker_id=t.id,
+                    price=new_price,
+                    in_stock=new_stock,
+                    recorded_at=now,
+                )
+                session.add(history)
+
+            # --- Alerts ---
+            settings_res = await session.execute(
+                select(TrackerSettings).where(TrackerSettings.user_id == t.user_id)
+            )
+            user_settings = settings_res.scalar_one_or_none()
+            alert_email = user_settings.alert_email if user_settings else ""
+
+            if alert_email:
+                # Price drop alert
+                if price_changed and t.previous_price and new_price < t.previous_price:
+                    direction = "bajó"
+                    send_email(
+                        to=alert_email,
+                        subject=f"📉 Bajada de precio: {t.label}",
+                        html_body=(
+                            f"<p>El precio de <strong>{t.label}</strong> {direction} "
+                            f"de <strong>${t.previous_price:,.2f}</strong> a <strong>${new_price:,.2f}</strong>.</p>"
+                            f"<p>{'🎯 ¡Es el mínimo histórico registrado!' if new_price == t.min_price else ''}</p>"
+                            f"<p><a href='{t.url}'>Ver producto</a></p>"
+                        )
+                    )
+
+                # Back in stock alert
+                if stock_changed and new_stock is True and t.in_stock is False:
+                    send_email(
+                        to=alert_email,
+                        subject=f"✅ Volvió al stock: {t.label}",
+                        html_body=(
+                            f"<p><strong>{t.label}</strong> volvió a estar disponible.</p>"
+                            f"<p>Precio actual: <strong>${new_price:,.2f}</strong></p>" if new_price else ""
+                            f"<p><a href='{t.url}'>Ver producto</a></p>"
+                        )
+                    )
+                    logger.info(f"Stock alert sent for {t.label}")
+
+        except Exception as e:
+            logger.error(f"Error updating {t.url}: {e}")
+            raise e # Propagate error so worker fails job and retries
+        finally:
+            await session.commit()
+            
+    return {"status": "success", "tracker_id": tracker_id, "price": new_price, "stock": new_stock}
+
+# Register the handler
+register_job_handler("pricetrackr", "price_check", process_price_check)
 
 
 @tracker_router.post("")

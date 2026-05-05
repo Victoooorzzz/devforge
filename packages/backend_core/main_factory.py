@@ -11,6 +11,7 @@ from .auth import auth_router
 from .config import get_settings
 from .database import create_db_and_tables
 from .lemonsqueezy_handler import ls_router, webhook_router
+from .worker import worker_router
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ def create_app(
     app.include_router(ls_router)
 
     app.include_router(webhook_router)
+    app.include_router(worker_router)
 
     # Domain-specific routers
     if domain_routers:

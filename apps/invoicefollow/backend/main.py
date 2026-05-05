@@ -12,6 +12,8 @@ import uuid, logging, json
 from backend_core import create_app, get_current_user, get_session, User, require_user_access
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
+from backend_core.outbox_models import SystemOutbox, InvoiceMagicLink
+from backend_core.worker import register_job_handler
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +61,14 @@ invoice_router = APIRouter(prefix="/invoices", tags=["invoices"], dependencies=[
 settings_router = APIRouter(prefix="/settings", tags=["settings"])
 public_router = APIRouter(prefix="/invoices", tags=["public"])
 
-@invoice_router.post("/cron/reminders", tags=["cron"])
-async def cron_send_reminders(authorization: str = None):
-    """Endpoint para Vercel Cron."""
+@invoice_router.post("/cron/reminders/enqueue", tags=["cron"])
+async def cron_enqueue_reminders(authorization: str = None):
+    """Endpoint para Vercel Cron. Solo encola, no envía correos sincrónicamente."""
     expected = os.getenv("CRON_SECRET")
     if expected and authorization != f"Bearer {expected}":
          raise HTTPException(status_code=401, detail="Unauthorized")
-    await send_overdue_reminders()
-    return {"status": "success", "task": "overdue_reminders"}
+    await enqueue_overdue_reminders()
+    return {"status": "success", "task": "overdue_reminders_enqueued"}
 
 
 @public_router.post("/webhooks/lemonsqueezy")
@@ -145,10 +147,17 @@ def _build_email_body(raw_template: str, inv: "Invoice", tone: str, days_overdue
         .replace("{due_date}", str(inv.due_date))
     )
 
+    # Include magic link for downloading PDF securely
+    import secrets
+    from datetime import timedelta
+    magic_token = secrets.token_urlsafe(32)
+    # This must be inserted to the DB later in the enqueue flow, so we return the token
+    
+    api_base = os.getenv("NEXT_PUBLIC_API_URL", "https://api.devforgeapp.pro")
+    
     # Include payment promise link
     promise_link = ""
     if inv.promise_token:
-        api_base = os.getenv("NEXT_PUBLIC_API_URL", "https://api.devforgeapp.pro")
         promise_link = f"""
         <p style="margin-top:16px;">
           <a href="{api_base}/invoices/promise/{inv.promise_token}"
@@ -156,6 +165,15 @@ def _build_email_body(raw_template: str, inv: "Invoice", tone: str, days_overdue
             Confirmar promesa de pago
           </a>
         </p>"""
+        
+    download_link = f"""
+        <p style="margin-top:16px;">
+          <a href="{api_base}/invoices/download?token={magic_token}"
+             style="color:#3B82F6;text-decoration:underline;font-size:14px;">
+            Descargar PDF de Factura
+          </a>
+        </p>
+    """
 
     if tone == "friendly":
         subject = f"Recordatorio: Factura pendiente — {inv.client_name}"
@@ -184,13 +202,15 @@ def _build_email_body(raw_template: str, inv: "Invoice", tone: str, days_overdue
         <tr><td style="padding:6px;color:#888;">Días vencida:</td><td style="padding:6px;color:{color};font-weight:bold;">{days_overdue} días</td></tr>
       </table>
       {promise_link}
+      {download_link}
     </div>"""
 
-    return subject, html_body
+    return subject, html_body, magic_token
 
 
-async def send_overdue_reminders():
-    """Cron job: envía recordatorios con tono escalado según días vencidos."""
+async def enqueue_overdue_reminders():
+    """Cron job: encola recordatorios con tono escalado según días vencidos."""
+    from datetime import timedelta
     async with get_managed_session() as session:
         today = date.today()
         result = await session.execute(
@@ -224,16 +244,41 @@ async def send_overdue_reminders():
             user_settings = settings_res.scalar_one_or_none()
             raw_template = user_settings.email_template if user_settings else "Hola {client_name}, tu factura por {amount} está vencida."
 
-            subject, html_body = _build_email_body(raw_template, inv, tone, days_overdue)
+            subject, html_body, magic_token = _build_email_body(raw_template, inv, tone, days_overdue)
 
-            logger.info(f"Enviando recordatorio [{tone}] para factura {inv.id} → {inv.client_email}")
-            send_email(to=inv.client_email, subject=subject, html_body=html_body)
+            logger.info(f"Encolando recordatorio [{tone}] para factura {inv.id} → {inv.client_email}")
+            
+            # Guardar magic link para descarga
+            ml = InvoiceMagicLink(
+                token=magic_token,
+                invoice_id=str(inv.id),
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=24)
+            )
+            session.add(ml)
+            
+            # Encolar envío
+            job = SystemOutbox(
+                app_name="invoicefollow",
+                job_type="send_email",
+                payload={"to": inv.client_email, "subject": subject, "html_body": html_body},
+                priority=3
+            )
+            session.add(job)
 
             inv.reminders_sent += 1
             inv.last_reminder_date = today
             session.add(inv)
 
         await session.commit()
+
+async def handle_send_email(payload: dict):
+    to = payload.get("to")
+    subject = payload.get("subject")
+    html_body = payload.get("html_body")
+    send_email(to=to, subject=subject, html_body=html_body)
+    return {"delivered_to": to}
+
+register_job_handler("invoicefollow", "send_email", handle_send_email)
 
 
 @invoice_router.post("")
@@ -310,6 +355,28 @@ async def public_promise(token: str, session: AsyncSession = Depends(get_session
         "amount": inv.amount,
         "promise_date": str(today),
     }
+
+@public_router.get("/download")
+async def download_invoice_magic_link(token: str, session: AsyncSession = Depends(get_session)):
+    """Endpoint PÚBLICO para retornar los datos de la factura si el token es válido."""
+    res = await session.execute(select(InvoiceMagicLink).where(InvoiceMagicLink.token == token))
+    ml = res.scalar_one_or_none()
+    
+    if not ml or ml.used or ml.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=403, detail="Link expirado o inválido")
+        
+    inv_res = await session.execute(select(Invoice).where(Invoice.id == int(ml.invoice_id)))
+    inv = inv_res.scalar_one_or_none()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+        
+    ml.used = True
+    session.add(ml)
+    await session.commit()
+    
+    # Retornamos los datos JSON. El frontend de Vercel debe interceptar /invoices/download?token=XYZ
+    # Y con estos datos renderiza el PDF client-side
+    return inv
 
 
 @invoice_router.get("/client-scores")

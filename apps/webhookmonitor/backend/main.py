@@ -12,6 +12,8 @@ from backend_core import create_app, get_current_user, get_session, User, requir
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.logic_bridge import detect_and_act_on_payment
+from backend_core.outbox_models import SystemOutbox
+from backend_core.worker import register_job_handler
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -193,9 +195,7 @@ async def retry_request(
     session: AsyncSession = Depends(get_session),
 ):
     """
-    Reenvía un webhook al forward_url configurado.
-    Si schedule_auto_retry=True, activa exponential backoff automático en caso de fallo.
-    Backoff: 1min, 2min, 4min, 8min, 16min (max 5 intentos).
+    Encola un job de reenvío en system_outbox.
     """
     ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
     ep = ep_result.scalar_one_or_none()
@@ -216,61 +216,21 @@ async def retry_request(
     ws = ws_result.scalar_one_or_none()
     if not ws or not ws.forward_url:
         raise HTTPException(status_code=400, detail="No forward_url configured in settings")
-
-    payload = body.payload_override if body.payload_override is not None else req.body
-    if body.payload_override is not None:
-        try:
-            json.loads(payload)
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
-
-    headers = json.loads(req.headers_json)
-    safe_headers = {
-        k: v for k, v in headers.items()
-        if k.lower() not in ("host", "content-length", "transfer-encoding", "connection")
+        
+    job = SystemOutbox(
+        app_name="webhookmonitor",
+        job_type="forward_webhook",
+        payload={"request_id": req.id, "payload_override": body.payload_override},
+        status="pending",
+        max_attempts=6 if body.schedule_auto_retry else 1
+    )
+    session.add(job)
+    await session.commit()
+    
+    return {
+        "status": "queued",
+        "message": "Retry job queued successfully in system_outbox"
     }
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.request(
-                method=req.method,
-                url=ws.forward_url,
-                headers=safe_headers,
-                content=payload.encode("utf-8"),
-            )
-        req.last_retry_status = response.status_code
-        is_success = 200 <= response.status_code < 300
-
-        if body.schedule_auto_retry and not is_success and req.retry_count < 5:
-            delay_minutes = 2 ** req.retry_count  # 1, 2, 4, 8, 16 minutes
-            req.next_retry_at = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
-            req.retry_count += 1
-            req.auto_retry_enabled = True
-        elif is_success:
-            req.auto_retry_enabled = False
-            req.next_retry_at = None
-
-        session.add(req)
-        await session.flush()
-
-        logger.info(f"Retry {req.method} -> {ws.forward_url} | HTTP {response.status_code}")
-        return {
-            "status": "sent",
-            "forward_url": ws.forward_url,
-            "response_status": response.status_code,
-            "payload_used": "override" if body.payload_override is not None else "original",
-            "retry_count": req.retry_count,
-            "next_retry_at": req.next_retry_at.isoformat() if req.next_retry_at else None,
-        }
-    except Exception as e:
-        if req.retry_count < 5:
-            delay_minutes = 2 ** req.retry_count
-            req.next_retry_at = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
-            req.retry_count += 1
-            req.auto_retry_enabled = True
-            session.add(req)
-            await session.flush()
-        raise HTTPException(status_code=502, detail=f"Forward failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -341,80 +301,6 @@ async def check_webhook_silences():
                     logger.error(f"Failed to send silence alert: {e}")
 
 
-async def process_auto_retries():
-    """
-    Cron: processes pending exponential backoff retries.
-    Picks up webhook requests with auto_retry_enabled=True and next_retry_at <= NOW().
-    """
-    async with get_managed_session() as session:
-        now = datetime.now(timezone.utc)
-        pending_res = await session.execute(
-            select(WebhookRequest).where(
-                WebhookRequest.auto_retry_enabled == True,  # noqa: E712
-                WebhookRequest.next_retry_at <= now,
-                WebhookRequest.retry_count < 5,
-            )
-        )
-        pending = pending_res.scalars().all()
-        logger.info(f"Auto-retry cron: {len(pending)} pending retries")
-
-        for req in pending:
-            # Find the user's forward_url
-            ep_res = await session.execute(
-                select(WebhookEndpoint).where(WebhookEndpoint.id == req.endpoint_id)
-            )
-            ep = ep_res.scalar_one_or_none()
-            if not ep:
-                req.auto_retry_enabled = False
-                session.add(req)
-                continue
-
-            ws_res = await session.execute(
-                select(WebhookSettings).where(WebhookSettings.user_id == ep.user_id)
-            )
-            ws = ws_res.scalar_one_or_none()
-            if not ws or not ws.forward_url:
-                req.auto_retry_enabled = False
-                session.add(req)
-                continue
-
-            headers = json.loads(req.headers_json)
-            safe_headers = {
-                k: v for k, v in headers.items()
-                if k.lower() not in ("host", "content-length", "transfer-encoding", "connection")
-            }
-
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.request(
-                        method=req.method,
-                        url=ws.forward_url,
-                        headers=safe_headers,
-                        content=req.body.encode("utf-8"),
-                    )
-                req.last_retry_status = response.status_code
-                is_success = 200 <= response.status_code < 300
-
-                if is_success or req.retry_count >= 4:
-                    req.auto_retry_enabled = False
-                    req.next_retry_at = None
-                else:
-                    delay_minutes = 2 ** req.retry_count
-                    req.next_retry_at = now + timedelta(minutes=delay_minutes)
-                    req.retry_count += 1
-
-            except Exception as e:
-                logger.warning(f"Auto-retry failed for request {req.id}: {e}")
-                if req.retry_count >= 4:
-                    req.auto_retry_enabled = False
-                else:
-                    req.next_retry_at = now + timedelta(minutes=2 ** req.retry_count)
-                    req.retry_count += 1
-
-            session.add(req)
-
-        await session.commit()
-
 
 async def cleanup_old_logs():
     """
@@ -442,15 +328,6 @@ async def cron_silence_check(authorization: str = None):
     return {"status": "success", "task": "silence_check"}
 
 
-@webhook_router.post("/cron/process-retries", tags=["cron"])
-async def cron_process_retries(authorization: str = None):
-    """Vercel Cron endpoint — processes exponential backoff retries."""
-    expected = os.getenv("CRON_SECRET")
-    if expected and authorization != f"Bearer {expected}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    await process_auto_retries()
-    return {"status": "success", "task": "process_retries"}
-
 
 @webhook_router.post("/cron/cleanup", tags=["cron"])
 async def cron_cleanup_logs(authorization: str = None):
@@ -477,7 +354,7 @@ async def _persist_and_forward(endpoint_id, user_id, method, path, headers, body
             body=body,
         )
         session.add(req)
-        await session.commit()
+        await session.flush()
 
         settings_result = await session.execute(
             select(WebhookSettings).where(WebhookSettings.user_id == user_id)
@@ -485,40 +362,79 @@ async def _persist_and_forward(endpoint_id, user_id, method, path, headers, body
         user_settings = settings_result.scalar_one_or_none()
 
         if user_settings and user_settings.forward_url:
-            safe_headers = {
-                k: v for k, v in headers.items()
-                if k.lower() not in ("host", "content-length", "transfer-encoding", "connection")
-            }
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    fwd_response = await client.request(
-                        method=method,
-                        url=user_settings.forward_url,
-                        headers=safe_headers,
-                        content=body.encode("utf-8"),
-                    )
-                req.last_retry_status = fwd_response.status_code
-                # Schedule auto-retry if forward failed and user has it enabled
-                if user_settings.auto_retry_enabled and not (200 <= fwd_response.status_code < 300):
-                    req.auto_retry_enabled = True
-                    req.next_retry_at = datetime.now(timezone.utc) + timedelta(minutes=1)
-                    req.retry_count = 0
-                session.add(req)
-                await session.commit()
-            except Exception as e:
-                logger.warning(f"Forward failed: {e}")
-                if user_settings.auto_retry_enabled:
-                    req.auto_retry_enabled = True
-                    req.next_retry_at = datetime.now(timezone.utc) + timedelta(minutes=1)
-                    req.retry_count = 0
-                    session.add(req)
-                    await session.commit()
+            job = SystemOutbox(
+                app_name="webhookmonitor",
+                job_type="forward_webhook",
+                payload={"request_id": req.id},
+                status="pending",
+                max_attempts=6 if user_settings.auto_retry_enabled else 1
+            )
+            session.add(job)
+            
+        await session.commit()
 
         # Logic Bridge: check if this is a payment webhook and auto-pay invoices
         try:
             await detect_and_act_on_payment(user_id=user_id, headers=headers, body=body)
         except Exception as e:
             logger.debug(f"Logic bridge check skipped: {e}")
+
+async def process_webhook_forward(payload: dict):
+    request_id = payload.get("request_id")
+    payload_override = payload.get("payload_override")
+    
+    async with get_managed_session() as session:
+        req_result = await session.execute(select(WebhookRequest).where(WebhookRequest.id == request_id))
+        req = req_result.scalar_one_or_none()
+        if not req:
+            return {"status": "skipped", "reason": "request not found"}
+            
+        ws_result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == req.user_id))
+        ws = ws_result.scalar_one_or_none()
+        if not ws or not ws.forward_url:
+            return {"status": "skipped", "reason": "no forward url"}
+            
+        headers = json.loads(req.headers_json)
+        safe_headers = {
+            k: v for k, v in headers.items()
+            if k.lower() not in ("host", "content-length", "transfer-encoding", "connection")
+        }
+        
+        body_to_send = payload_override if payload_override is not None else req.body
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.request(
+                    method=req.method,
+                    url=ws.forward_url,
+                    headers=safe_headers,
+                    content=body_to_send.encode("utf-8"),
+                )
+            
+            req.last_retry_status = response.status_code
+            is_success = 200 <= response.status_code < 300
+            
+            if not is_success:
+                req.retry_count += 1
+                session.add(req)
+                await session.commit()
+                raise Exception(f"Forward returned {response.status_code}")
+                
+            # success!
+            req.auto_retry_enabled = False
+            req.next_retry_at = None
+            session.add(req)
+            await session.commit()
+            
+            return {"status": "success", "forward_url": ws.forward_url, "response_status": response.status_code}
+            
+        except httpx.RequestError as e:
+            req.retry_count += 1
+            session.add(req)
+            await session.commit()
+            raise e
+
+register_job_handler("webhookmonitor", "forward_webhook", process_webhook_forward)
 
 
 @ingestion_router.api_route("/hook/{slug}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
