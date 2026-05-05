@@ -49,7 +49,16 @@ class User(SQLModel, table=True):
     @property
     def has_access(self) -> bool:
         """True if the user has a paid subscription OR an active trial."""
-        return self.is_active or self.is_on_trial
+        if self.is_active:
+            return True
+        return self.is_on_trial
+
+    def check_access(self):
+        if not self.has_access:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="Your 7-day trial has expired. Please subscribe to continue using DevForge.",
+            )
 
 
 # --- Schemas ---
@@ -157,6 +166,11 @@ async def get_current_user(
     return user
 
 
+async def require_user_access(user: User = Depends(get_current_user)) -> User:
+    user.check_access()
+    return user
+
+
 # --- Router ---
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
@@ -178,7 +192,8 @@ async def register(body: RegisterRequest, background_tasks: BackgroundTasks, ses
         hashed_password=hash_password(body.password),
         is_active=False,
         is_email_verified=False,
-        verification_code=v_code
+        verification_code=v_code,
+        trial_ends_at=datetime.utcnow() + timedelta(days=7)
     )
     session.add(user)
     await session.flush()

@@ -9,7 +9,7 @@ from typing import Optional, List
 from datetime import datetime, timezone
 import asyncio, logging
 
-from backend_core import create_app, get_current_user, get_session, User, scraper
+from backend_core import create_app, get_current_user, get_session, User, scraper, require_user_access
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 
@@ -32,6 +32,8 @@ class TrackedUrl(SQLModel, table=True):
     min_price: Optional[float] = None          # historical minimum
     in_stock: Optional[bool] = None            # stock status
     last_checked: Optional[datetime] = None
+    next_check_at: Optional[datetime] = None   # when to check next (dynamic frequency)
+    check_frequency_hours: int = Field(default=24)  # 1, 6, 12, or 24 hours
     status: str = Field(default="active")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -55,6 +57,11 @@ class TrackerSettings(SQLModel, table=True):
 class TrackerCreate(BaseModel):
     url: str
     label: str
+    check_frequency_hours: int = 24  # 1, 6, 12, or 24
+
+
+class TrackerFrequencyUpdate(BaseModel):
+    hours: int  # must be 1, 6, 12, or 24
 
 
 class TrackerPrefsUpdate(BaseModel):
@@ -62,8 +69,19 @@ class TrackerPrefsUpdate(BaseModel):
     frequency: str
 
 
-tracker_router = APIRouter(prefix="/trackers", tags=["trackers"])
+tracker_router = APIRouter(prefix="/trackers", tags=["trackers"], dependencies=[Depends(require_user_access)])
 settings_router = APIRouter(prefix="/settings", tags=["settings"])
+
+@tracker_router.post("/cron/update", tags=["cron"])
+async def cron_update_prices(authorization: str = None):
+    """Endpoint para Vercel Cron / QStash."""
+    # Simple secret check (optional but recommended)
+    expected = os.getenv("CRON_SECRET")
+    if expected and authorization != f"Bearer {expected}":
+         raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    
+    await run_price_updates()
+    return {"status": "success", "task": "price_updates"}
 
 
 @settings_router.get("/tracker-prefs")
@@ -92,10 +110,19 @@ async def update_tracker_prefs(body: TrackerPrefsUpdate, user: User = Depends(ge
 
 
 async def run_price_updates():
-    """Cron job: actualiza precios, detecta mínimos históricos y cambios de stock."""
+    """Cron job: updates prices and stock for trackers whose next_check_at <= NOW()."""
+    from datetime import timedelta
     async with get_managed_session() as session:
-        result = await session.execute(select(TrackedUrl).where(TrackedUrl.status == "active"))
+        now = datetime.now(timezone.utc)
+        # Only fetch trackers that are due for a check
+        result = await session.execute(
+            select(TrackedUrl).where(
+                TrackedUrl.status == "active",
+                (TrackedUrl.next_check_at == None) | (TrackedUrl.next_check_at <= now),  # noqa: E711
+            )
+        )
         trackers = result.scalars().all()
+        logger.info(f"Price cron: {len(trackers)} trackers due for check")
 
         for t in trackers:
             try:
@@ -166,8 +193,13 @@ async def run_price_updates():
 
             except Exception as e:
                 logger.error(f"Error updating {t.url}: {e}")
+            finally:
+                # Always update next_check_at based on individual tracker frequency
+                from datetime import timedelta
+                t.next_check_at = datetime.now(timezone.utc) + timedelta(hours=t.check_frequency_hours)
+                session.add(t)
 
-            await asyncio.sleep(3)  # Anti-ban
+            await asyncio.sleep(3)  # Anti-ban delay
 
         await session.commit()
 
@@ -179,6 +211,8 @@ async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_u
 
     initial_price = await scraper.fetch_price(body.url)
     initial_stock = await scraper.fetch_stock(body.url)
+    freq_hours = body.check_frequency_hours if body.check_frequency_hours in (1, 6, 12, 24) else 24
+    from datetime import timedelta
 
     t = TrackedUrl(
         user_id=user.id,
@@ -188,6 +222,8 @@ async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_u
         min_price=initial_price,
         in_stock=initial_stock,
         last_checked=datetime.now(timezone.utc) if initial_price else None,
+        check_frequency_hours=freq_hours,
+        next_check_at=datetime.now(timezone.utc) + timedelta(hours=freq_hours),
     )
     session.add(t)
     await session.flush()
@@ -234,6 +270,40 @@ async def get_price_history(tracker_id: int, user: User = Depends(get_current_us
     ]
 
 
+@tracker_router.patch("/{tracker_id}/frequency")
+async def update_tracker_frequency(
+    tracker_id: int,
+    body: TrackerFrequencyUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Update the check frequency for a specific tracker.
+    Allowed values: 1h, 6h, 12h, 24h.
+    """
+    if body.hours not in (1, 6, 12, 24):
+        raise HTTPException(status_code=400, detail="Frequency must be 1, 6, 12, or 24 hours")
+
+    result = await session.execute(
+        select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id)
+    )
+    t = result.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+
+    from datetime import timedelta
+    t.check_frequency_hours = body.hours
+    t.next_check_at = datetime.now(timezone.utc) + timedelta(hours=body.hours)
+    session.add(t)
+    await session.flush()
+    return {
+        "id": t.id,
+        "label": t.label,
+        "check_frequency_hours": t.check_frequency_hours,
+        "next_check_at": t.next_check_at.isoformat(),
+    }
+
+
 @tracker_router.delete("/{tracker_id}")
 async def delete_tracker(tracker_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id))
@@ -250,12 +320,7 @@ app = create_app(
     domain_routers=[tracker_router, settings_router]
 )
 
-@app.on_event("startup")
-async def schedule_price_jobs():
-    app.state.scheduler.add_job(
-        run_price_updates, "interval", hours=24,
-        id="price_update_job", replace_existing=True
-    )
+# Eliminado local APScheduler para compatibilidad con Serverless (Vercel Crons)
 
 if __name__ == "__main__":
     import uvicorn

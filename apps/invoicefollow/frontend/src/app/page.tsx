@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { Check, Zap, Clock, Bell } from "lucide-react";
+import { Check, Zap, Clock, Bell, Share2, ShieldCheck, Mail, CreditCard, ArrowRight, Activity } from "lucide-react";
 
 export default function LandingPage() {
   return (
@@ -10,7 +10,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
             <img src="/devforge-logo-white.svg" alt="DevForge" className="h-6 w-auto" />
-            <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3">
+            <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3 uppercase">
               Invoice<span className="text-accent">Follow</span>
             </span>
           </Link>
@@ -24,123 +24,111 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero Section */}
-      <section className="pt-32 pb-20 px-6 min-h-[85vh] flex flex-col justify-center">
-        <div className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-          <div className="text-left">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-xs font-medium mb-6 uppercase tracking-widest">
-              <Clock size={14} />
-              <span>Never miss a payment again</span>
-            </div>
-            <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent">
-              Automated tracking for invoices.
-            </h1>
-            <p className="text-lg md:text-xl text-neutral-400 mb-10">
-              Get paid on time with smart reminders, automated follow-ups, and real-time payment status monitoring.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4">
-              <Link href="/register" className="btn-primary px-8 py-4 text-center">
-                Access Dashboard
-              </Link>
-            </div>
+      <section className="pt-32 pb-20 px-6 min-h-[90vh] flex flex-col items-center justify-center relative overflow-hidden">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-[radial-gradient(circle_at_center,rgba(130,19,70,0.08)_0,transparent_70%)] pointer-events-none"></div>
+        
+        <div className="max-w-6xl mx-auto w-full text-center relative z-10">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold mb-8 uppercase tracking-widest">
+            <Activity size={12} />
+            <span>Smart Escalation Engine Active</span>
           </div>
           
-          {/* Dashboard UI */}
-          <div className="relative w-full rounded-lg overflow-hidden bg-[#0A0A0A] border border-[#282627] shadow-2xl flex flex-col font-sans">
-            <div className="h-12 bg-[#191718] border-b border-[#282627] flex items-center justify-between px-6">
-              <span className="text-white font-medium text-sm tracking-wide">RECENT INVOICES</span>
-              <div className="flex gap-2">
-                <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
-                <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
-                <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
-              </div>
-            </div>
+          <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent uppercase">
+            Stop Chasing Payments. <br className="hidden md:block" />
+            Automate Your Recovery.
+          </h1>
+          <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto mb-12">
+            The world's first industrial-grade escalation sequence for SaaS and B2B. 
+            Recover up to 94% of overdue invoices automatically.
+          </p>
+
+          {/* TIMELINE VISUAL (Escalation Chain) */}
+          <div className="max-w-4xl mx-auto mb-16 relative">
+            <div className="absolute top-1/2 left-0 w-full h-[1px] bg-white/10 -translate-y-1/2 z-0 hidden md:block"></div>
             
-            <div className="p-6">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="text-neutral-500 border-b border-[#282627]">
-                    <th className="pb-3 font-medium uppercase text-xs tracking-wider">Invoice</th>
-                    <th className="pb-3 font-medium uppercase text-xs tracking-wider">Client</th>
-                    <th className="pb-3 font-medium uppercase text-xs tracking-wider">Amount</th>
-                    <th className="pb-3 font-medium uppercase text-xs tracking-wider">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="text-neutral-300">
-                  <tr className="border-b border-[#282627]/50">
-                    <td className="py-4 font-mono text-xs">INV-2024-089</td>
-                    <td className="py-4 font-medium">Acme Corp</td>
-                    <td className="py-4 font-mono text-white">$4,500.00</td>
-                    <td className="py-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm bg-red-500/10 border border-red-500/20 text-red-500 text-[10px] font-bold uppercase tracking-widest">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
-                        Overdue
-                      </span>
-                    </td>
-                  </tr>
-                  <tr className="border-b border-[#282627]/50 bg-white/[0.02]">
-                    <td className="py-4 font-mono text-xs">INV-2024-090</td>
-                    <td className="py-4 font-medium">Globex Inc</td>
-                    <td className="py-4 font-mono text-white">$1,250.00</td>
-                    <td className="py-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm bg-[#821346]/10 border border-[#821346]/30 text-[#821346] text-[10px] font-bold uppercase tracking-widest">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#821346]"></span>
-                        Pending
-                      </span>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="py-4 font-mono text-xs">INV-2024-088</td>
-                    <td className="py-4 font-medium">Stark Ind.</td>
-                    <td className="py-4 font-mono text-white">$8,900.00</td>
-                    <td className="py-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm bg-green-500/10 border border-green-500/20 text-green-500 text-[10px] font-bold uppercase tracking-widest">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                        Paid
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-              
-              <div className="mt-6 p-4 rounded border border-accent/20 bg-accent/5 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Zap className="text-accent" size={16} />
-                  <span className="text-xs text-neutral-300">Automated follow-up sent to <strong className="text-white">Acme Corp</strong>.</span>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 relative z-10">
+              <div className="glass p-4 rounded-xl border border-white/5 relative bg-black/60">
+                <div className="text-[10px] font-mono text-neutral-500 mb-2 uppercase">Day 0</div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Mail size={14} className="text-blue-400" />
+                  <span className="text-xs font-bold">Friendly Invoice</span>
                 </div>
-                <span className="text-xs text-neutral-500 font-mono">Just now</span>
+                <div className="h-1 w-full bg-blue-500/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-500 w-full"></div>
+                </div>
+              </div>
+
+              <div className="glass p-4 rounded-xl border border-white/5 relative bg-black/60">
+                <div className="text-[10px] font-mono text-neutral-500 mb-2 uppercase">Day 7</div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Bell size={14} className="text-amber-400" />
+                  <span className="text-xs font-bold">First Reminder</span>
+                </div>
+                <div className="h-1 w-full bg-amber-500/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-amber-500 w-full"></div>
+                </div>
+              </div>
+
+              <div className="glass p-4 rounded-xl border border-accent/20 relative bg-black/60 shadow-[0_0_20px_rgba(130,19,70,0.1)] scale-105">
+                <div className="text-[10px] font-mono text-accent mb-2 uppercase">Day 15</div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Zap size={14} className="text-accent" />
+                  <span className="text-xs font-bold">Strict Follow-up</span>
+                </div>
+                <div className="h-1 w-full bg-accent/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-accent w-full animate-pulse"></div>
+                </div>
+              </div>
+
+              <div className="glass p-4 rounded-xl border border-red-500/20 relative bg-black/60">
+                <div className="text-[10px] font-mono text-neutral-500 mb-2 uppercase">Day 30</div>
+                <div className="flex items-center gap-2 mb-2">
+                  <ShieldCheck size={14} className="text-red-500" />
+                  <span className="text-xs font-bold">Final Notice</span>
+                </div>
+                <div className="h-1 w-full bg-red-500/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-red-500 w-0"></div>
+                </div>
               </div>
             </div>
-            
-            {/* Glow Effect */}
-            <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-transparent to-[#821346]/5 pointer-events-none"></div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Link href="/register" className="btn-primary px-10 py-4 text-lg">
+              Start Recovery Sequence
+            </Link>
           </div>
         </div>
       </section>
 
-      {/* Features */}
-      <section id="features" className="py-24 px-6 border-t border-white/5">
+      {/* HOW IT WORKS */}
+      <section className="py-24 px-6 bg-white/[0.01] border-y border-white/5">
         <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="glass p-8 rounded-2xl border border-white/5">
-              <Bell className="text-accent mb-4" size={32} />
-              <h3 className="text-xl font-bold mb-3">Smart Reminders</h3>
-              <p className="text-neutral-400 text-sm leading-relaxed">
-                Automatically notify clients about upcoming or overdue payments via email, Slack, or SMS.
-              </p>
+          <div className="text-center mb-16">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-accent mb-4">Cashflow Automation</h2>
+            <h3 className="text-3xl md:text-5xl font-bold">Deploy in 3 simple steps.</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-12 text-center">
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
+                <Share2 className="text-accent" size={32} />
+              </div>
+              <h4 className="text-xl font-bold mb-3">1. Connect CRM</h4>
+              <p className="text-neutral-400 text-sm">Integrate Stripe, QuickBooks, or upload CSV. We sync invoices in real-time.</p>
             </div>
-            <div className="glass p-8 rounded-2xl border border-white/5">
-              <Zap className="text-accent mb-4" size={32} />
-              <h3 className="text-xl font-bold mb-3">Automated Follow-ups</h3>
-              <p className="text-neutral-400 text-sm leading-relaxed">
-                Configure custom escalation sequences that send persistent follow-ups until the invoice is settled.
-              </p>
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
+                <Clock className="text-accent" size={32} />
+              </div>
+              <h4 className="text-xl font-bold mb-3">2. Define Escalation</h4>
+              <p className="text-neutral-400 text-sm">Choose from pre-built industrial templates or create custom follow-up chains.</p>
             </div>
-            <div className="glass p-8 rounded-2xl border border-white/5">
-              <Check className="text-accent mb-4" size={32} />
-              <h3 className="text-xl font-bold mb-3">Payment Sync</h3>
-              <p className="text-neutral-400 text-sm leading-relaxed">
-                Connects with Stripe, PayPal, and banks to automatically mark invoices as paid in real-time.
-              </p>
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
+                <CreditCard className="text-accent" size={32} />
+              </div>
+              <h4 className="text-xl font-bold mb-3">3. Collect</h4>
+              <p className="text-neutral-400 text-sm">Watch payments roll in as our engine handles the psychological pressure for you.</p>
             </div>
           </div>
         </div>
@@ -150,33 +138,32 @@ export default function LandingPage() {
       <section id="pricing" className="py-24 px-6 border-t border-white/5 bg-white/[0.02]">
         <div className="max-w-3xl mx-auto">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-5xl font-bold mb-4">Simple pricing for growing businesses.</h2>
-            <p className="text-neutral-400">Scale your revenue collection with zero stress.</p>
+            <h2 className="text-3xl md:text-5xl font-bold mb-4">Scale your collection.</h2>
+            <p className="text-neutral-400">Premium recovery tools for high-volume businesses.</p>
           </div>
 
           <div className="max-w-lg mx-auto">
-            {/* Pro Plan - Single Option */}
             <div className="glass p-10 rounded-3xl border-2 border-accent relative flex flex-col overflow-hidden shadow-[0_0_50px_rgba(130,19,70,0.2)]">
               <div className="absolute top-0 right-0 bg-accent text-black text-[10px] font-bold px-4 py-1.5 uppercase tracking-widest rounded-bl-xl">
-                Best Value
+                Most Popular
               </div>
               <div className="mb-8">
-                <h3 className="text-2xl font-bold mb-2">Automator Pro</h3>
+                <h3 className="text-2xl font-bold mb-2">Growth Plan</h3>
                 <div className="flex items-baseline gap-1">
                   <span className="text-5xl font-bold">$9.99</span>
                   <span className="text-neutral-400">/mo</span>
                 </div>
                 <p className="text-sm text-neutral-400 mt-4 leading-relaxed">
-                  Unlimited invoices and automated multi-channel sequences. Includes a 7-day free trial.
+                  Full access to the automated recovery engine. Includes a 7-day free trial.
                 </p>
               </div>
               <ul className="space-y-4 mb-10">
                 {[
-                  "Unlimited Invoice Tracking",
-                  "Multi-Channel Follow-ups",
-                  "Custom Email Branding",
-                  "Automatic Late Fee Calculation",
-                  "Direct API Access",
+                  "Unlimited Invoices Tracking",
+                  "Multi-Channel Sequences",
+                  "AI-Powered Debt Risk Profiling",
+                  "Custom Branding & White-label",
+                  "API & Webhook Integrations",
                   "Priority 24/7 Support"
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">
@@ -204,3 +191,4 @@ export default function LandingPage() {
     </div>
   );
 }
+

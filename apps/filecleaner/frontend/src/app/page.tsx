@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { Check, Zap, Shield, BarChart3 } from "lucide-react";
+import { Check, Zap, Shield, BarChart3, ArrowRight, FileSpreadsheet, Download, Layers } from "lucide-react";
 
 export default function LandingPage() {
   return (
@@ -24,89 +24,107 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero Section */}
-      <section className="pt-24 pb-12 px-6 min-h-[85vh] flex flex-col justify-center">
-        <div className="max-w-5xl mx-auto w-full flex flex-col items-center">
-          <div className="text-center mb-8">
-            <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4 text-white">
-              INDUSTRIAL-GRADE FILE CLEANER
-            </h1>
-            <p className="text-neutral-400 font-mono text-sm max-w-xl mx-auto uppercase tracking-widest">
-              Drop your chaotic data payloads below.
-            </p>
-          </div>
-
-          <div className="w-full relative group">
-            {/* The Drop Zone */}
-            <div className="w-full h-[55vh] flex flex-col items-center justify-center bg-[#0E0C0D] border-2 border-dashed border-[#821346] rounded-sm transition-all duration-300 relative overflow-hidden group-hover:bg-[#821346]/5">
-              
-              {/* Corner Accents */}
-              <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-[#821346]"></div>
-              <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-[#821346]"></div>
-              <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-[#821346]"></div>
-              <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-[#821346]"></div>
-
-              <div className="absolute top-4 left-4 flex gap-2">
-                <div className="w-2 h-2 rounded-full bg-neutral-600 animate-pulse"></div>
-                <div className="w-2 h-2 rounded-full bg-neutral-600 animate-pulse delay-75"></div>
+      <section className="pt-32 pb-20 px-6 min-h-[90vh] flex flex-col items-center justify-center relative overflow-hidden">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-[radial-gradient(circle_at_center,rgba(130,19,70,0.08)_0,transparent_70%)] pointer-events-none"></div>
+        
+        <div className="max-w-6xl mx-auto w-full text-center mb-16 relative z-10">
+          <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent uppercase">
+            Industrial-Grade Data Cleaning
+          </h1>
+          <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto mb-12">
+            Transform chaotic payloads into ready-to-use intelligence. No more duplicates, nulls, or broken formats.
+          </p>
+          
+          {/* BEFORE -> AFTER VISUAL */}
+          <div className="flex flex-col md:flex-row items-center justify-center gap-8 md:gap-16 mb-16">
+            <div className="glass p-6 rounded-xl border border-red-500/20 w-64 text-left relative">
+              <div className="absolute -top-3 -right-3 bg-red-500 text-[10px] font-bold px-2 py-0.5 rounded-full">MESSY</div>
+              <p className="text-xs font-mono text-neutral-500 mb-2">📄 messy.csv</p>
+              <div className="space-y-1 text-sm font-mono">
+                <p className="text-white">12,453 rows</p>
+                <p className="text-red-400">NULL: 3,402</p>
+                <p className="text-red-400">Duplicates: 847</p>
+                <p className="text-red-400">Format: MIXED</p>
+                <p className="mt-4 text-neutral-500 line-through">4.2 MB</p>
               </div>
-
-              {/* Central Content */}
-              <div className="flex flex-col items-center z-10">
-                <div className="w-20 h-20 mb-6 rounded-full bg-[#191718] flex items-center justify-center border border-[#282627] shadow-[0_0_30px_rgba(130,19,70,0.3)]">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#821346" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
-                </div>
-                <h3 className="font-mono text-xl text-white mb-2 uppercase tracking-widest">Awaiting Payload</h3>
-                <p className="text-neutral-500 text-sm mb-8 font-mono">Drag & drop files or click to browse</p>
-                
-                <div className="flex gap-4">
-                  <Link href="/register" className="btn-primary px-8 py-3 text-sm">
-                    Initialize System
-                  </Link>
-                </div>
-              </div>
-
-              {/* Decorative Scanline */}
-              <div className="absolute top-0 left-0 w-full h-[2px] bg-[#821346]/40 shadow-[0_0_10px_#821346] animate-[scan_3s_ease-in-out_infinite]"></div>
+            </div>
+            
+            <div className="hidden md:block">
+              <ArrowRight className="text-accent animate-pulse" size={48} />
             </div>
 
-            {/* Badges / Status */}
-            <div className="absolute -bottom-4 right-4 flex gap-2">
-              <div className="bg-[#10B981]/10 border border-[#10B981]/30 text-[#10B981] px-3 py-1 text-xs font-mono rounded-sm flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-[#10B981]"></div>
-                SYS_READY
+            <div className="glass p-6 rounded-xl border border-emerald-500/20 w-64 text-left relative">
+              <div className="absolute -top-3 -right-3 bg-emerald-500 text-[10px] font-bold px-2 py-0.5 rounded-full">CLEAN</div>
+              <p className="text-xs font-mono text-neutral-500 mb-2">✅ clean.csv</p>
+              <div className="space-y-1 text-sm font-mono">
+                <p className="text-white">12,453 rows</p>
+                <p className="text-emerald-400">NULL: 0</p>
+                <p className="text-emerald-400">Duplicates: 0</p>
+                <p className="text-emerald-400">Format: ISO</p>
+                <p className="mt-4 text-emerald-500 font-bold">1.1 MB</p>
               </div>
-              <div className="bg-[#191718] border border-[#282627] text-neutral-400 px-3 py-1 text-xs font-mono rounded-sm">
-                0 BYTES PROCESSED
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Link href="/register" className="btn-primary px-10 py-4 text-lg">
+              Try Live Demo — No signup required
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* HOW IT WORKS */}
+      <section className="py-24 px-6 bg-white/[0.01] border-y border-white/5">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-16">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-accent mb-4">Process Workflow</h2>
+            <h3 className="text-3xl md:text-5xl font-bold">Clean in 3 simple steps.</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-12 text-center">
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
+                <FileSpreadsheet className="text-accent" size={32} />
               </div>
+              <h4 className="text-xl font-bold mb-3">1. Upload</h4>
+              <p className="text-neutral-400 text-sm">Drop CSV or JSON files up to 50MB. We handle massive payloads with ease.</p>
+            </div>
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
+                <Layers className="text-accent" size={32} />
+              </div>
+              <h4 className="text-xl font-bold mb-3">2. Configure</h4>
+              <p className="text-neutral-400 text-sm">Our AI automatically identifies issues. Use default rules or set custom filters.</p>
+            </div>
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
+                <Download className="text-accent" size={32} />
+              </div>
+              <h4 className="text-xl font-bold mb-3">3. Download</h4>
+              <p className="text-neutral-400 text-sm">Get your cleaned data instantly in CSV, JSON, or Excel format.</p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Features */}
-      <section id="features" className="py-24 px-6 border-t border-white/5">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="glass p-8 rounded-2xl border border-white/5">
-              <Shield className="text-accent mb-4" size={32} />
-              <h3 className="text-xl font-bold mb-3">Auto-Cleanup</h3>
-              <p className="text-neutral-400 text-sm leading-relaxed">
-                Set rules to automatically delete temporary files, old downloads, and system cache based on age or size.
-              </p>
+      {/* LIVE EXAMPLE */}
+      <section className="py-24 px-6">
+        <div className="max-w-4xl mx-auto glass p-8 md:p-12 rounded-3xl border border-white/10 relative overflow-hidden">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-8 relative z-10">
+            <div>
+              <p className="text-accent font-mono text-xs uppercase tracking-widest mb-2">Live Example</p>
+              <h3 className="text-2xl font-bold mb-4">E-commerce dataset (demo)</h3>
+              <div className="space-y-2 text-sm text-neutral-400 mb-8">
+                <p>Original: 10,000 rows | <span className="text-emerald-400">Cleaned: 9,847 rows</span></p>
+                <p>Issues found: <span className="text-amber-500">153</span></p>
+              </div>
+              <div className="flex gap-4">
+                <button className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-bold transition-colors">View detailed report</button>
+                <button className="px-4 py-2 bg-accent/20 text-accent hover:bg-accent/30 rounded-lg text-xs font-bold transition-colors">Download sample</button>
+              </div>
             </div>
-            <div className="glass p-8 rounded-2xl border border-white/5">
-              <BarChart3 className="text-accent mb-4" size={32} />
-              <h3 className="text-xl font-bold mb-3">Duplicate Detection</h3>
-              <p className="text-neutral-400 text-sm leading-relaxed">
-                Our smart engine identifies exact and near-duplicate files across all your connected storage accounts.
-              </p>
-            </div>
-            <div className="glass p-8 rounded-2xl border border-white/5">
-              <Zap className="text-accent mb-4" size={32} />
-              <h3 className="text-xl font-bold mb-3">AI Classification</h3>
-              <p className="text-neutral-400 text-sm leading-relaxed">
-                Automatically sort documents, images, and videos into organized folders using advanced file recognition.
-              </p>
+            <div className="w-full md:w-1/2 h-48 bg-black/40 rounded-xl border border-white/5 flex items-center justify-center">
+              <BarChart3 className="text-white/10" size={64} />
             </div>
           </div>
         </div>
@@ -121,7 +139,6 @@ export default function LandingPage() {
           </div>
 
           <div className="max-w-lg mx-auto">
-            {/* Pro Plan - Single Option */}
             <div className="glass p-10 rounded-3xl border-2 border-accent relative flex flex-col overflow-hidden shadow-[0_0_50px_rgba(130,19,70,0.2)]">
               <div className="absolute top-0 right-0 bg-accent text-black text-[10px] font-bold px-4 py-1.5 uppercase tracking-widest rounded-bl-xl">
                 Best Value
@@ -138,12 +155,12 @@ export default function LandingPage() {
               </div>
               <ul className="space-y-4 mb-10">
                 {[
-                  "Unlimited Managed Storage",
+                  "Unlimited File Cleanups",
                   "Advanced AI Cleanup Rules",
                   "Deep Duplicate Detection",
-                  "Unlimited Connected Accounts",
+                  "API Access for Integrations",
                   "Priority 24/7 Support",
-                  "Cloud Sync Integration"
+                  "50MB Max File Size"
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">
                     <Check size={18} className="text-accent" /> {item}
@@ -163,7 +180,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Footer */}
       <footer className="py-12 px-6 border-t border-white/5 text-center text-neutral-500 text-sm">
         <p>&copy; 2024 FileCleaner. Part of the DevForge ecosystem.</p>
       </footer>

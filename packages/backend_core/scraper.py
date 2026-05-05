@@ -185,3 +185,35 @@ async def fetch_price(url: str) -> float | None:
     except Exception as e:
         logger.error(f"Error scraping {url}: {e}")
         return None
+
+
+async def fetch_stock(url: str) -> bool:
+    """
+    Detects if a product is in stock.
+    Returns True if likely in stock, False if 'out of stock' keywords are found.
+    """
+    headers = {"User-Agent": random.choice(_USER_AGENTS)}
+    try:
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=10.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, "html.parser")
+            text = soup.get_text().lower()
+            
+            # Common out-of-stock indicators
+            oos_keywords = [
+                "out of stock", "agotado", "no disponible", "sold out",
+                "fuera de stock", "temporarily unavailable", "backorder"
+            ]
+            
+            for kw in oos_keywords:
+                if kw in text:
+                    # Double check if it's not a 'notify me when in stock' button
+                    # which actually confirms it IS out of stock
+                    return False
+            
+            return True
+    except Exception as e:
+        logger.error(f"Stock check failed for {url}: {e}")
+        return True # Assume in stock if check fails to avoid false alerts

@@ -1,4 +1,47 @@
 {
-  "installCommand": "pnpm install",
-  "framework": "nextjs"
+  "version": 2,
+  "builds": [
+    {
+      "src": "packages/backend_core/universal_main.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "packages/backend_core/universal_main.py"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/trackers/cron/update",
+      "schedule": "0 * * * *",
+      "comment": "PriceTrackr: check prices every hour (filters by next_check_at per tracker)"
+    },
+    {
+      "path": "/api/invoices/cron/reminders",
+      "schedule": "0 9 * * *",
+      "comment": "InvoiceFollow: send overdue reminders at 9am UTC daily"
+    },
+    {
+      "path": "/api/feedback/cron/summary",
+      "schedule": "0 8 * * 1",
+      "comment": "FeedbackLens: send weekly digest every Monday at 8am UTC"
+    },
+    {
+      "path": "/api/webhooks/cron/silence",
+      "schedule": "*/15 * * * *",
+      "comment": "WebhookMonitor: check for silent endpoints every 15 minutes"
+    },
+    {
+      "path": "/api/webhooks/cron/process-retries",
+      "schedule": "*/5 * * * *",
+      "comment": "WebhookMonitor: process exponential backoff retries every 5 minutes"
+    },
+    {
+      "path": "/api/webhooks/cron/cleanup",
+      "schedule": "0 3 1 * *",
+      "comment": "WebhookMonitor: purge logs older than 30 days on the 1st of each month at 3am"
+    }
+  ]
 }

@@ -25,6 +25,8 @@ async_session_factory = sessionmaker(
     expire_on_commit=False,
 )
 
+SessionLocal = async_session_factory
+
 
 async def create_db_and_tables() -> None:
     async with engine.begin() as conn:

@@ -23,6 +23,7 @@ from apps.feedbacklens.backend.main import (
     settings_router as fl_settings_router,
     FeedbackEntry,
     FeedbackSettings,
+    weekly_summary_cron,
 )
 
 # FileCleaner
@@ -35,6 +36,7 @@ from apps.filecleaner.backend.main import (
 from apps.invoicefollow.backend.main import (
     invoice_router,
     settings_router as iv_settings_router,
+    public_router as iv_public_router,
     Invoice,
     InvoiceSettings,
     send_overdue_reminders,
@@ -45,6 +47,7 @@ from apps.pricetrackr.backend.main import (
     tracker_router,
     settings_router as pt_settings_router,
     TrackedUrl,
+    PriceHistory,
     TrackerSettings,
     run_price_updates,
 )
@@ -59,6 +62,9 @@ from apps.webhookmonitor.backend.main import (
     WebhookSettings,
 )
 
+# Admin
+from backend_core.admin_router import admin_router
+
 settings = get_settings()
 
 # Unificar todos los routers de dominio
@@ -71,6 +77,7 @@ all_domain_routers = [
     # InvoiceFollow
     invoice_router,
     iv_settings_router,
+    iv_public_router,
     # PriceTrackr
     tracker_router,
     pt_settings_router,
@@ -78,6 +85,8 @@ all_domain_routers = [
     wm_router,
     ingestion_router,
     wm_settings_router,
+    # Admin
+    admin_router,
 ]
 
 app = create_app(
@@ -86,24 +95,8 @@ app = create_app(
     domain_routers=all_domain_routers
 )
 
-@app.on_event("startup")
-async def schedule_all_jobs():
-    # Tareas de InvoiceFollow (Cada día a las 9 AM)
-    app.state.scheduler.add_job(
-        send_overdue_reminders,
-        "cron",
-        hour=9,
-        minute=0,
-        id="invoice_reminder_job"
-    )
-    
-    # Tareas de PriceTrackr (Cada 24 horas)
-    app.state.scheduler.add_job(
-        run_price_updates,
-        "interval",
-        hours=24,
-        id="price_update_job"
-    )
+# El orquestador ya no usa APScheduler local para ser compatible con Vercel/Serverless.
+# Los jobs se ejecutan llamando a los endpoints /cron/* de cada router.
 
 if __name__ == "__main__":
     import uvicorn

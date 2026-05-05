@@ -1,15 +1,15 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, date, timezone
-import uuid, logging
+import uuid, logging, json
 
-from backend_core import create_app, get_current_user, get_session, User
+from backend_core import create_app, get_current_user, get_session, User, require_user_access
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 
@@ -55,8 +55,61 @@ class InvoiceTemplateUpdate(BaseModel):
     email_template: str
 
 
-invoice_router = APIRouter(prefix="/invoices", tags=["invoices"])
+invoice_router = APIRouter(prefix="/invoices", tags=["invoices"], dependencies=[Depends(require_user_access)])
 settings_router = APIRouter(prefix="/settings", tags=["settings"])
+public_router = APIRouter(prefix="/invoices", tags=["public"])
+
+@invoice_router.post("/cron/reminders", tags=["cron"])
+async def cron_send_reminders(authorization: str = None):
+    """Endpoint para Vercel Cron."""
+    expected = os.getenv("CRON_SECRET")
+    if expected and authorization != f"Bearer {expected}":
+         raise HTTPException(status_code=401, detail="Unauthorized")
+    await send_overdue_reminders()
+    return {"status": "success", "task": "overdue_reminders"}
+
+
+@public_router.post("/webhooks/lemonsqueezy")
+async def lemonsqueezy_webhook(request: Request, session: AsyncSession = Depends(get_session)):
+    """
+    Webhook from LemonSqueezy. On order_created, marks the matching invoice as paid.
+    Signature verified via X-Signature header and LEMONSQUEEZY_WEBHOOK_SECRET env var.
+    """
+    import hmac, hashlib
+
+    secret = os.getenv("LEMONSQUEEZY_WEBHOOK_SECRET", "")
+    raw_body = await request.body()
+
+    if secret:
+        sig = request.headers.get("X-Signature", "")
+        expected_sig = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected_sig):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    try:
+        payload = json.loads(raw_body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event_name = payload.get("meta", {}).get("event_name", "")
+    custom_data = payload.get("meta", {}).get("custom_data", {})
+
+    if event_name == "order_created":
+        invoice_id = custom_data.get("invoice_id")
+        if invoice_id:
+            result = await session.execute(
+                select(Invoice).where(Invoice.id == int(invoice_id))
+            )
+            invoice = result.scalar_one_or_none()
+            if invoice:
+                invoice.status = "paid"
+                invoice.bot_active = False  # stop reminders
+                session.add(invoice)
+                await session.commit()
+                logger.info(f"Invoice {invoice_id} auto-marked as paid via LemonSqueezy webhook")
+                return {"status": "ok", "action": "invoice_paid", "invoice_id": invoice_id}
+
+    return {"status": "ok", "action": "no_op", "event": event_name}
 
 
 @settings_router.get("/invoice-template")
@@ -234,7 +287,7 @@ async def pause_reminders(invoice_id: int, user: User = Depends(get_current_user
     return {"status": "paused", "payment_promise_date": str(inv.payment_promise_date)}
 
 
-@invoice_router.get("/promise/{token}")
+@public_router.get("/promise/{token}")
 async def public_promise(token: str, session: AsyncSession = Depends(get_session)):
     """
     Endpoint PÚBLICO (sin auth). El cliente hace clic en el link del email
@@ -305,15 +358,10 @@ async def client_scores(user: User = Depends(get_current_user), session: AsyncSe
 app = create_app(
     title="Invoice Follow-up",
     description="Track invoices and automate payment reminders",
-    domain_routers=[invoice_router, settings_router]
+    domain_routers=[invoice_router, settings_router, public_router]
 )
 
-@app.on_event("startup")
-async def schedule_reminder_job():
-    app.state.scheduler.add_job(
-        send_overdue_reminders, "cron", hour=9, minute=0,
-        id="invoice_reminder_job", replace_existing=True
-    )
+# APScheduler removido para Vercel Serverless
 
 if __name__ == "__main__":
     import uvicorn

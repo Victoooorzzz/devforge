@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { Check, Zap, Target, TrendingDown } from "lucide-react";
+import { Check, Zap, Target, TrendingDown, Search, Bell, BarChart2, Globe, ArrowUpRight, Activity } from "lucide-react";
 
 export default function LandingPage() {
   return (
@@ -10,7 +10,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
             <img src="/devforge-logo-white.svg" alt="DevForge" className="h-6 w-auto" />
-            <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3">
+            <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3 uppercase">
               Price<span className="text-accent">Trackr</span>
             </span>
           </Link>
@@ -24,97 +24,112 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero Section */}
-      <section className="pt-32 pb-20 px-6 min-h-[85vh] flex flex-col justify-center">
-        <div className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-          <div className="text-left">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-xs font-medium mb-6">
-              <Target size={14} />
-              <span>Real-time Market Intelligence</span>
-            </div>
-            <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent">
-              Outsmart your competitors.
-            </h1>
-            <p className="text-lg md:text-xl text-neutral-400 mb-10">
-              Monitor competitor prices in real-time, get instant alerts on price drops, and optimize your margins with data-driven insights.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4">
-              <Link href="/register" className="btn-primary px-8 py-4 text-center">
-                Start Tracking
-              </Link>
-            </div>
+      <section className="pt-32 pb-20 px-6 min-h-[90vh] flex flex-col items-center justify-center relative overflow-hidden">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-[radial-gradient(circle_at_center,rgba(130,19,70,0.08)_0,transparent_70%)] pointer-events-none"></div>
+        
+        <div className="max-w-6xl mx-auto w-full text-center relative z-10">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold mb-8 uppercase tracking-widest">
+            <Activity size={12} />
+            <span>Market Surveillance Online</span>
           </div>
           
-          {/* Chart UI */}
-          <div className="relative w-full h-[400px] rounded-lg overflow-hidden bg-[#0A0A0A] border border-[#282627] shadow-2xl p-6 flex flex-col justify-end">
-            {/* Header / Badges */}
-            <div className="absolute top-6 left-6 right-6 flex justify-between items-center z-10">
-              <div className="text-white font-mono text-sm">
-                COMPETITOR: <span className="text-neutral-400">MARKET_LEADER_US</span>
+          <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent uppercase text-balance">
+            Outsmart Competitors with Real-Time Data.
+          </h1>
+          <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto mb-12">
+            Monitor thousands of URLs with 10-minute refresh rates. 
+            Detect price drops, stock changes, and market shifts before anyone else.
+          </p>
+
+          {/* PRICE CHART VISUAL */}
+          <div className="max-w-4xl mx-auto mb-16 glass p-6 rounded-2xl border border-white/5 bg-black/40 relative overflow-hidden group">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center border border-white/10">
+                  <Globe size={20} className="text-neutral-400" />
+                </div>
+                <div className="text-left">
+                  <p className="text-xs font-mono text-neutral-500 uppercase tracking-tighter">Target URL</p>
+                  <p className="text-sm font-bold truncate max-w-[200px]">amazon.com/pro-laptop-2024</p>
+                </div>
               </div>
-              <div className="flex items-center gap-2 bg-accent/20 text-accent px-3 py-1 rounded-full text-xs font-bold border border-accent/30 animate-pulse">
-                <span className="w-2 h-2 rounded-full bg-accent"></span>
-                PRICE DROP DETECTED
+              <div className="flex gap-2">
+                <div className="px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-bold uppercase tracking-widest">
+                  Live: $1,249.00
+                </div>
+                <div className="px-3 py-1 rounded-md bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold uppercase tracking-widest animate-pulse">
+                  Drop Detected
+                </div>
               </div>
             </div>
 
-            {/* Price tag */}
-            <div className="absolute top-20 left-6 z-10">
-              <div className="text-5xl font-bold tracking-tighter text-white font-mono">
-                $899<span className="text-xl text-neutral-500">.99</span>
-              </div>
-              <div className="text-sm font-mono text-accent mt-2 flex items-center gap-1">
-                <TrendingDown size={14} /> -12.5% in last 10m
-              </div>
-            </div>
-            
-            {/* Minimalist SVG Graph */}
-            <div className="absolute inset-0 pt-[150px] flex items-end">
-              <svg viewBox="0 0 100 50" className="w-full h-full preserve-3d" preserveAspectRatio="none">
+            <div className="h-48 relative">
+              <svg viewBox="0 0 400 100" className="w-full h-full preserve-3d" preserveAspectRatio="none">
                 <defs>
-                  <linearGradient id="gradient" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#821346" stopOpacity="0.5" />
+                  <linearGradient id="priceGradient" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stopColor="#821346" stopOpacity="0.3" />
                     <stop offset="100%" stopColor="#821346" stopOpacity="0" />
                   </linearGradient>
                 </defs>
-                <path d="M0 40 Q 10 30, 20 35 T 40 20 T 60 25 T 80 15 T 100 5 L 100 50 L 0 50 Z" fill="url(#gradient)" />
-                <path d="M0 40 Q 10 30, 20 35 T 40 20 T 60 25 T 80 15 T 100 5" fill="none" stroke="#821346" strokeWidth="0.5" className="drop-shadow-[0_0_8px_#821346]" />
-                
-                {/* Active Point Indicator */}
-                <circle cx="100" cy="5" r="1.5" fill="#821346" className="animate-ping" />
-                <circle cx="100" cy="5" r="1" fill="#fff" />
+                <path d="M0 80 L 50 75 L 100 85 L 150 40 L 200 45 L 250 20 L 300 25 L 350 10 L 400 15 L 400 100 L 0 100 Z" fill="url(#priceGradient)" />
+                <path d="M0 80 L 50 75 L 100 85 L 150 40 L 200 45 L 250 20 L 300 25 L 350 10 L 400 15" fill="none" stroke="#821346" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <circle cx="150" cy="40" r="3" fill="#821346" />
+                <circle cx="350" cy="10" r="4" fill="#821346" className="animate-ping" />
+                <circle cx="350" cy="10" r="2" fill="#fff" />
               </svg>
+              
+              {/* Grid Lines */}
+              <div className="absolute inset-0 border-b border-white/5 flex flex-col justify-between pointer-events-none">
+                <div className="border-t border-white/5 w-full"></div>
+                <div className="border-t border-white/5 w-full"></div>
+                <div className="border-t border-white/5 w-full"></div>
+              </div>
             </div>
             
-            {/* Grid overlay */}
-            <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff05_1px,transparent_1px),linear-gradient(to_bottom,#ffffff05_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none mix-blend-overlay"></div>
+            <div className="mt-4 flex justify-between text-[10px] font-mono text-neutral-500 uppercase">
+              <span>08:00 AM</span>
+              <span>12:00 PM</span>
+              <span>04:00 PM</span>
+              <span>08:00 PM</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Link href="/register" className="btn-primary px-10 py-4 text-lg">
+              Start Surveillance Free
+            </Link>
           </div>
         </div>
       </section>
 
-      {/* Features */}
-      <section id="features" className="py-24 px-6 border-t border-white/5">
+      {/* HOW IT WORKS */}
+      <section className="py-24 px-6 bg-white/[0.01] border-y border-white/5">
         <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="glass p-8 rounded-2xl border border-white/5">
-              <TrendingDown className="text-accent mb-4" size={32} />
-              <h3 className="text-xl font-bold mb-3">Price Monitoring</h3>
-              <p className="text-neutral-400 text-sm leading-relaxed">
-                Track prices across thousands of websites and marketplaces with 10-minute refresh intervals.
-              </p>
+          <div className="text-center mb-16">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-accent mb-4">Market Intelligence</h2>
+            <h3 className="text-3xl md:text-5xl font-bold">Monitor in 3 simple steps.</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-12 text-center">
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
+                <Search className="text-accent" size={32} />
+              </div>
+              <h4 className="text-xl font-bold mb-3">1. Track URLs</h4>
+              <p className="text-neutral-400 text-sm">Paste URLs from any marketplace. Our engine identifies price & stock selectors automatically.</p>
             </div>
-            <div className="glass p-8 rounded-2xl border border-white/5">
-              <Zap className="text-accent mb-4" size={32} />
-              <h3 className="text-xl font-bold mb-3">Instant Alerts</h3>
-              <p className="text-neutral-400 text-sm leading-relaxed">
-                Receive instant notifications via Telegram, Discord, or Email when a competitor changes their pricing.
-              </p>
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
+                <Bell className="text-accent" size={32} />
+              </div>
+              <h4 className="text-xl font-bold mb-3">2. Detect Changes</h4>
+              <p className="text-neutral-400 text-sm">We scan every 10 minutes. Get instant alerts via Webhook, Slack, or Email on any movement.</p>
             </div>
-            <div className="glass p-8 rounded-2xl border border-white/5">
-              <Check className="text-accent mb-4" size={32} />
-              <h3 className="text-xl font-bold mb-3">Historical Data</h3>
-              <p className="text-neutral-400 text-sm leading-relaxed">
-                Analyze pricing trends over time to identify seasonal patterns and competitor strategies.
-              </p>
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
+                <BarChart2 className="text-accent" size={32} />
+              </div>
+              <h4 className="text-xl font-bold mb-3">3. Beat Prices</h4>
+              <p className="text-neutral-400 text-sm">Use historical data to optimize your own margins and stay #1 in the market.</p>
             </div>
           </div>
         </div>
@@ -124,34 +139,33 @@ export default function LandingPage() {
       <section id="pricing" className="py-24 px-6 border-t border-white/5 bg-white/[0.02]">
         <div className="max-w-3xl mx-auto">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-5xl font-bold mb-4">Pricing for elite ecommerce teams.</h2>
-            <p className="text-neutral-400">Maximize your market share with professional tracking tools.</p>
+            <h2 className="text-3xl md:text-5xl font-bold mb-4">Industrial-grade intelligence.</h2>
+            <p className="text-neutral-400">Everything you need to dominate your e-commerce niche.</p>
           </div>
 
           <div className="max-w-lg mx-auto">
-            {/* Pro Plan - Single Option */}
             <div className="glass p-10 rounded-3xl border-2 border-accent relative flex flex-col overflow-hidden shadow-[0_0_50px_rgba(130,19,70,0.2)]">
               <div className="absolute top-0 right-0 bg-accent text-black text-[10px] font-bold px-4 py-1.5 uppercase tracking-widest rounded-bl-xl">
-                Full Intelligence
+                Pro Access
               </div>
               <div className="mb-8">
-                <h3 className="text-2xl font-bold mb-2">Market Pro</h3>
+                <h3 className="text-2xl font-bold mb-2">Pro Plan</h3>
                 <div className="flex items-baseline gap-1">
                   <span className="text-5xl font-bold">$9.99</span>
                   <span className="text-neutral-400">/mo</span>
                 </div>
                 <p className="text-sm text-neutral-400 mt-4 leading-relaxed">
-                  Enterprise-grade tracking with real-time intelligence. Includes a 7-day free trial.
+                  Real-time tracking for up to 10,000 URLs. Includes a 7-day free trial.
                 </p>
               </div>
               <ul className="space-y-4 mb-10">
                 {[
                   "10,000 Tracked URLs",
-                  "10-Minute Refresh Rate",
-                  "Webhook & Slack Alerts",
-                  "Lifetime Pricing History",
-                  "Unlimited Team Members",
-                  "Priority Proxy Network Access"
+                  "10-Minute Refresh Intervals",
+                  "Global Proxy Network",
+                  "Price History Tracking",
+                  "Custom Webhook Alerts",
+                  "Priority 24/7 Support"
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">
                     <Check size={18} className="text-accent" /> {item}
@@ -178,3 +192,4 @@ export default function LandingPage() {
     </div>
   );
 }
+
