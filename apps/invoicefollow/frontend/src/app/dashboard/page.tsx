@@ -11,6 +11,8 @@ interface Invoice {
   due_date: string;
   status: "pending" | "paid" | "overdue";
   reminders_sent: number;
+  payment_promise_date?: string | null;
+  cron_paused?: boolean;
 }
 
 type DebtorRisk = "green" | "yellow" | "red";
@@ -46,6 +48,7 @@ const statusColors: Record<string, { backgroundColor: string; color: string }> =
 
 export default function DashboardPage() {
   const [invoices, setInvoices]     = useState<Invoice[]>([]);
+  const [scores, setScores]         = useState<any[]>([]);
   const [showForm, setShowForm]     = useState(false);
   const [view, setView]             = useState<"semaforo" | "lista">("semaforo");
   const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
@@ -57,6 +60,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     apiClient.get<Invoice[]>("/invoices/list").then(({ data }) => setInvoices(data)).catch(() => {});
+    apiClient.get<any[]>("/invoices/client-scores").then(({ data }) => setScores(data)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -77,6 +81,16 @@ export default function DashboardPage() {
     setInvoices(prev => [data, ...prev]);
     setForm({ client_name: "", client_email: "", amount: "", due_date: "" });
     setShowForm(false);
+  };
+
+  const handlePauseReminders = async (id: number) => {
+    setLoadingIds(prev => new Set(prev).add(id));
+    trackEvent("feature_used", { feature_name: "pause_invoice_reminders" });
+    try {
+      const { data } = await apiClient.put(`/invoices/${id}/pause-reminders`);
+      setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, cron_paused: true, payment_promise_date: data.payment_promise_date } : inv));
+    } catch { alert("Error al pausar recordatorios"); }
+    finally { setLoadingIds(prev => { const s = new Set(prev); s.delete(id); return s; }); }
   };
 
   const handleMarkPaid = async (id: number) => {
@@ -132,7 +146,14 @@ export default function DashboardPage() {
     p.invoices.push(inv);
     if (inv.status !== "paid") p.totalOwed += inv.amount;
   });
-  debtorMap.forEach(p => { p.risk = getRisk(p.invoices); }); // risk calculado localmente, refinar con /invoices/client-scores si disponible
+  debtorMap.forEach(p => {
+    const score = scores.find(s => s.client_email === p.client_email);
+    if (score) {
+      p.risk = score.risk_label === "alto" ? "red" : score.risk_label === "medio" ? "yellow" : "green";
+    } else {
+      p.risk = getRisk(p.invoices);
+    }
+  });
   const order = { red: 0, yellow: 1, green: 2 };
   const debtors = Array.from(debtorMap.values()).sort((a, b) => order[a.risk] - order[b.risk]);
 
@@ -285,7 +306,14 @@ export default function DashboardPage() {
                     </td>
                     <td className="px-4 py-3 text-sm font-mono" style={{ color: "var(--color-text)" }}>${inv.amount.toFixed(2)}</td>
                     <td className="px-4 py-3 text-sm" style={{ color: "var(--color-text-secondary)" }}>{inv.due_date}</td>
-                    <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full" style={statusColors[inv.status]}>{inv.status}</span></td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs font-medium px-2.5 py-1 rounded-full" style={statusColors[inv.status]}>{inv.status}</span>
+                      {inv.cron_paused && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 ml-2 rounded bg-indigo-500/10 text-indigo-500 uppercase tracking-wider">
+                          PAUSADO
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-sm font-mono" style={{ color: "var(--color-text-secondary)" }}>{inv.reminders_sent}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -298,6 +326,14 @@ export default function DashboardPage() {
                               ? <Loader2 size={12} className="animate-spin" />
                               : <Sparkles size={12} />}
                             AI Tone
+                          </button>
+                        )}
+                        {(inv.status === "pending" || inv.status === "overdue") && !inv.cron_paused && (
+                          <button onClick={() => handlePauseReminders(inv.id)} disabled={loadingIds.has(inv.id)}
+                            className="text-xs font-medium px-3 py-1.5 rounded transition-colors"
+                            title="Pausar recordatorios (promesa de pago)"
+                            style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text-secondary)", opacity: loadingIds.has(inv.id) ? 0.5 : 1 }}>
+                            Pausar
                           </button>
                         )}
                         {(inv.status === "pending" || inv.status === "overdue") && (

@@ -39,7 +39,7 @@ export default function DashboardPage() {
   const [history, setHistory]     = useState<PricePoint[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [deleting, setDeleting]   = useState<Set<number>>(new Set());
-  const [form, setForm]           = useState({ url: "", label: "" });
+  const [form, setForm]           = useState({ url: "", label: "", check_frequency_hours: 24 });
   const [exportOpen, setExportOpen] = useState(false);
   const [alertConfigs, setAlertConfigs] = useState<Record<number, AlertConfig>>({});
   const exportRef = useRef<HTMLDivElement>(null);
@@ -59,10 +59,17 @@ export default function DashboardPage() {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     trackEvent("feature_used", { feature_name: "add_tracker" });
-    const { data } = await apiClient.post<TrackedUrl>("/trackers", { url: form.url, label: form.label });
+    const { data } = await apiClient.post<TrackedUrl>("/trackers", { url: form.url, label: form.label, check_frequency_hours: form.check_frequency_hours });
     setTrackers(prev => [data, ...prev]);
-    setForm({ url: "", label: "" });
+    setForm({ url: "", label: "", check_frequency_hours: 24 });
     setShowForm(false);
+  };
+
+  const handleUpdateFrequency = async (id: number, hours: number) => {
+    try {
+      await apiClient.patch(`/trackers/${id}/frequency`, { hours });
+      setTrackers(prev => prev.map(t => t.id === id ? { ...t, check_frequency_hours: hours } : t));
+    } catch { alert("Error al actualizar frecuencia"); }
   };
 
   const handleDelete = async (id: number) => {
@@ -209,7 +216,18 @@ export default function DashboardPage() {
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>URL del producto</label>
               <input type="url" value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} className="input-field" placeholder="https://..." required />
             </div>
-            <button type="submit" className="btn-primary">Guardar</button>
+            <div className="md:col-span-1 flex items-end gap-3">
+              <div className="flex-1">
+                <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Frecuencia</label>
+                <select value={form.check_frequency_hours} onChange={e => setForm({ ...form, check_frequency_hours: parseInt(e.target.value) })} className="input-field cursor-pointer px-3">
+                  <option value={1}>Cada 1h</option>
+                  <option value={6}>Cada 6h</option>
+                  <option value={12}>Cada 12h</option>
+                  <option value={24}>Cada 24h</option>
+                </select>
+              </div>
+              <button type="submit" className="btn-primary flex-1">Guardar</button>
+            </div>
           </form>
         )}
 
@@ -264,6 +282,21 @@ export default function DashboardPage() {
                         </p>
                       )}
                     </div>
+                    {/* Frequency selector */}
+                    <select
+                      value={t.check_frequency_hours}
+                      onChange={e => handleUpdateFrequency(t.id, parseInt(e.target.value))}
+                      onClick={e => e.stopPropagation()}
+                      className="text-xs px-2 py-1.5 rounded border-0 outline-none cursor-pointer transition-colors"
+                      style={{ backgroundColor: "var(--color-surface-high)", color: "var(--color-text-secondary)" }}
+                      title="Frecuencia de escaneo"
+                    >
+                      <option value={1}>1h</option>
+                      <option value={6}>6h</option>
+                      <option value={12}>12h</option>
+                      <option value={24}>24h</option>
+                    </select>
+
                     {/* Alert button */}
                     <button
                       onClick={e => { e.stopPropagation(); toggleAlertPanel(t.id); }}
