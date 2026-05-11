@@ -1,296 +1,232 @@
-"use client";
-
+﻿"use client";
 import { useState, useEffect } from "react";
 import { apiClient, trackEvent } from "@devforge/core";
-import { 
-  AlertTriangle, 
-  CheckCircle2, 
-  MessageSquare, 
-  Copy, 
-  Calendar, 
-  TrendingUp, 
-  Clock,
-  Sparkles,
-  Zap
-} from "lucide-react";
 
 interface FeedbackEntry {
   id: number;
   text: string;
   sentiment: "positive" | "negative" | "neutral" | null;
   confidence: number | null;
-  themes: string[];
-  is_urgent: boolean;
+  themes: string[] | null;
+  is_urgent: boolean | null;
   draft_reply: string | null;
+  analyzed_at: string | null;
   created_at: string;
+  status: string;
 }
 
-interface WeeklySummary {
-  summary_text: string;
-  generated_at: string;
-  sentiment_stats: Record<string, number>;
-}
-
-const sentimentColors: Record<string, { backgroundColor: string; color: string; icon: any }> = {
-  positive: { backgroundColor: "rgba(16,185,129,0.15)", color: "#10B981", icon: CheckCircle2 },
-  negative: { backgroundColor: "rgba(239,68,68,0.15)", color: "#EF4444", icon: AlertTriangle },
-  neutral: { backgroundColor: "rgba(163,163,163,0.15)", color: "#A3A3A3", icon: MessageSquare },
+const sentimentConfig = {
+  positive: { label: "Positivo", color: "#10B981", bg: "rgba(16,185,129,0.12)" },
+  negative: { label: "Negativo", color: "#EF4444", bg: "rgba(239,68,68,0.12)" },
+  neutral:  { label: "Neutral",  color: "#A3A3A3", bg: "rgba(163,163,163,0.12)" },
 };
 
 export default function DashboardPage() {
-  const [entries, setEntries] = useState<FeedbackEntry[]>([]);
-  const [summary, setSummary] = useState<WeeklySummary | null>(null);
-  const [newText, setNewText] = useState("");
-  const [analyzing, setAnalyzing] = useState<number | null>(null);
-  const [copying, setCopying] = useState<number | null>(null);
+  const [entries, setEntries]         = useState<FeedbackEntry[]>([]);
+  const [text, setText]               = useState("");
+  const [analyzing, setAnalyzing]     = useState<Set<number>>(new Set());
+  const [selected, setSelected]       = useState<FeedbackEntry | null>(null);
+  const [submitting, setSubmitting]   = useState(false);
+  const [filter, setFilter]           = useState<"all" | "urgent" | "negative">("all");
 
   useEffect(() => {
-    fetchData();
+    apiClient.get<FeedbackEntry[]>("/feedback/list").then(({ data }) => setEntries(data)).catch(() => {});
   }, []);
 
-  const fetchData = async () => {
-    try {
-      const [entriesRes, summaryRes] = await Promise.all([
-        apiClient.get<FeedbackEntry[]>("/feedback/list"),
-        apiClient.get<WeeklySummary>("/feedback/summary/weekly")
-      ]);
-      setEntries(entriesRes.data);
-      if (summaryRes.data) setSummary(summaryRes.data);
-    } catch (err) {
-      console.error("Error fetching data", err);
-    }
-  };
-
-  const handleAdd = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newText.trim()) return;
+    if (!text.trim()) return;
+    setSubmitting(true);
     trackEvent("feature_used", { feature_name: "add_feedback" });
-    const { data } = await apiClient.post<FeedbackEntry>("/feedback", { text: newText });
-    setEntries((prev) => [data, ...prev]);
-    setNewText("");
+    try {
+      const { data } = await apiClient.post<FeedbackEntry>("/feedback", { text });
+      setEntries(prev => [data, ...prev]);
+      setText("");
+      handleAnalyze(data.id);
+    } catch { alert("Error al guardar feedback"); }
+    finally { setSubmitting(false); }
   };
 
   const handleAnalyze = async (id: number) => {
-    setAnalyzing(id);
-    trackEvent("feature_used", { feature_name: "analyze_sentiment" });
+    setAnalyzing(prev => new Set(prev).add(id));
+    trackEvent("feature_used", { feature_name: "analyze_feedback" });
     try {
       const { data } = await apiClient.post<FeedbackEntry>(`/feedback/${id}/analyze`);
-      setEntries((prev) => prev.map((e) => (e.id === id ? data : e)));
-    } finally {
-      setAnalyzing(null);
-    }
+      setEntries(prev => prev.map(e => e.id === id ? data : e));
+      if (selected?.id === id) setSelected(data);
+    } catch { alert("Error al analizar"); }
+    finally { setAnalyzing(prev => { const s = new Set(prev); s.delete(id); return s; }); }
   };
 
-  const copyToClipboard = (text: string, id: number) => {
-    navigator.clipboard.writeText(text);
-    setCopying(id);
-    setTimeout(() => setCopying(null), 2000);
-  };
+  const urgent   = entries.filter(e => e.is_urgent);
+  const negative = entries.filter(e => e.sentiment === "negative");
+  const positive = entries.filter(e => e.sentiment === "positive");
 
-  const counts = { 
-    positive: entries.filter((e) => e.sentiment === "positive").length, 
-    negative: entries.filter((e) => e.sentiment === "negative").length, 
-    neutral: entries.filter((e) => e.sentiment === "neutral").length 
-  };
+  const filtered = entries.filter(e => {
+    if (filter === "urgent")   return e.is_urgent;
+    if (filter === "negative") return e.sentiment === "negative";
+    return true;
+  });
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      <div className="flex justify-between items-start mb-8">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight" style={{ color: "var(--color-text)" }}>
-            Feedback Intelligence
-          </h1>
-          <p className="text-sm mt-1" style={{ color: "var(--color-text-secondary)" }}>
-            Gemini-powered sentiment and urgency analysis
-          </p>
-        </div>
-        <div className="flex gap-4">
-          <div className="text-right">
-            <p className="text-xs font-semibold uppercase opacity-50 mb-1">Total Entries</p>
-            <p className="text-2xl font-bold">{entries.length}</p>
-          </div>
-          <div className="h-10 w-px bg-white/10 mx-2" />
-          <div className="text-right text-red-500">
-            <p className="text-xs font-semibold uppercase opacity-70 mb-1">Urgent Items</p>
-            <p className="text-2xl font-bold">{entries.filter(e => e.is_urgent).length}</p>
+    <div className="flex gap-6">
+      <div className="flex-1 min-w-0">
+
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>Feedback Lens</h1>
+            <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>{entries.length} entradas analizadas</p>
           </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
-          {/* Stats Bar */}
-          <div className="grid grid-cols-3 gap-4">
-            {Object.entries(counts).map(([key, val]) => {
-              const config = sentimentColors[key];
-              const Icon = config.icon;
-              return (
-                <div key={key} className="p-4 rounded-xl border border-white/5" style={{ backgroundColor: "var(--color-surface)" }}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Icon size={16} style={{ color: config.color }} />
-                    <span className="text-xs font-bold uppercase tracking-wider opacity-60">{key}</span>
-                  </div>
-                  <p className="text-3xl font-mono font-bold" style={{ color: config.color }}>{val}</p>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Add Feedback */}
-          <section>
-            <form onSubmit={handleAdd} className="relative group">
-              <textarea 
-                value={newText} 
-                onChange={(e) => setNewText(e.target.value)} 
-                className="w-full bg-black/20 border border-white/10 rounded-2xl p-6 pr-24 text-sm focus:border-indigo-500 outline-none transition-all resize-none min-h-[120px]" 
-                placeholder="Paste raw user feedback here (app store reviews, emails, chat logs)..." 
-                required 
-              />
-              <button 
-                type="submit" 
-                className="absolute bottom-4 right-4 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-all shadow-lg"
-              >
-                <Zap size={16} />
-                Analyze
-              </button>
-            </form>
-          </section>
-
-          {/* Feed */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-2 px-1">
-              <Clock size={16} className="opacity-40" />
-              <h2 className="text-xs font-bold uppercase tracking-widest opacity-40">Recent Activity</h2>
+        {urgent.length > 0 && (
+          <div className="p-4 rounded-lg mb-6 flex items-start gap-3"
+            style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)" }}>
+            <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0 animate-pulse" style={{ backgroundColor: "#EF4444" }} />
+            <div>
+              <p className="text-sm font-bold" style={{ color: "#EF4444" }}>
+                {urgent.length} feedback urgente{urgent.length > 1 ? "s" : ""} detectado{urgent.length > 1 ? "s" : ""}
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--color-text-secondary)" }}>
+                Estos mensajes requieren atencion inmediata — posibles errores criticos o quejas graves.
+              </p>
             </div>
-            {entries.length === 0 && (
-              <div className="p-12 text-center rounded-2xl border-2 border-dashed border-white/5 opacity-40">
-                <p>No feedback entries found yet.</p>
-              </div>
-            )}
-            {entries.map((entry) => {
-              const config = entry.sentiment ? sentimentColors[entry.sentiment] : null;
-              return (
-                <div key={entry.id} className="group p-5 rounded-2xl border border-white/5 transition-all hover:border-white/20" style={{ backgroundColor: "var(--color-surface)" }}>
-                  <div className="flex items-start justify-between gap-6 mb-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-3">
-                        {entry.is_urgent && (
-                          <span className="bg-red-500/20 text-red-500 text-[10px] font-black uppercase px-2 py-0.5 rounded-md animate-pulse border border-red-500/30">
-                            Urgent
-                          </span>
-                        )}
-                        <span className="text-[10px] font-mono opacity-30">
-                          ID: {entry.id.toString().padStart(4, '0')} • {new Date(entry.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                      <p className="text-[15px] leading-relaxed" style={{ color: "var(--color-text)" }}>{entry.text}</p>
-                    </div>
-                    
-                    <div className="flex-shrink-0">
-                      {entry.sentiment ? (
-                        <div className="flex flex-col items-end">
-                          <span className="text-[11px] font-black uppercase px-3 py-1 rounded-full mb-1" style={{ ...config }}>
-                            {entry.sentiment}
-                          </span>
-                          <span className="text-[10px] opacity-40 font-mono">
-                            {entry.confidence ? (entry.confidence * 100).toFixed(0) : "0"}% match
-                          </span>
-                        </div>
-                      ) : (
-                        <button 
-                          onClick={() => handleAnalyze(entry.id)} 
-                          disabled={analyzing === entry.id} 
-                          className="bg-white/5 hover:bg-white/10 text-xs font-bold px-4 py-2 rounded-lg transition-all"
-                        >
-                          {analyzing === entry.id ? "Analyzing..." : "Process with AI"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {entry.themes.length > 0 && (
-                    <div className="flex flex-wrap gap-2 pt-3 border-t border-white/5">
-                      {entry.themes.map((t) => (
-                        <span key={t} className="text-[10px] font-bold px-2.5 py-1 rounded-md bg-white/5 text-white/40 uppercase tracking-tight">
-                          #{t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {entry.draft_reply && (
-                    <div className="mt-4 p-4 rounded-xl bg-indigo-500/5 border border-indigo-500/10 relative group/draft">
-                      <div className="flex items-center gap-2 mb-2 text-indigo-400">
-                        <Sparkles size={12} />
-                        <span className="text-[10px] font-bold uppercase tracking-widest">AI Drafted Reply</span>
-                      </div>
-                      <p className="text-xs text-indigo-200/70 italic leading-relaxed pr-10">
-                        "{entry.draft_reply}"
-                      </p>
-                      <button 
-                        onClick={() => copyToClipboard(entry.draft_reply!, entry.id)}
-                        className="absolute top-4 right-4 p-2 rounded-lg hover:bg-indigo-500/20 text-indigo-400 transition-all opacity-0 group-hover/draft:opacity-100"
-                        title="Copy draft"
-                      >
-                        {copying === entry.id ? <CheckCircle2 size={16} /> : <Copy size={16} />}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
           </div>
+        )}
+
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          {[
+            { label: "Positivo",  value: positive.length, color: "#10B981" },
+            { label: "Negativo",  value: negative.length, color: "#EF4444" },
+            { label: "Urgente",   value: urgent.length,   color: "#F59E0B" },
+          ].map(s => (
+            <div key={s.label} className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
+              <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>{s.label}</p>
+              <p className="text-xl font-bold font-mono" style={{ color: s.color }}>{s.value}</p>
+            </div>
+          ))}
         </div>
 
-        {/* Sidebar */}
-        <div className="space-y-6">
-          <div className="p-6 rounded-2xl border border-indigo-500/20 bg-indigo-500/5 backdrop-blur-xl">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400">
-                <Calendar size={20} />
-              </div>
-              <h2 className="font-bold">Weekly Intelligence</h2>
-            </div>
-            
-            {summary ? (
-              <>
-                <div className="space-y-4">
-                  <p className="text-sm text-white/70 leading-relaxed italic">
-                    "{summary.summary_text}"
-                  </p>
-                  
-                  <div className="pt-4 border-t border-white/5">
-                    <p className="text-[10px] font-bold uppercase tracking-widest opacity-40 mb-3">Volume Trend</p>
-                    <div className="flex items-end gap-1 h-12">
-                      {[34, 45, 23, 67, 89, 45, 56].map((h, i) => (
-                        <div key={i} className="flex-1 bg-indigo-500/20 rounded-t-sm" style={{ height: `${h}%` }} />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <p className="text-[10px] mt-6 opacity-30 text-center">
-                  Last generated on {new Date(summary.generated_at).toLocaleDateString()}
-                </p>
-              </>
-            ) : (
-              <div className="text-center py-10 opacity-30">
-                <TrendingUp size={32} className="mx-auto mb-2 opacity-20" />
-                <p className="text-xs">Summary will be ready next Monday morning.</p>
-              </div>
-            )}
-          </div>
+        <form onSubmit={handleSubmit} className="p-4 rounded-lg mb-6" style={{ backgroundColor: "var(--color-surface)" }}>
+          <textarea value={text} onChange={e => setText(e.target.value)}
+            className="input-field w-full h-24 mb-3 resize-none"
+            placeholder="Pega aqui el feedback de un cliente, review o ticket..." />
+          <button type="submit" disabled={submitting || !text.trim()} className="btn-primary w-full"
+            style={{ opacity: submitting || !text.trim() ? 0.6 : 1 }}>
+            {submitting ? "Guardando y analizando..." : "Analizar con IA"}
+          </button>
+        </form>
 
-          <div className="p-6 rounded-2xl bg-white/5 border border-white/5">
-            <h3 className="text-sm font-bold mb-4">Integration Tip</h3>
-            <p className="text-xs text-white/50 leading-relaxed mb-4">
-              Connect FeedbackLens to your Discord or Slack via webhooks to receive real-time alerts for "Urgent" entries.
-            </p>
-            <button className="w-full py-2.5 rounded-xl border border-white/10 text-xs font-bold hover:bg-white/5 transition-all">
-              Setup Webhooks
+        <div className="flex gap-2 mb-4">
+          {(["all", "urgent", "negative"] as const).map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              className="text-xs font-medium px-4 py-2 rounded-md transition-colors"
+              style={{
+                backgroundColor: filter === f ? "var(--color-accent-dim)" : "var(--color-surface)",
+                color: filter === f ? "var(--color-accent)" : "var(--color-text-secondary)",
+              }}>
+              {f === "all" ? `Todos (${entries.length})` : f === "urgent" ? `Urgentes (${urgent.length})` : `Negativos (${negative.length})`}
             </button>
-          </div>
+          ))}
+        </div>
+
+        <div className="space-y-3">
+          {filtered.length === 0 && (
+            <div className="p-12 text-center rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
+              <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>
+                {filter === "all" ? "Pega tu primer feedback arriba para comenzar." : "No hay entradas en esta categoria."}
+              </p>
+            </div>
+          )}
+          {filtered.map(entry => {
+            const cfg = entry.sentiment ? sentimentConfig[entry.sentiment] : null;
+            return (
+              <div key={entry.id} onClick={() => setSelected(entry)}
+                className="p-4 rounded-lg cursor-pointer transition-colors"
+                style={{
+                  backgroundColor: selected?.id === entry.id ? "var(--color-surface-raised)" : "var(--color-surface)",
+                  border: entry.is_urgent ? "1px solid rgba(239,68,68,0.4)" : "1px solid transparent",
+                }}>
+                <div className="flex items-start justify-between gap-4">
+                  <p className="text-sm line-clamp-2" style={{ color: "var(--color-text)" }}>{entry.text}</p>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {entry.is_urgent && (
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: "rgba(239,68,68,0.15)", color: "#EF4444" }}>URGENTE</span>
+                    )}
+                    {cfg && (
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: cfg.bg, color: cfg.color }}>{cfg.label}</span>
+                    )}
+                    {!entry.analyzed_at && (
+                      <button onClick={e => { e.stopPropagation(); handleAnalyze(entry.id); }}
+                        disabled={analyzing.has(entry.id)}
+                        className="text-xs px-2 py-1 rounded"
+                        style={{ backgroundColor: "var(--color-surface-high)", color: "var(--color-text-secondary)" }}>
+                        {analyzing.has(entry.id) ? "Analizando..." : "Analizar"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {entry.themes && entry.themes.length > 0 && (
+                  <div className="flex gap-1 mt-2 flex-wrap">
+                    {entry.themes.map(t => (
+                      <span key={t} className="text-xs px-2 py-0.5 rounded"
+                        style={{ backgroundColor: "var(--color-surface-high)", color: "var(--color-text-secondary)" }}>{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
+
+      {selected && (
+        <div className="w-80 flex-shrink-0 rounded-lg p-4 space-y-4" style={{ backgroundColor: "var(--color-surface)" }}>
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Detalle</p>
+            <button onClick={() => setSelected(null)} className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Cerrar</button>
+          </div>
+          <div className="p-3 rounded-lg" style={{ backgroundColor: "var(--color-bg)" }}>
+            <p className="text-xs" style={{ color: "var(--color-text)" }}>{selected.text}</p>
+          </div>
+          {selected.sentiment && (() => {
+            const cfg = sentimentConfig[selected.sentiment];
+            return (
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-3 rounded-lg" style={{ backgroundColor: cfg.bg }}>
+                  <p className="text-xs mb-0.5" style={{ color: "var(--color-text-secondary)" }}>Sentimiento</p>
+                  <p className="text-sm font-bold" style={{ color: cfg.color }}>{cfg.label}</p>
+                </div>
+                <div className="p-3 rounded-lg" style={{ backgroundColor: "var(--color-surface-raised)" }}>
+                  <p className="text-xs mb-0.5" style={{ color: "var(--color-text-secondary)" }}>Confianza</p>
+                  <p className="text-sm font-bold font-mono" style={{ color: "var(--color-text)" }}>{selected.confidence ? `${Math.round(selected.confidence * 100)}%` : "—"}</p>
+                </div>
+              </div>
+            );
+          })()}
+          {selected.draft_reply && (
+            <div>
+              <p className="text-xs font-medium mb-2 uppercase tracking-wide" style={{ color: "var(--color-text-secondary)" }}>Borrador de respuesta</p>
+              <div className="p-3 rounded-lg text-xs" style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text)" }}>
+                {selected.draft_reply}
+              </div>
+              <button onClick={() => { navigator.clipboard.writeText(selected.draft_reply!); }}
+                className="btn-secondary w-full mt-2 text-xs">
+                Copiar borrador
+              </button>
+            </div>
+          )}
+          {!selected.analyzed_at && (
+            <button onClick={() => handleAnalyze(selected.id)} disabled={analyzing.has(selected.id)}
+              className="btn-primary w-full text-xs"
+              style={{ opacity: analyzing.has(selected.id) ? 0.6 : 1 }}>
+              {analyzing.has(selected.id) ? "Analizando..." : "Analizar con IA"}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

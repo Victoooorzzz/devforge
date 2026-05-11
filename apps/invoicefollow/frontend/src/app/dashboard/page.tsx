@@ -84,7 +84,7 @@ export default function DashboardPage() {
     p.invoices.push(inv);
     if (inv.status !== "paid") p.totalOwed += inv.amount;
   });
-  debtorMap.forEach(p => { p.risk = getRisk(p.invoices); });
+  debtorMap.forEach(p => { p.risk = getRisk(p.invoices); }); // risk calculado localmente, refinar con /invoices/client-scores si disponible
   const order = { red: 0, yellow: 1, green: 2 };
   const debtors = Array.from(debtorMap.values()).sort((a, b) => order[a.risk] - order[b.risk]);
 
