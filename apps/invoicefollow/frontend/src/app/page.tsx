@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import Link from "next/link";
 import { Check, Zap, Clock, Bell, Share2, ShieldCheck, Mail, CreditCard, ArrowRight, Activity } from "lucide-react";
 

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import Link from "next/link";
 import { Check, Zap, MessageSquare, ThumbsUp, ThumbsDown, BarChart3, Brain, Share2, ArrowRight, Activity } from "lucide-react";
 

@@ -60,8 +60,6 @@ export default function HomePage() {
         subtitle="Micro-products that solve real problems. No bloat, no enterprise pricing. Just tools that work — built by one developer, used by thousands."
         ctaText="See Products"
         ctaHref="#products"
-        secondaryCtaText="View Source"
-        secondaryCtaHref="https://github.com/devforge"
       />
 
       <div id="products">

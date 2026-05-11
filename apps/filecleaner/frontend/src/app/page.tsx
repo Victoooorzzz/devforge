@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import Link from "next/link";
 import { Check, Zap, Shield, BarChart3, ArrowRight, FileSpreadsheet, Download, Layers } from "lucide-react";
 
@@ -67,7 +67,7 @@ export default function LandingPage() {
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/register" className="btn-primary px-10 py-4 text-lg">
+            <Link href="/demo" className="btn-primary px-10 py-4 text-lg shadow-[0_0_30px_rgba(130,19,70,0.4)]">
               Try Live Demo — No signup required
             </Link>
           </div>
@@ -108,23 +108,46 @@ export default function LandingPage() {
       </section>
 
       {/* LIVE EXAMPLE */}
-      <section className="py-24 px-6">
-        <div className="max-w-4xl mx-auto glass p-8 md:p-12 rounded-3xl border border-white/10 relative overflow-hidden">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-8 relative z-10">
-            <div>
-              <p className="text-accent font-mono text-xs uppercase tracking-widest mb-2">Live Example</p>
-              <h3 className="text-2xl font-bold mb-4">E-commerce dataset (demo)</h3>
-              <div className="space-y-2 text-sm text-neutral-400 mb-8">
-                <p>Original: 10,000 rows | <span className="text-emerald-400">Cleaned: 9,847 rows</span></p>
-                <p>Issues found: <span className="text-amber-500">153</span></p>
+      <section className="py-24 px-6 relative overflow-hidden">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-[radial-gradient(circle_at_bottom,rgba(130,19,70,0.05)_0,transparent_70%)] pointer-events-none"></div>
+        <div className="max-w-5xl mx-auto glass p-8 md:p-12 rounded-[2.5rem] border border-white/10 relative overflow-hidden group">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-12 relative z-10">
+            <div className="flex-1">
+              <div className="inline-flex items-center gap-2 bg-accent/10 text-accent px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-6">
+                <RefreshCw size={12} className="animate-spin-slow" /> Interactive Example
               </div>
-              <div className="flex gap-4">
-                <button className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-bold transition-colors">View detailed report</button>
-                <button className="px-4 py-2 bg-accent/20 text-accent hover:bg-accent/30 rounded-lg text-xs font-bold transition-colors">Download sample</button>
+              <h3 className="text-3xl md:text-4xl font-bold mb-6">See the transformation.</h3>
+              <div className="space-y-4 text-neutral-400 mb-10">
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                  <p className="text-sm">Detected <span className="text-white font-bold">153 duplicates</span> and <span className="text-white font-bold">42 format errors</span></p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                  <p className="text-sm">Saved <span className="text-white font-bold">12.4 MB</span> of cloud storage space</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <Link href="/demo" className="px-6 py-3 bg-white text-black rounded-xl text-sm font-bold hover:bg-neutral-200 transition-colors flex items-center gap-2">
+                  Launch Demo Workspace <ArrowRight size={16} />
+                </Link>
+                <button className="px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-bold transition-colors border border-white/5">
+                  View Sample Report
+                </button>
               </div>
             </div>
-            <div className="w-full md:w-1/2 h-48 bg-black/40 rounded-xl border border-white/5 flex items-center justify-center">
-              <BarChart3 className="text-white/10" size={64} />
+            <div className="w-full md:w-5/12 aspect-square bg-black/40 rounded-3xl border border-white/5 flex items-center justify-center relative group-hover:border-accent/20 transition-colors">
+              <div className="absolute inset-0 bg-gradient-to-br from-accent/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+              <BarChart3 className="text-accent/20 group-hover:text-accent/40 transition-colors" size={120} />
+              <div className="absolute bottom-6 left-6 right-6 glass p-4 rounded-xl border border-white/10 backdrop-blur-md">
+                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-neutral-500 mb-2">
+                    <span>Processing efficiency</span>
+                    <span className="text-emerald-500">+94.2%</span>
+                </div>
+                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                    <div className="w-[94%] h-full bg-emerald-500 rounded-full shadow-[0_0_10px_rgba(16,185,129,0.5)]"></div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

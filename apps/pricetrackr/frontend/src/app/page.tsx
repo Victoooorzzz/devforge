@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import Link from "next/link";
 import { Check, Zap, Target, TrendingDown, Search, Bell, BarChart2, Globe, ArrowUpRight, Activity } from "lucide-react";
 

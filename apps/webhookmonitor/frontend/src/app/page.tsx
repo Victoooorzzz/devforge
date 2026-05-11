@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import Link from "next/link";
 import { Check, Zap, Eye, ShieldCheck, Terminal, Server, RefreshCcw, Code, ArrowRight, Activity } from "lucide-react";
 

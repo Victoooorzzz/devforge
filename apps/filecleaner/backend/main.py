@@ -238,6 +238,103 @@ async def upload_file(
     return {"id": record.id, "status": "queued", "name": record.original_name}
 
 
+@file_router.post("/demo/upload")
+async def demo_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Public demo endpoint — no signup required.
+    Uses a hardcoded GUEST_USER_ID (0).
+    """
+    GUEST_USER_ID = 0
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:  # Limit demo to 5MB
+        raise HTTPException(status_code=413, detail="Demo limited to 5MB")
+
+    record = ProcessedFile(
+        user_id=GUEST_USER_ID,
+        original_name=file.filename or "demo_file.csv",
+        size_bytes=len(content),
+        status="queued",
+    )
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+
+    bucket_name = os.getenv("R2_BUCKET_NAME")
+    if not bucket_name:
+        raise HTTPException(status_code=500, detail="Storage not configured")
+        
+    s3 = _get_s3_client()
+    raw_key = f"demo/{record.id}_{record.original_name}"
+    s3.upload_fileobj(io.BytesIO(content), bucket_name, raw_key)
+
+    job = SystemOutbox(
+        app_name="filecleaner",
+        job_type="process_csv",
+        payload={
+            "record_id": record.id,
+            "object_key": raw_key,
+            "filename": record.original_name
+        },
+        priority=10 # Demo jobs have lower priority
+    )
+    session.add(job)
+    await session.commit()
+
+    return {"id": record.id, "status": "queued", "name": record.original_name}
+
+
+@file_router.get("/demo/{file_id}/status")
+async def get_demo_file_status(
+    file_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Public poll endpoint for demo."""
+    record = await session.get(ProcessedFile, file_id)
+    if not record or record.user_id != 0:
+        raise HTTPException(status_code=404, detail="Demo file not found")
+
+    response: dict = {
+        "id": record.id,
+        "name": record.original_name,
+        "status": record.status,
+    }
+
+    if record.status == "complete":
+        response["download_url"] = f"/files/demo/{record.id}/download"
+        response["report"] = {
+            "rows_original": record.rows_original,
+            "rows_clean": record.rows_clean,
+            "duplicates_removed": record.duplicates_removed,
+            "empty_removed": record.empty_removed,
+            "whitespace_fixed": record.whitespace_fixed,
+            "rows_saved": record.rows_original - record.rows_clean,
+            "reduction_pct": round((1 - record.rows_clean / max(record.rows_original, 1)) * 100, 1),
+        }
+    return response
+
+
+@file_router.get("/demo/{file_id}/download")
+async def download_demo_file(
+    file_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    record = await session.get(ProcessedFile, file_id)
+    if not record or record.user_id != 0:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    bucket_name = os.getenv("R2_BUCKET_NAME")
+    if bucket_name:
+        s3 = _get_s3_client()
+        object_name = f"cleaned/{record.id}_{record.original_name}"
+        url = s3.generate_presigned_url('get_object', Params={'Bucket': bucket_name, 'Key': object_name}, ExpiresIn=3600)
+        return RedirectResponse(url)
+    raise HTTPException(status_code=404, detail="Storage not configured")
+
+
 @file_router.get("/{file_id}/status")
 async def get_file_status(
     file_id: int,
