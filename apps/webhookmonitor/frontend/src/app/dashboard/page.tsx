@@ -2,53 +2,50 @@
 import { useState, useEffect, useRef } from "react";
 import { apiClient, trackEvent } from "@devforge/core";
 import { 
-  Activity, 
-  Trash2, 
-  RefreshCcw, 
-  Copy, 
-  Check, 
-  Search, 
-  Code, 
-  Database, 
-  X, 
-  ChevronRight, 
-  Send,
-  AlertCircle
+  Activity, Trash2, RefreshCcw, Copy, Check, Search, Code,
+  Database, X, ChevronRight, Send, AlertCircle, Download, ChevronDown
 } from "lucide-react";
 
 interface WebhookRequest {
   id: number;
   method: string;
   path: string;
-  status_code: number;
   headers: Record<string, string>;
   body: string;
   received_at: string;
+  retry_count: number;
+  last_retry_status: number | null;
+  auto_retry_enabled: boolean;
 }
 
 const methodColors: Record<string, string> = {
   GET: "#10B981", POST: "#6366F1", PUT: "#F59E0B", DELETE: "#EF4444", PATCH: "#8B5CF6",
 };
 
+type ExportFormat = "csv" | "xlsx" | "json";
+
 export default function DashboardPage() {
-  const [requests, setRequests]     = useState<WebhookRequest[]>([]);
-  const [selected, setSelected]     = useState<WebhookRequest | null>(null);
+  const [requests, setRequests]       = useState<WebhookRequest[]>([]);
+  const [selected, setSelected]       = useState<WebhookRequest | null>(null);
   const [endpointUrl, setEndpointUrl] = useState("");
-  const [search, setSearch]         = useState("");
-  const [copied, setCopied]         = useState(false);
+  const [search, setSearch]           = useState("");
+  const [copied, setCopied]           = useState(false);
   const [retryPayload, setRetryPayload] = useState("");
   const [isEditingPayload, setIsEditingPayload] = useState(false);
-  const [isRetrying, setIsRetrying] = useState(false);
-  
-  const intervalRef                 = useRef<NodeJS.Timeout | null>(null);
+  const [isRetrying, setIsRetrying]   = useState(false);
+  const [exportOpen, setExportOpen]   = useState(false);
+  const intervalRef                   = useRef<NodeJS.Timeout | null>(null);
+  const exportRef                     = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    apiClient.get<{ endpoint_url: string }>("/webhooks/endpoint")
+    // GET /webhooks/config returns { endpoint_url }
+    apiClient.get<{ endpoint_url: string }>("/webhooks/config")
       .then(({ data }) => setEndpointUrl(data.endpoint_url)).catch(() => {});
 
     const fetchRequests = async () => {
       try {
-        const { data } = await apiClient.get<WebhookRequest[]>("/webhooks/requests");
+        // GET /webhooks/logs returns the list
+        const { data } = await apiClient.get<WebhookRequest[]>("/webhooks/logs");
         setRequests(prev => {
           if (prev.length === 0) return data;
           const existingIds = new Set(prev.map(r => r.id));
@@ -63,6 +60,15 @@ export default function DashboardPage() {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, []);
 
+  // Close export dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setExportOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
   useEffect(() => {
     if (selected) {
       setRetryPayload(selected.body);
@@ -74,6 +80,7 @@ export default function DashboardPage() {
     if (!window.confirm("¿Seguro que quieres limpiar el historial?")) return;
     trackEvent("feature_used", { feature_name: "clear_webhook_history" });
     try {
+      // DELETE /webhooks/requests
       await apiClient.delete("/webhooks/requests");
       setRequests([]);
       setSelected(null);
@@ -92,15 +99,33 @@ export default function DashboardPage() {
     trackEvent("feature_used", { feature_name: "retry_webhook", custom_payload: isEditingPayload });
     try {
       const payload = isEditingPayload ? retryPayload : null;
+      // POST /webhooks/requests/{id}/retry
       await apiClient.post(`/webhooks/requests/${selected.id}/retry`, {
-        payload_override: payload
+        payload_override: payload,
+        schedule_auto_retry: false,
       });
-      alert("Webhook reenviado exitosamente");
-    } catch (err: any) { 
-      alert(err.response?.data?.detail || "Error al reenviar webhook"); 
+      alert("✅ Webhook encolado para reenvío");
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Error al reenviar webhook");
     } finally {
       setIsRetrying(false);
     }
+  };
+
+  // Export — GET /webhooks/logs/export?format=csv|xlsx|json
+  const handleExport = async (format: ExportFormat) => {
+    setExportOpen(false);
+    trackEvent("feature_used", { feature_name: "export_webhook_logs", format });
+    const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/webhooks/logs/export?format=${format}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) { alert("Error al exportar"); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `webhookmonitor_export.${format}`; a.click();
+    URL.revokeObjectURL(url);
   };
 
   const filtered = requests.filter(r => {
@@ -125,22 +150,56 @@ export default function DashboardPage() {
           <h1 className="text-3xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>Webhook Monitor</h1>
           <div className="flex items-center gap-2">
             <Activity size={14} className="text-emerald-500 animate-pulse" />
-            <p className="text-xs opacity-60" style={{ color: "var(--color-text)" }}>Live ingestion endpoint active</p>
+            <p className="text-xs opacity-60" style={{ color: "var(--color-text)" }}>
+              Live ingestion • {requests.length} requests en historial
+            </p>
           </div>
         </div>
-        <button onClick={handleClearHistory} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all">
-          <Trash2 size={16} />
-          <span>Clear History</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Export Dropdown */}
+          <div className="relative" ref={exportRef}>
+            <button
+              onClick={() => setExportOpen(!exportOpen)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
+              style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
+            >
+              <Download size={14} />
+              <span>Export</span>
+              <ChevronDown size={12} className={`transition-transform ${exportOpen ? "rotate-180" : ""}`} />
+            </button>
+            {exportOpen && (
+              <div className="absolute right-0 top-full mt-2 w-44 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
+                style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+                {(["csv", "xlsx", "json"] as ExportFormat[]).map(f => (
+                  <button key={f} onClick={() => handleExport(f)}
+                    className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5 transition-colors"
+                    style={{ color: "var(--color-text)" }}>
+                    {f.toUpperCase()} — {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON API"}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={handleClearHistory}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all"
+          >
+            <Trash2 size={16} />
+            <span>Clear History</span>
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6 flex-1 overflow-hidden px-4 pb-4">
         {/* Main List */}
         <div className="flex-1 flex flex-col min-w-0">
           {endpointUrl && (
-            <div className="p-4 rounded-xl mb-6 flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <div className="p-4 rounded-xl mb-6 flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2"
+              style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
               <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider mb-1 opacity-50" style={{ color: "var(--color-text)" }}>Your Webhook URL</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider mb-1 opacity-50" style={{ color: "var(--color-text)" }}>
+                  Your Webhook URL
+                </p>
                 <div className="flex items-center gap-2">
                   <Database size={14} className="text-[var(--color-primary)] shrink-0" />
                   <code className="text-sm font-mono truncate text-[var(--color-primary)]">{endpointUrl}</code>
@@ -159,21 +218,24 @@ export default function DashboardPage() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="input-field pl-10"
-              placeholder="Search in body, path or method..."
+              placeholder="Buscar en body, path o método..."
             />
           </div>
 
-          <div className="flex-1 overflow-auto rounded-xl scrollbar-hide" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+          <div className="flex-1 overflow-auto rounded-xl scrollbar-hide"
+            style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
             {filtered.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center opacity-20 py-20">
                 <Activity size={48} className="mb-4" />
-                <p className="text-sm font-medium">{search ? "No matches found" : "Waiting for incoming webhooks..."}</p>
+                <p className="text-sm font-medium">
+                  {search ? "No se encontraron resultados" : "Esperando webhooks entrantes..."}
+                </p>
               </div>
             ) : (
               <table className="w-full border-collapse">
                 <thead className="sticky top-0 bg-[var(--color-surface)] z-10">
                   <tr className="border-b border-[var(--color-border)]">
-                    {["Received", "Method", "Path", ""].map((h, i) => (
+                    {["Recibido", "Método", "Path", "Reintentos", ""].map((h, i) => (
                       <th key={i} className="text-left text-[10px] font-bold uppercase tracking-widest px-4 py-4 opacity-50"
                         style={{ color: "var(--color-text)" }}>{h}</th>
                     ))}
@@ -190,15 +252,26 @@ export default function DashboardPage() {
                       <td className="px-4 py-4 text-xs font-mono opacity-50">{formatTime(req.received_at)}</td>
                       <td className="px-4 py-4">
                         <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded border"
-                          style={{ 
-                            backgroundColor: `${methodColors[req.method] || "#A3A3A3"}15`, 
+                          style={{
+                            backgroundColor: `${methodColors[req.method] || "#A3A3A3"}15`,
                             color: methodColors[req.method] || "#A3A3A3",
                             borderColor: `${methodColors[req.method] || "#A3A3A3"}30`
                           }}>
                           {req.method}
                         </span>
                       </td>
-                      <td className="px-4 py-4 text-xs font-mono truncate max-w-[200px] md:max-w-md" style={{ color: "var(--color-text)" }}>{req.path}</td>
+                      <td className="px-4 py-4 text-xs font-mono truncate max-w-[200px] md:max-w-md"
+                        style={{ color: "var(--color-text)" }}>{req.path}</td>
+                      <td className="px-4 py-4 text-xs font-mono text-center">
+                        {req.retry_count > 0 ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold"
+                            style={{ backgroundColor: "rgba(239,68,68,0.1)", color: "#EF4444" }}>
+                            {req.retry_count}x
+                          </span>
+                        ) : (
+                          <span className="opacity-20">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-4 text-right">
                         <ChevronRight size={16} className={`ml-auto transition-transform ${selected?.id === req.id ? "rotate-90 text-[var(--color-primary)]" : "opacity-0 group-hover:opacity-30"}`} />
                       </td>
@@ -212,11 +285,22 @@ export default function DashboardPage() {
 
         {/* Inspector Panel */}
         {selected ? (
-          <div className="w-full lg:w-[450px] flex flex-col rounded-xl overflow-hidden animate-in slide-in-from-right-4 duration-300" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+          <div className="w-full lg:w-[450px] flex flex-col rounded-xl overflow-hidden animate-in slide-in-from-right-4 duration-300"
+            style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
             <div className="p-4 border-b border-[var(--color-border)] flex items-center justify-between bg-black/5">
               <div className="flex items-center gap-2">
                 <Code size={16} className="text-[var(--color-primary)]" />
                 <h2 className="text-sm font-bold uppercase tracking-wider">Inspector</h2>
+                {/* Retry status badge */}
+                {selected.last_retry_status && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded"
+                    style={{
+                      backgroundColor: selected.last_retry_status >= 200 && selected.last_retry_status < 300 ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)",
+                      color: selected.last_retry_status >= 200 && selected.last_retry_status < 300 ? "#10B981" : "#EF4444"
+                    }}>
+                    {selected.last_retry_status}
+                  </span>
+                )}
               </div>
               <button onClick={() => setSelected(null)} className="p-1.5 rounded-lg hover:bg-black/10 transition-colors">
                 <X size={18} className="opacity-50" />
@@ -239,24 +323,24 @@ export default function DashboardPage() {
               <section className="flex-1 flex flex-col">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-50">Payload</h3>
-                  <button 
+                  <button
                     onClick={() => setIsEditingPayload(!isEditingPayload)}
                     className={`text-[10px] font-bold uppercase px-2 py-1 rounded transition-colors ${isEditingPayload ? "bg-amber-500/10 text-amber-500" : "bg-black/10 hover:bg-black/20"}`}
                   >
-                    {isEditingPayload ? "Cancel Edit" : "Edit & Replay"}
+                    {isEditingPayload ? "Cancelar edición" : "Editar & Replay"}
                   </button>
                 </div>
-                
+
                 {isEditingPayload ? (
                   <div className="flex-1 flex flex-col gap-2">
                     <textarea
                       value={retryPayload}
-                      onChange={(e) => setRetryPayload(e.target.value)}
+                      onChange={e => setRetryPayload(e.target.value)}
                       className="flex-1 min-h-[300px] w-full bg-black/40 text-emerald-400 font-mono text-xs p-4 rounded-lg border border-amber-500/30 focus:border-amber-500/60 focus:outline-none resize-none"
                     />
                     <div className="flex items-center gap-2 text-[10px] text-amber-500/70 p-2">
                       <AlertCircle size={12} />
-                      <span>Heads up: You are about to replay this webhook with a modified payload.</span>
+                      <span>Estás a punto de reproducir este webhook con payload modificado.</span>
                     </div>
                   </div>
                 ) : (
@@ -268,14 +352,14 @@ export default function DashboardPage() {
             </div>
 
             <div className="p-6 bg-black/5 border-t border-[var(--color-border)]">
-              <button 
-                onClick={handleRetry} 
+              <button
+                onClick={handleRetry}
                 disabled={isRetrying}
                 className={`w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg ${isEditingPayload ? "bg-amber-500 hover:bg-amber-600 shadow-amber-500/20" : "bg-[var(--color-primary)] hover:opacity-90 shadow-[var(--color-primary)]/20"}`}
-                style={{ color: "#000" }}
+                style={{ color: "#000", opacity: isRetrying ? 0.7 : 1 }}
               >
                 {isRetrying ? <RefreshCcw size={18} className="animate-spin" /> : <Send size={18} />}
-                <span>{isEditingPayload ? "Replay Modified Webhook" : "Replay Original Webhook"}</span>
+                <span>{isEditingPayload ? "Replay con payload modificado" : "Replay webhook original"}</span>
               </button>
             </div>
           </div>
@@ -283,7 +367,7 @@ export default function DashboardPage() {
           <div className="hidden lg:flex w-[450px] items-center justify-center rounded-xl opacity-10 border border-dashed border-[var(--color-text)]">
             <div className="text-center">
               <Code size={64} className="mx-auto mb-4" />
-              <p className="font-bold">Select a request to inspect</p>
+              <p className="font-bold">Selecciona un request para inspeccionar</p>
             </div>
           </div>
         )}
@@ -291,4 +375,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-

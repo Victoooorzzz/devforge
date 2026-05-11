@@ -1,12 +1,14 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select, delete
-from typing import Optional
+from typing import Optional, Literal
 from datetime import datetime, timezone, timedelta
-import json, uuid, logging, httpx
+import json, uuid, logging, httpx, io
+import pandas as pd
 
 from backend_core import create_app, get_current_user, get_session, User, require_user_access
 from backend_core.database import get_managed_session
@@ -337,6 +339,59 @@ async def cron_cleanup_logs(authorization: str = None):
         raise HTTPException(status_code=401, detail="Unauthorized")
     deleted = await cleanup_old_logs()
     return {"status": "success", "task": "cleanup", "deleted_count": deleted}
+
+
+# ---------------------------------------------------------------------------
+# Export logs endpoint — Skill: backend-architect
+# ---------------------------------------------------------------------------
+@webhook_router.get("/logs/export")
+async def export_logs(
+    format: Literal["csv", "xlsx", "json"] = Query(default="csv"),
+    user: User = Depends(require_user_access),
+    session: AsyncSession = Depends(get_session),
+):
+    """Export all webhook request logs as CSV, XLSX, or JSON."""
+    ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
+    ep = ep_result.scalar_one_or_none()
+    if not ep:
+        rows = []
+    else:
+        result = await session.execute(
+            select(WebhookRequest)
+            .where(WebhookRequest.endpoint_id == ep.id)
+            .order_by(WebhookRequest.received_at.desc())
+            .limit(1000)
+        )
+        requests = result.scalars().all()
+        rows = [{
+            "id": r.id,
+            "method": r.method,
+            "path": r.path,
+            "body_preview": r.body[:200] if r.body else "",
+            "received_at": r.received_at.isoformat(),
+            "retry_count": r.retry_count,
+            "last_retry_status": r.last_retry_status,
+            "auto_retry_enabled": r.auto_retry_enabled,
+        } for r in requests]
+
+    if format == "json":
+        return StreamingResponse(
+            io.BytesIO(json.dumps(rows, indent=2).encode()),
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=webhookmonitor_export.json"}
+        )
+    df = pd.DataFrame(rows) if rows else pd.DataFrame()
+    buf = io.BytesIO()
+    if format == "xlsx":
+        df.to_excel(buf, index=False, engine="openpyxl")
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = "webhookmonitor_export.xlsx"
+    else:
+        df.to_csv(buf, index=False)
+        media_type = "text/csv"
+        filename = "webhookmonitor_export.csv"
+    buf.seek(0)
+    return StreamingResponse(buf, media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
 # ---------------------------------------------------------------------------

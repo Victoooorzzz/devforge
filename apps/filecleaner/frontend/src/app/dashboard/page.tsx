@@ -1,7 +1,10 @@
 "use client";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { trackEvent, apiClient } from "@devforge/core";
-import { FileText, Download, Trash2, CheckCircle, Clock, AlertCircle, Info, ChevronDown, ChevronUp, Sparkles, RefreshCw, TrendingDown, Zap } from "lucide-react";
+import {
+  FileText, Download, Trash2, CheckCircle, Clock, AlertCircle, Info,
+  ChevronDown, ChevronUp, Sparkles, RefreshCw, TrendingDown, Zap, Brain, X, Copy, Check,
+} from "lucide-react";
 
 interface FileReport {
   rows_original: number;
@@ -21,16 +24,45 @@ interface FileItem {
   downloadUrl?: string;
   report?: FileReport;
   error?: string;
-  localOnly?: boolean; // true while uploading before we have a server ID
+  localOnly?: boolean;
 }
+
+interface AISuggestion {
+  column: string;
+  issue: string;
+  fix: string;
+  severity: "high" | "medium" | "low";
+}
+
+interface AIAnalysis {
+  total_rows: number;
+  total_columns: number;
+  preview_rows: number;
+  suggestions: AISuggestion[];
+  summary?: string;
+  engine: "gemini" | "heuristic";
+}
+
+type ExportFormat = "csv" | "xlsx" | "json";
 
 const POLL_INTERVAL_MS = 2500;
 
+const severityColor: Record<string, string> = {
+  high: "text-red-500 bg-red-500/10",
+  medium: "text-amber-500 bg-amber-500/10",
+  low: "text-sky-400 bg-sky-400/10",
+};
+
 export default function DashboardPage() {
-  const [files, setFiles] = useState<FileItem[]>([]);
-  const [dragging, setDragging] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [files, setFiles]             = useState<FileItem[]>([]);
+  const [dragging, setDragging]       = useState(false);
+  const [expandedId, setExpandedId]   = useState<string | null>(null);
+  const [exportOpen, setExportOpen]   = useState(false);
+  const [aiPanel, setAiPanel]         = useState<AIAnalysis | null>(null);
+  const [aiLoading, setAiLoading]     = useState(false);
+  const [aiCopied, setAiCopied]       = useState(false);
   const pollingIds = useRef<Set<string>>(new Set());
+  const exportRef  = useRef<HTMLDivElement>(null);
 
   // Load existing files from API on mount
   useEffect(() => {
@@ -53,20 +85,15 @@ export default function DashboardPage() {
         (f.status === "queued" || f.status === "processing") && !f.localOnly
       );
       for (const f of pendingFiles) {
-        if (pollingIds.current.has(f.id)) continue; // prevent overlap
+        if (pollingIds.current.has(f.id)) continue;
         pollingIds.current.add(f.id);
         try {
           const { data } = await apiClient.get<any>(`/files/${f.id}/status`);
           setFiles(prev => prev.map(pf => pf.id === f.id ? {
-            ...pf,
-            status: data.status,
-            downloadUrl: data.download_url,
-            report: data.report,
-            error: data.error,
+            ...pf, status: data.status, downloadUrl: data.download_url,
+            report: data.report, error: data.error,
           } : pf));
-        } catch {
-          // ignore transient errors
-        } finally {
+        } catch { /* ignore transient */ } finally {
           pollingIds.current.delete(f.id);
         }
       }
@@ -74,15 +101,22 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [files]);
 
+  // Close export dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setExportOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
   const handleDelete = async (fileId: string) => {
     if (!window.confirm("¿Eliminar este archivo?")) return;
     trackEvent("feature_used", { feature_name: "delete_file" });
     try {
       await apiClient.delete(`/files/${fileId}`);
       setFiles(prev => prev.filter(f => f.id !== fileId));
-    } catch {
-      alert("Error al eliminar archivo");
-    }
+    } catch { alert("Error al eliminar archivo"); }
   };
 
   const formatSize = (bytes: number) => {
@@ -108,32 +142,76 @@ export default function DashboardPage() {
       try {
         const formData = new FormData();
         formData.append("file", file);
-
-        // Use fetch directly for multipart (apiClient wraps it)
         const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
         const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/upload`, {
           method: "POST",
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: formData,
         });
-
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.detail || "Upload failed");
         }
         const data = await res.json();
-
         setFiles(prev => prev.map(f => f.id === tempId ? {
-          ...f,
-          id: data.id.toString(),
-          status: data.status,
-          localOnly: false,
+          ...f, id: data.id.toString(), status: data.status, localOnly: false,
         } : f));
       } catch (e: any) {
         setFiles(prev => prev.map(f => f.id === tempId ? { ...f, status: "error", error: e.message } : f));
       }
     }
   }, []);
+
+  // Export GET /files/export?format=csv|xlsx|json
+  const handleExport = async (format: ExportFormat) => {
+    setExportOpen(false);
+    trackEvent("feature_used", { feature_name: "export_files", format });
+    const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/export?format=${format}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) { alert("Error al exportar"); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `filecleaner_export.${format}`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // AI Analyze — POST /files/ai-analyze with a file
+  const handleAIAnalyze = async (fileInput: File) => {
+    setAiLoading(true);
+    setAiPanel(null);
+    trackEvent("feature_used", { feature_name: "ai_analyze_file" });
+    try {
+      const formData = new FormData();
+      formData.append("file", fileInput);
+      const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/ai-analyze`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      if (!res.ok) throw new Error("AI analyze failed");
+      const data: AIAnalysis = await res.json();
+      setAiPanel(data);
+    } catch (e: any) {
+      alert(e.message || "Error en análisis de IA");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const openAIAnalyze = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,.xlsx,.xls";
+    input.onchange = e => {
+      const f = (e.target as HTMLInputElement).files?.[0];
+      if (f) handleAIAnalyze(f);
+    };
+    input.click();
+  };
 
   const statusIcon = (status: string) => {
     if (status === "queued") return <Clock className="text-amber-500" size={16} />;
@@ -143,15 +221,13 @@ export default function DashboardPage() {
   };
 
   const statusLabel: Record<string, string> = {
-    queued: "En cola",
-    processing: "Procesando...",
-    complete: "Completo",
-    error: "Error",
+    queued: "En cola", processing: "Procesando...", complete: "Completo", error: "Error",
   };
 
   return (
     <div className="max-w-5xl mx-auto py-10 px-4">
-      <div className="flex items-center justify-between mb-8">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <div>
           <h1 className="text-3xl font-bold tracking-tight mb-2" style={{ color: "var(--color-text)" }}>
             Data Cleaning Hub
@@ -160,7 +236,109 @@ export default function DashboardPage() {
             Smart normalization for CSV and Excel datasets. Up to 200MB.
           </p>
         </div>
+
+        <div className="flex items-center gap-2">
+          {/* AI Analyze Button */}
+          <button
+            onClick={openAIAnalyze}
+            disabled={aiLoading}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all"
+            style={{
+              background: "linear-gradient(135deg, var(--color-primary), #6366f1)",
+              color: "#000",
+              opacity: aiLoading ? 0.7 : 1
+            }}
+          >
+            {aiLoading ? <RefreshCw size={14} className="animate-spin" /> : <Brain size={14} />}
+            <span>AI Analyze</span>
+          </button>
+
+          {/* Export Dropdown */}
+          <div className="relative" ref={exportRef}>
+            <button
+              onClick={() => setExportOpen(!exportOpen)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
+              style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)", border: "1px solid var(--color-border)" }}
+            >
+              <Download size={14} />
+              <span>Export</span>
+              <ChevronDown size={12} className={`transition-transform ${exportOpen ? "rotate-180" : ""}`} />
+            </button>
+            {exportOpen && (
+              <div className="absolute right-0 top-full mt-2 w-44 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
+                style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+                {(["csv", "xlsx", "json"] as ExportFormat[]).map(f => (
+                  <button key={f} onClick={() => handleExport(f)}
+                    className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5 transition-colors"
+                    style={{ color: "var(--color-text)" }}>
+                    {f.toUpperCase()} — {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON API"}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* AI Analysis Panel */}
+      {aiPanel && (
+        <div className="mb-8 rounded-2xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300"
+          style={{ border: "1px solid var(--color-border)", backgroundColor: "var(--color-surface)" }}>
+          <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)] bg-black/5">
+            <div className="flex items-center gap-3">
+              <Brain size={18} className="text-[var(--color-primary)]" />
+              <div>
+                <h3 className="text-sm font-bold">AI Cleanup Analysis</h3>
+                <p className="text-[10px] opacity-50">
+                  {aiPanel.total_rows.toLocaleString()} rows × {aiPanel.total_columns} columns
+                  — Engine: <span className="font-bold">{aiPanel.engine === "gemini" ? "✨ Gemini" : "Heuristic"}</span>
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { navigator.clipboard.writeText(JSON.stringify(aiPanel.suggestions, null, 2)); setAiCopied(true); setTimeout(() => setAiCopied(false), 2000); }}
+                className="p-1.5 rounded-lg hover:bg-black/10 transition-colors"
+                title="Copy as JSON"
+              >
+                {aiCopied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} className="opacity-50" />}
+              </button>
+              <button onClick={() => setAiPanel(null)} className="p-1.5 rounded-lg hover:bg-black/10 transition-colors">
+                <X size={16} className="opacity-50" />
+              </button>
+            </div>
+          </div>
+
+          {aiPanel.summary && (
+            <div className="px-5 py-3 text-sm opacity-70 border-b border-[var(--color-border)] italic">
+              {aiPanel.summary}
+            </div>
+          )}
+
+          <div className="p-5 space-y-3">
+            {aiPanel.suggestions.length === 0 ? (
+              <div className="text-center py-6 text-sm opacity-40">
+                <CheckCircle size={24} className="mx-auto mb-2 text-emerald-500 opacity-100" />
+                No se detectaron problemas — los datos parecen limpios.
+              </div>
+            ) : (
+              aiPanel.suggestions.map((s, i) => (
+                <div key={i} className="flex items-start gap-3 p-3 rounded-xl"
+                  style={{ backgroundColor: "rgba(0,0,0,0.04)", border: "1px solid var(--color-border)" }}>
+                  <span className={`mt-0.5 text-[10px] font-bold px-2 py-0.5 rounded uppercase shrink-0 ${severityColor[s.severity] || "text-gray-400 bg-gray-400/10"}`}>
+                    {s.severity}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold mb-0.5 truncate">{s.column}</p>
+                    <p className="text-xs opacity-60">{s.issue}</p>
+                    <p className="text-xs text-[var(--color-primary)] mt-1">→ {s.fix}</p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Drop Zone */}
       <div
@@ -196,17 +374,16 @@ export default function DashboardPage() {
       <div className="space-y-4">
         {files.map(file => {
           const isExpanded = expandedId === file.id;
-          const isPending = file.status === "queued" || file.status === "processing";
+          const isPending  = file.status === "queued" || file.status === "processing";
           return (
-            <div key={file.id} className="rounded-xl overflow-hidden transition-all duration-200" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <div key={file.id} className="rounded-xl overflow-hidden transition-all duration-200"
+              style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
               <div
                 className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-black/5"
                 onClick={() => file.report && setExpandedId(isExpanded ? null : file.id)}
               >
                 <div className="flex items-center gap-4 flex-1 min-w-0">
-                  <div className="p-2 rounded-lg bg-black/5">
-                    {statusIcon(file.status)}
-                  </div>
+                  <div className="p-2 rounded-lg bg-black/5">{statusIcon(file.status)}</div>
                   <div className="truncate">
                     <h3 className="text-sm font-medium truncate" style={{ color: "var(--color-text)" }}>{file.name}</h3>
                     <p className="text-xs opacity-50" style={{ color: "var(--color-text)" }}>{formatSize(file.size)}</p>
@@ -221,10 +398,7 @@ export default function DashboardPage() {
                         <div className="w-24 h-1.5 rounded-full bg-black/10 overflow-hidden">
                           <div
                             className="h-full rounded-full bg-[var(--color-primary)] transition-all"
-                            style={{
-                              width: file.status === "queued" ? "15%" : "65%",
-                              animation: "pulse 1.5s ease-in-out infinite"
-                            }}
+                            style={{ width: file.status === "queued" ? "15%" : "65%", animation: "pulse 1.5s ease-in-out infinite" }}
                           />
                         </div>
                         <span className="text-[10px] font-bold text-[var(--color-primary)]">{statusLabel[file.status]}</span>
@@ -265,8 +439,8 @@ export default function DashboardPage() {
               {/* Report Panel */}
               {isExpanded && file.report && (
                 <div className="p-6 border-t border-[var(--color-border)] bg-black/5 animate-in fade-in slide-in-from-top-2 duration-300">
-                  {/* Summary Banner */}
-                  <div className="flex items-center gap-3 mb-6 p-4 rounded-xl" style={{ backgroundColor: "rgba(var(--color-primary-rgb), 0.08)", border: "1px solid rgba(var(--color-primary-rgb), 0.15)" }}>
+                  <div className="flex items-center gap-3 mb-6 p-4 rounded-xl"
+                    style={{ backgroundColor: "rgba(var(--color-primary-rgb), 0.08)", border: "1px solid rgba(var(--color-primary-rgb), 0.15)" }}>
                     <Zap size={20} className="text-[var(--color-primary)]" />
                     <div>
                       <p className="text-sm font-bold text-[var(--color-primary)]">
@@ -285,11 +459,11 @@ export default function DashboardPage() {
 
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                     {[
-                      { label: "Total Rows", value: file.report.rows_original.toLocaleString(), color: "text-[var(--color-text)]" },
-                      { label: "Clean Rows", value: file.report.rows_clean.toLocaleString(), color: "text-emerald-500" },
-                      { label: "Duplicates", value: file.report.duplicates_removed.toLocaleString(), color: "text-indigo-400" },
-                      { label: "Empty Rows", value: file.report.empty_removed.toLocaleString(), color: "text-amber-500" },
-                      { label: "Text Fixes", value: file.report.whitespace_fixed.toLocaleString(), color: "text-sky-400" },
+                      { label: "Total Rows",   value: file.report.rows_original.toLocaleString(),    color: "text-[var(--color-text)]" },
+                      { label: "Clean Rows",   value: file.report.rows_clean.toLocaleString(),        color: "text-emerald-500" },
+                      { label: "Duplicates",   value: file.report.duplicates_removed.toLocaleString(), color: "text-indigo-400" },
+                      { label: "Empty Rows",   value: file.report.empty_removed.toLocaleString(),     color: "text-amber-500" },
+                      { label: "Text Fixes",   value: file.report.whitespace_fixed.toLocaleString(),  color: "text-sky-400" },
                     ].map(stat => (
                       <div key={stat.label} className="p-3 rounded-lg bg-white/5 border border-white/5">
                         <p className="text-[10px] uppercase font-bold opacity-40 mb-1">{stat.label}</p>

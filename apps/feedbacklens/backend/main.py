@@ -455,7 +455,7 @@ async def cron_feedback_summary(authorization: str = None):
 # ---------------------------------------------------------------------------
 # Export endpoint — Skill: backend-architect + react-patterns
 # ---------------------------------------------------------------------------
-@feedback_router.get("/feedback/export")
+@feedback_router.get("/export")
 async def export_feedback(
     format: Literal["csv", "xlsx", "json"] = Query(default="csv"),
     user: User = Depends(get_current_user),
@@ -508,7 +508,7 @@ async def export_feedback(
 class BulkImportRequest(BaseModel):
     texts: List[str]  # array of feedback texts to import
 
-@feedback_router.post("/feedback/bulk")
+@feedback_router.post("/bulk")
 async def bulk_import_feedback(
     body: BulkImportRequest,
     user: User = Depends(get_current_user),
@@ -530,7 +530,7 @@ async def bulk_import_feedback(
     return {"created": len(created_ids), "ids": created_ids}
 
 
-@feedback_router.post("/feedback/bulk-csv")
+@feedback_router.post("/bulk-csv")
 async def bulk_import_csv(
     file: UploadFile = File(...),
     column: str = Query(default="text", description="Column name containing the feedback text"),
@@ -565,7 +565,7 @@ async def bulk_import_csv(
 # ---------------------------------------------------------------------------
 # Draft Reply Generator — Skill: gemini-api-dev
 # ---------------------------------------------------------------------------
-@feedback_router.post("/feedback/{feedback_id}/draft-reply")
+@feedback_router.post("/{feedback_id}/draft-reply")
 async def generate_draft_reply(
     feedback_id: int,
     user: User = Depends(get_current_user),
