@@ -1,4 +1,4 @@
-import { Layout, LandingHero, ProductGrid } from "@devforge/ui";
+﻿import { Layout, LandingHero, ProductGrid } from "@devforge/ui";
 import type { ProductInfo } from "@devforge/ui";
 
 const products: ProductInfo[] = [

@@ -115,14 +115,14 @@ export default function LandingPage() {
                 <Search className="text-accent" size={32} />
               </div>
               <h4 className="text-xl font-bold mb-3">1. Track URLs</h4>
-              <p className="text-neutral-400 text-sm">Paste URLs from any marketplace. Our engine identifies price & stock selectors automatically.</p>
+              <p className="text-neutral-400 text-sm">Paste URLs from any marketplace. We detect price and stock status automatically.</p>
             </div>
             <div className="flex flex-col items-center">
               <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
                 <Bell className="text-accent" size={32} />
               </div>
               <h4 className="text-xl font-bold mb-3">2. Detect Changes</h4>
-              <p className="text-neutral-400 text-sm">We scan every 10 minutes. Get instant alerts via Webhook, Slack, or Email on any movement.</p>
+              <p className="text-neutral-400 text-sm">We scan daily and alert you instantly on changes. Get instant email alerts when a price drops or stock changes.</p>
             </div>
             <div className="flex flex-col items-center">
               <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
@@ -155,16 +155,16 @@ export default function LandingPage() {
                   <span className="text-neutral-400">/mo</span>
                 </div>
                 <p className="text-sm text-neutral-400 mt-4 leading-relaxed">
-                  Real-time tracking for up to 10,000 URLs. Includes a 7-day free trial.
+                  Automated daily price tracking with instant email alerts. Includes a 7-day free trial.
                 </p>
               </div>
               <ul className="space-y-4 mb-10">
                 {[
-                  "10,000 Tracked URLs",
-                  "10-Minute Refresh Intervals",
-                  "Global Proxy Network",
+                  "Unlimited Tracked Products",
+                  "Daily Automatic Price Checks",
+                  "Historical Price Charts",
                   "Price History Tracking",
-                  "Custom Webhook Alerts",
+                  "Email Alerts on Price Drop",
                   "Priority 24/7 Support"
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">

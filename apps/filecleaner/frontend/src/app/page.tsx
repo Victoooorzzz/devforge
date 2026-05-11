@@ -87,7 +87,7 @@ export default function LandingPage() {
                 <FileSpreadsheet className="text-accent" size={32} />
               </div>
               <h4 className="text-xl font-bold mb-3">1. Upload</h4>
-              <p className="text-neutral-400 text-sm">Drop CSV or JSON files up to 50MB. We handle massive payloads with ease.</p>
+              <p className="text-neutral-400 text-sm">Drop CSV or Excel files up to 50MB. Clean data in seconds.</p>
             </div>
             <div className="flex flex-col items-center">
               <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
@@ -101,7 +101,7 @@ export default function LandingPage() {
                 <Download className="text-accent" size={32} />
               </div>
               <h4 className="text-xl font-bold mb-3">3. Download</h4>
-              <p className="text-neutral-400 text-sm">Get your cleaned data instantly in CSV, JSON, or Excel format.</p>
+              <p className="text-neutral-400 text-sm">Get your cleaned data instantly in CSV or Excel format.</p>
             </div>
           </div>
         </div>
@@ -179,10 +179,10 @@ export default function LandingPage() {
               <ul className="space-y-4 mb-10">
                 {[
                   "Unlimited File Cleanups",
-                  "Advanced AI Cleanup Rules",
+                  "Smart Duplicate Detection",
                   "Deep Duplicate Detection",
-                  "API Access for Integrations",
-                  "Priority 24/7 Support",
+                  "CSV, Excel and JSON Support",
+                  "Instant Download After Cleaning",
                   "50MB Max File Size"
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">

@@ -128,7 +128,7 @@ export default function LandingPage() {
                 <RefreshCcw className="text-accent" size={32} />
               </div>
               <h4 className="text-xl font-bold mb-3">3. Auto-Retry</h4>
-              <p className="text-neutral-400 text-sm">Configure automated retry logic and replay failed requests directly from the dashboard.</p>
+              <p className="text-neutral-400 text-sm">Replay failed requests and search across all logs directly from the dashboard.</p>
             </div>
           </div>
         </div>
@@ -160,10 +160,10 @@ export default function LandingPage() {
               <ul className="space-y-4 mb-10">
                 {[
                   "Unlimited Endpoints",
-                  "Real-time Payload Streaming",
-                  "90-Day History Retention",
-                  "Advanced Retry Sequences",
-                  "Custom Header Manipulation",
+                  "Live Payload Inspector",
+                  "Full Request History",
+                  "Manual Replay from Dashboard",
+                  "Universal Search Across Logs",
                   "Priority 24/7 Support"
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">

@@ -103,7 +103,7 @@ export default function LandingPage() {
                 <Share2 className="text-accent" size={32} />
               </div>
               <h4 className="text-xl font-bold mb-3">1. Collect</h4>
-              <p className="text-neutral-400 text-sm">Import feedback from App Store, Play Store, Slack, or via our universal API endpoint.</p>
+              <p className="text-neutral-400 text-sm">Paste feedback text or upload a CSV. No integrations required to get started.</p>
             </div>
             <div className="flex flex-col items-center">
               <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
@@ -151,8 +151,8 @@ export default function LandingPage() {
                   "Unlimited Feedback Processing",
                   "Advanced Theme Extraction",
                   "Urgency & Bug Detection",
-                  "Multi-Channel Dashboard",
-                  "API & Webhook Access",
+                  "Weekly Summary Reports",
+                  "Draft Reply Generator",
                   "Priority 24/7 Support"
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">

@@ -114,7 +114,7 @@ export default function LandingPage() {
                 <Share2 className="text-accent" size={32} />
               </div>
               <h4 className="text-xl font-bold mb-3">1. Connect CRM</h4>
-              <p className="text-neutral-400 text-sm">Integrate Stripe, QuickBooks, or upload CSV. We sync invoices in real-time.</p>
+              <p className="text-neutral-400 text-sm">Create invoices manually or import via CSV. Track all your clients in one place.</p>
             </div>
             <div className="flex flex-col items-center">
               <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
@@ -128,7 +128,7 @@ export default function LandingPage() {
                 <CreditCard className="text-accent" size={32} />
               </div>
               <h4 className="text-xl font-bold mb-3">3. Collect</h4>
-              <p className="text-neutral-400 text-sm">Watch payments roll in as our engine handles the psychological pressure for you.</p>
+              <p className="text-neutral-400 text-sm">Watch payments arrive as automated follow-ups handle the pressure for you.</p>
             </div>
           </div>
         </div>
@@ -160,10 +160,10 @@ export default function LandingPage() {
               <ul className="space-y-4 mb-10">
                 {[
                   "Unlimited Invoices Tracking",
-                  "Multi-Channel Sequences",
+                  "Automated Email Sequences",
                   "AI-Powered Debt Risk Profiling",
-                  "Custom Branding & White-label",
-                  "API & Webhook Integrations",
+                  "Debtor Risk Semaphore",
+                  "Escalation Tone Automation",
                   "Priority 24/7 Support"
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">
