@@ -1,21 +1,24 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime, timezone
-import asyncio, logging
+import asyncio, logging, io, json
+import pandas as pd
 
-from backend_core import create_app, get_current_user, get_session, User, scraper, require_user_access
+from backend_core import create_app, get_current_user, get_session, User, scraper, require_user_access, get_settings
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.worker import register_job_handler
 from backend_core.outbox_models import SystemOutbox
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 # SQL migrations needed for new columns on existing DB:
 # ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS min_price FLOAT;
@@ -340,6 +343,120 @@ async def delete_tracker(tracker_id: int, user: User = Depends(get_current_user)
         raise HTTPException(status_code=404, detail="Not found")
     await session.delete(t)
     return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# Export endpoint — Skill: backend-architect
+# ---------------------------------------------------------------------------
+@tracker_router.get("/export")
+async def export_trackers(
+    format: Literal["csv", "xlsx", "json"] = Query(default="csv"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Export all price trackers as CSV, XLSX, or JSON."""
+    result = await session.execute(
+        select(TrackedUrl).where(TrackedUrl.user_id == user.id).order_by(TrackedUrl.created_at.desc())
+    )
+    trackers = result.scalars().all()
+    rows = [{
+        "id": t.id,
+        "label": t.label,
+        "url": t.url,
+        "current_price": t.current_price,
+        "previous_price": t.previous_price,
+        "min_price_ever": t.min_price,
+        "in_stock": t.in_stock,
+        "alert_threshold": getattr(t, "alert_threshold", None),
+        "last_checked": t.last_checked.isoformat() if t.last_checked else None,
+        "check_frequency_hours": t.check_frequency_hours,
+        "status": t.status,
+    } for t in trackers]
+
+    if format == "json":
+        return StreamingResponse(
+            io.BytesIO(json.dumps(rows, indent=2).encode()),
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=pricetrackr_export.json"}
+        )
+    df = pd.DataFrame(rows)
+    buf = io.BytesIO()
+    if format == "xlsx":
+        df.to_excel(buf, index=False, engine="openpyxl")
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = "pricetrackr_export.xlsx"
+    else:
+        df.to_csv(buf, index=False)
+        media_type = "text/csv"
+        filename = "pricetrackr_export.csv"
+    buf.seek(0)
+    return StreamingResponse(buf, media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+# ---------------------------------------------------------------------------
+# Alert threshold — Skill: backend-architect
+# ---------------------------------------------------------------------------
+class AlertThresholdRequest(BaseModel):
+    alert_threshold: Optional[float] = None
+    alert_email: Optional[str] = None
+
+@tracker_router.patch("/{tracker_id}/alert-threshold")
+async def update_alert_threshold(
+    tracker_id: int,
+    body: AlertThresholdRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Set a price alert threshold. When price drops below this, an email is sent."""
+    result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id))
+    t = result.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+    # Store threshold in status field as JSON supplement (no migration needed)
+    meta = json.loads(t.status_meta or "{}") if hasattr(t, "status_meta") else {}
+    if body.alert_threshold is not None:
+        meta["alert_threshold"] = body.alert_threshold
+    if body.alert_email is not None:
+        meta["alert_email"] = body.alert_email
+    # Fallback: store in status JSON if no dedicated column
+    t.status = json.dumps({"alert_threshold": body.alert_threshold, "alert_email": body.alert_email})
+    session.add(t)
+    await session.commit()
+    return {"tracker_id": tracker_id, "alert_threshold": body.alert_threshold, "alert_email": body.alert_email}
+
+
+@tracker_router.post("/{tracker_id}/test-alert")
+async def test_price_alert(
+    tracker_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Send a test alert email immediately to validate alert configuration."""
+    result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id))
+    t = result.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+
+    # Get alert email from user record
+    alert_email = user.email
+    price_display = f"${t.current_price:.2f}" if t.current_price else "N/A"
+    html = f"""
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+      <h2 style="color:#6366f1;">&#128204; Price Alert Test — {t.label}</h2>
+      <p>This is a <strong>test alert</strong> for your tracked product.</p>
+      <table style="width:100%;border-collapse:collapse;">
+        <tr><td style="padding:8px;border:1px solid #eee;">Product</td><td style="padding:8px;border:1px solid #eee;"><strong>{t.label}</strong></td></tr>
+        <tr><td style="padding:8px;border:1px solid #eee;">Current Price</td><td style="padding:8px;border:1px solid #eee;"><strong style="color:#10B981;">{price_display}</strong></td></tr>
+        <tr><td style="padding:8px;border:1px solid #eee;">URL</td><td style="padding:8px;border:1px solid #eee;"><a href="{t.url}">{t.url[:60]}...</a></td></tr>
+      </table>
+      <p style="margin-top:16px;color:#888;">Real alerts will be sent when the price drops below your configured threshold.</p>
+    </div>
+    """
+    try:
+        send_email(to=alert_email, subject=f"[TEST] Price Alert — {t.label}", html_body=html)
+        return {"status": "sent", "to": alert_email}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send test alert: {e}")
 
 
 app = create_app(

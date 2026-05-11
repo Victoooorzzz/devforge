@@ -1,6 +1,7 @@
-﻿"use client";
-import { useState, useEffect } from "react";
+"use client";
+import { useState, useEffect, useRef } from "react";
 import { apiClient, trackEvent } from "@devforge/core";
+import { Download, ChevronDown, Sparkles, Loader2, Copy, Check, X } from "lucide-react";
 
 interface Invoice {
   id: number;
@@ -49,9 +50,21 @@ export default function DashboardPage() {
   const [view, setView]             = useState<"semaforo" | "lista">("semaforo");
   const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
   const [form, setForm]             = useState({ client_name: "", client_email: "", amount: "", due_date: "" });
+  const [exportOpen, setExportOpen] = useState(false);
+  const [aiTonePanel, setAiTonePanel] = useState<null | { invoiceId: number; loading: boolean; result: any }>(null);
+  const [copiedTone, setCopiedTone] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     apiClient.get<Invoice[]>("/invoices/list").then(({ data }) => setInvoices(data)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setExportOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -74,6 +87,41 @@ export default function DashboardPage() {
       setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, status: "paid" } : inv));
     } catch { alert("Error al marcar como pagada"); }
     finally { setLoadingIds(prev => { const s = new Set(prev); s.delete(id); return s; }); }
+  };
+
+  const handleExport = async (format: "csv" | "xlsx" | "json") => {
+    setExportOpen(false);
+    trackEvent("feature_used", { feature_name: "export_invoices", format });
+    const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/invoices/export?format=${format}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) { alert("Error al exportar"); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `invoicefollow_export.${format}`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleAiTone = async (inv: Invoice) => {
+    setAiTonePanel({ invoiceId: inv.id, loading: true, result: null });
+    trackEvent("feature_used", { feature_name: "ai_tone_invoice" });
+    try {
+      const { data } = await apiClient.post(`/invoices/${inv.id}/ai-tone`, {});
+      setAiTonePanel({ invoiceId: inv.id, loading: false, result: data });
+    } catch {
+      setAiTonePanel(null);
+      alert("Error al generar tono con IA");
+    }
+  };
+
+  const handleCopyTone = () => {
+    if (!aiTonePanel?.result) return;
+    const { greeting, body, call_to_action } = aiTonePanel.result;
+    navigator.clipboard.writeText(`${greeting}\n\n${body}\n\n${call_to_action}`);
+    setCopiedTone(true);
+    setTimeout(() => setCopiedTone(false), 2000);
   };
 
   const debtorMap = new Map<string, DebtorProfile>();
@@ -101,8 +149,31 @@ export default function DashboardPage() {
             {invoices.length} facturas &middot; <span className="font-mono font-semibold" style={{ color: "var(--color-accent)" }}>${totalPending.toFixed(2)}</span> pendiente
           </p>
         </div>
-        <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Nueva factura</button>
+        <div className="flex items-center gap-2">
+          <div className="relative" ref={exportRef}>
+            <button onClick={() => setExportOpen(!exportOpen)}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all"
+              style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}>
+              <Download size={14} /><span>Export</span>
+              <ChevronDown size={12} className={`transition-transform ${exportOpen ? "rotate-180" : ""}`} />
+            </button>
+            {exportOpen && (
+              <div className="absolute right-0 top-full mt-2 w-44 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
+                style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+                {(["csv", "xlsx", "json"] as const).map(f => (
+                  <button key={f} onClick={() => handleExport(f)}
+                    className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5 transition-colors"
+                    style={{ color: "var(--color-text)" }}>
+                    {f.toUpperCase()} — {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON"}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Nueva factura</button>
+        </div>
       </div>
+
 
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
@@ -217,13 +288,26 @@ export default function DashboardPage() {
                     <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full" style={statusColors[inv.status]}>{inv.status}</span></td>
                     <td className="px-4 py-3 text-sm font-mono" style={{ color: "var(--color-text-secondary)" }}>{inv.reminders_sent}</td>
                     <td className="px-4 py-3 text-right">
-                      {(inv.status === "pending" || inv.status === "overdue") && (
-                        <button onClick={() => handleMarkPaid(inv.id)} disabled={loadingIds.has(inv.id)}
-                          className="text-xs font-medium px-3 py-1.5 rounded transition-colors"
-                          style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text)", opacity: loadingIds.has(inv.id) ? 0.5 : 1 }}>
-                          {loadingIds.has(inv.id) ? "Procesando..." : "Marcar pagada"}
-                        </button>
-                      )}
+                      <div className="flex items-center justify-end gap-2">
+                        {(inv.status === "pending" || inv.status === "overdue") && (
+                          <button onClick={() => handleAiTone(inv)}
+                            disabled={aiTonePanel?.invoiceId === inv.id && aiTonePanel.loading}
+                            className="text-xs font-medium px-3 py-1.5 rounded transition-all flex items-center gap-1.5"
+                            style={{ backgroundColor: "rgba(99,102,241,0.1)", color: "#6366F1" }}>
+                            {aiTonePanel?.invoiceId === inv.id && aiTonePanel.loading
+                              ? <Loader2 size={12} className="animate-spin" />
+                              : <Sparkles size={12} />}
+                            AI Tone
+                          </button>
+                        )}
+                        {(inv.status === "pending" || inv.status === "overdue") && (
+                          <button onClick={() => handleMarkPaid(inv.id)} disabled={loadingIds.has(inv.id)}
+                            className="text-xs font-medium px-3 py-1.5 rounded transition-colors"
+                            style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text)", opacity: loadingIds.has(inv.id) ? 0.5 : 1 }}>
+                            {loadingIds.has(inv.id) ? "Procesando..." : "Marcar pagada"}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -233,5 +317,79 @@ export default function DashboardPage() {
         </div>
       )}
     </div>
+
+    {/* AI Tone Side Panel — Skill: gemini-api-dev */}
+    {aiTonePanel && (
+      <div className="fixed inset-y-0 right-0 w-full max-w-md shadow-2xl z-50 flex flex-col animate-in slide-in-from-right-4 duration-300"
+        style={{ backgroundColor: "var(--color-surface)", borderLeft: "1px solid var(--color-border)" }}>
+        <div className="p-6 border-b border-[var(--color-border)] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles size={18} className="text-indigo-400" />
+            <h2 className="text-sm font-bold uppercase tracking-wider">AI Tone Generator</h2>
+          </div>
+          <button onClick={() => setAiTonePanel(null)} className="p-1.5 rounded-lg hover:bg-black/10 transition-colors">
+            <X size={18} className="opacity-50" />
+          </button>
+        </div>
+
+        {aiTonePanel.loading ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <Loader2 size={32} className="animate-spin text-indigo-400 mx-auto mb-3" />
+              <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>Gemini está analizando la factura...</p>
+            </div>
+          </div>
+        ) : aiTonePanel.result && (
+          <div className="flex-1 overflow-auto p-6 space-y-5">
+            {(() => {
+              const toneColors: Record<string, string> = {
+                cordial: "#10B981", amable: "#6366F1", urgente: "#F59E0B", formal: "#EF4444", template: "#A3A3A3"
+              };
+              const color = toneColors[aiTonePanel.result.tone_label] || "#A3A3A3";
+              return (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider"
+                    style={{ backgroundColor: `${color}15`, color }}>
+                    {aiTonePanel.result.tone_label} · {aiTonePanel.result.days_overdue}d overdue
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded"
+                    style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text-secondary)" }}>
+                    {aiTonePanel.result.engine === "gemini" ? "✨ Gemini" : "📝 Template"}
+                  </span>
+                </div>
+              );
+            })()}
+
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Asunto</p>
+              <p className="text-sm font-medium p-3 rounded-lg" style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text)" }}>
+                {aiTonePanel.result.subject}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Mensaje</p>
+              <div className="p-4 rounded-lg space-y-3" style={{ backgroundColor: "var(--color-surface-raised)" }}>
+                <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>{aiTonePanel.result.greeting}</p>
+                <p className="text-sm whitespace-pre-wrap" style={{ color: "var(--color-text)" }}>{aiTonePanel.result.body}</p>
+                <p className="text-sm font-medium text-indigo-400">{aiTonePanel.result.call_to_action}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!aiTonePanel.loading && aiTonePanel.result && (
+          <div className="p-6 border-t border-[var(--color-border)]">
+            <button onClick={handleCopyTone}
+              className="w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all"
+              style={{ backgroundColor: "var(--color-primary)", color: "#000" }}>
+              {copiedTone ? <Check size={16} /> : <Copy size={16} />}
+              {copiedTone ? "¡Copiado al portapapeles!" : "Copiar mensaje completo"}
+            </button>
+          </div>
+        )}
+      </div>
+    )}
   );
 }
+

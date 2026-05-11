@@ -1,22 +1,25 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, BackgroundTasks
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, BackgroundTasks, Query
+from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
-from typing import Optional
+from typing import Optional, Literal
 from datetime import datetime, timezone
 import pandas as pd
 import io
+import json
 import boto3
 import logging
 
 from fastapi.concurrency import run_in_threadpool
-from backend_core import create_app, get_current_user, get_session, User, require_user_access
+from backend_core import create_app, get_current_user, get_session, User, require_user_access, get_settings
 from backend_core.database import get_managed_session
 from backend_core.outbox_models import SystemOutbox
 from backend_core.worker import register_job_handler
+
+settings = get_settings()
 
 logger = logging.getLogger(__name__)
 
@@ -595,6 +598,139 @@ async def download_file(
         url = s3.generate_presigned_url('get_object', Params={'Bucket': bucket_name, 'Key': object_name}, ExpiresIn=3600)
         return RedirectResponse(url)
     raise HTTPException(status_code=404, detail="Storage not configured")
+
+
+# ---------------------------------------------------------------------------
+# Export endpoint — Skill: backend-architect + react-patterns
+# ---------------------------------------------------------------------------
+@file_router.get("/export")
+async def export_files(
+    format: Literal["csv", "xlsx", "json"] = Query(default="csv"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Export all processed files metadata as CSV, XLSX, or JSON.
+    Uses pandas (already in stack) — no S3 required.
+    """
+    result = await session.execute(
+        select(ProcessedFile)
+        .where(ProcessedFile.user_id == user.id, ProcessedFile.status == "complete")
+        .order_by(ProcessedFile.created_at.desc())
+    )
+    records = result.scalars().all()
+
+    rows = [{
+        "id": r.id,
+        "name": r.original_name,
+        "size_bytes": r.size_bytes,
+        "rows_original": r.rows_original,
+        "rows_clean": r.rows_clean,
+        "duplicates_removed": r.duplicates_removed,
+        "empty_removed": r.empty_removed,
+        "whitespace_fixed": r.whitespace_fixed,
+        "reduction_pct": round((1 - r.rows_clean / max(r.rows_original, 1)) * 100, 1),
+        "processed_at": r.created_at.isoformat(),
+    } for r in records]
+
+    if format == "json":
+        return StreamingResponse(
+            io.BytesIO(json.dumps(rows, indent=2).encode()),
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=filecleaner_export.json"}
+        )
+
+    df = pd.DataFrame(rows)
+    buf = io.BytesIO()
+    if format == "xlsx":
+        df.to_excel(buf, index=False, engine="openpyxl")
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = "filecleaner_export.xlsx"
+    else:
+        df.to_csv(buf, index=False)
+        media_type = "text/csv"
+        filename = "filecleaner_export.csv"
+    buf.seek(0)
+    return StreamingResponse(buf, media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+# ---------------------------------------------------------------------------
+# AI Analyze endpoint — Skill: gemini-api-dev
+# ---------------------------------------------------------------------------
+@file_router.post("/ai-analyze")
+async def ai_analyze_file(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    """
+    Reads first 20 rows of the CSV/Excel and uses Gemini Flash to suggest
+    cleanup rules. Falls back to heuristic analysis if no API key.
+    """
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="AI analyze limited to 10MB")
+
+    def analyze_locally(file_content: bytes, fname: str):
+        df = _load_df(file_content, fname)
+        preview = df.head(20)
+        suggestions = []
+        for col in preview.columns:
+            null_pct = preview[col].isnull().mean()
+            if null_pct > 0.5:
+                suggestions.append({"column": col, "issue": f"{int(null_pct*100)}% valores nulos", "fix": "Considerar eliminar esta columna", "severity": "high"})
+            elif preview[col].dtype == object:
+                has_spaces = preview[col].dropna().str.strip().ne(preview[col].dropna()).any()
+                if has_spaces:
+                    suggestions.append({"column": col, "issue": "Espacios en blanco al inicio/fin", "fix": "Aplicar strip() automáticamente", "severity": "low"})
+            if preview[col].dtype == object:
+                dup_ratio = 1 - preview[col].nunique() / max(len(preview[col].dropna()), 1)
+                if dup_ratio > 0.8:
+                    suggestions.append({"column": col, "issue": f"{int(dup_ratio*100)}% valores duplicados", "fix": "Alta repetición — revisar si es categórico", "severity": "medium"})
+        return {
+            "total_rows": len(df),
+            "total_columns": len(df.columns),
+            "preview_rows": 20,
+            "suggestions": suggestions,
+            "engine": "heuristic",
+        }
+
+    async def analyze_with_gemini(file_content: bytes, fname: str):
+        if not settings.gemini_api_key:
+            return None
+        try:
+            df = await run_in_threadpool(_load_df, file_content, fname)
+            preview_csv = df.head(20).to_csv(index=False)
+            from google import genai
+            client = genai.Client(api_key=settings.gemini_api_key)
+            prompt = f"""Analiza este CSV y sugiere reglas de limpieza de datos. Responde en JSON:
+{{
+  "total_rows": number,
+  "total_columns": number,
+  "suggestions": [
+    {{"column": "nombre_columna", "issue": "descripcion del problema", "fix": "accion recomendada", "severity": "high|medium|low"}}
+  ],
+  "summary": "resumen general de calidad de los datos"
+}}
+
+Primeras 20 filas del CSV:
+{preview_csv[:3000]}"""
+            response = client.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=prompt,
+                config={"response_mime_type": "application/json"}
+            )
+            result = json.loads(response.text)
+            result["engine"] = "gemini"
+            result["preview_rows"] = min(20, len(df))
+            return result
+        except Exception as e:
+            logger.warning(f"Gemini AI analyze failed: {e}")
+            return None
+
+    result = await analyze_with_gemini(content, file.filename or "file.csv")
+    if result is None:
+        result = await run_in_threadpool(analyze_locally, content, file.filename or "file.csv")
+    return result
 
 
 @file_router.delete("/{file_id}")

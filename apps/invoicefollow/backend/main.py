@@ -1,21 +1,24 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Literal
 from datetime import datetime, date, timezone
-import uuid, logging, json
+import uuid, logging, json, io
+import pandas as pd
 
-from backend_core import create_app, get_current_user, get_session, User, require_user_access
+from backend_core import create_app, get_current_user, get_session, User, require_user_access, get_settings
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.outbox_models import SystemOutbox, InvoiceMagicLink
 from backend_core.worker import register_job_handler
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 # SQL migrations needed for new columns on existing DB:
 # ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_promise_date DATE;
@@ -420,6 +423,163 @@ async def client_scores(user: User = Depends(get_current_user), session: AsyncSe
 
     scores.sort(key=lambda x: -x["risk_score"])
     return scores
+
+
+# ---------------------------------------------------------------------------
+# AI Tone Generation — Skill: gemini-api-dev
+# ---------------------------------------------------------------------------
+@invoice_router.post("/{invoice_id}/ai-tone")
+async def generate_ai_tone(
+    invoice_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Uses Gemini Flash to generate a personalized collection email.
+    Takes into account days overdue, amount, debtor history.
+    Returns a preview without saving (dry-run).
+    """
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice or invoice.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    # Compute days overdue
+    today = date.today()
+    due = date.fromisoformat(str(invoice.due_date))
+    days_overdue = max(0, (today - due).days)
+
+    # Get debtor history
+    debtor_result = await session.execute(
+        select(Invoice).where(Invoice.user_id == user.id, Invoice.client_email == invoice.client_email)
+    )
+    debtor_invoices = debtor_result.scalars().all()
+    total_invoices = len(debtor_invoices)
+    paid_on_time = sum(1 for i in debtor_invoices if i.status == "paid" and i.reminders_sent <= 1)
+
+    async def _generate_with_gemini():
+        if not settings.gemini_api_key:
+            return None
+        try:
+            from google import genai
+            client = genai.Client(api_key=settings.gemini_api_key)
+            if days_overdue == 0:
+                tone_hint = "cordial y preventivo (la factura vence hoy o pronto)"
+            elif days_overdue <= 7:
+                tone_hint = "amable pero firme (pocos días de retraso, primera nota)"
+            elif days_overdue <= 30:
+                tone_hint = "urgente y profesional (más de una semana de retraso)"
+            else:
+                tone_hint = "formal y serio, mencionando posibles consecuencias legales si aplica (más de 30 días)"
+
+            prompt = f"""Eres un especialista en cobro de facturas. Genera un email de cobro profesional.
+
+Datos de la factura:
+- Cliente: {invoice.client_name}
+- Monto: ${invoice.amount:.2f}
+- Vencimiento: {invoice.due_date}
+- Días vencidos: {days_overdue}
+- Recordatorios enviados: {invoice.reminders_sent}
+- Historial del cliente: {total_invoices} facturas totales, {paid_on_time} pagadas a tiempo
+
+Tono requerido: {tone_hint}
+
+Responde en JSON con exactamente este formato:
+{{
+  "subject": "asunto del email",
+  "greeting": "saludo personalizado",
+  "body": "cuerpo del mensaje (2-3 párrafos)",
+  "call_to_action": "frase final de acción",
+  "tone_label": "cordial|amable|urgente|formal",
+  "days_overdue": {days_overdue}
+}}"""
+            response = client.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=prompt,
+                config={"response_mime_type": "application/json"}
+            )
+            result = json.loads(response.text)
+            result["engine"] = "gemini"
+            return result
+        except Exception as e:
+            logger.warning(f"Gemini AI tone failed: {e}")
+            return None
+
+    def _fallback_tone():
+        """Template-based fallback when Gemini is unavailable."""
+        if days_overdue == 0:
+            tone, subject = "cordial", f"Recordatorio amigable — Factura por ${invoice.amount:.2f}"
+            body = f"Estimado/a {invoice.client_name}, le recordamos que su factura por ${invoice.amount:.2f} vence hoy. Puede realizar el pago a través de los medios habituales."
+        elif days_overdue <= 7:
+            tone, subject = "amable", f"Factura pendiente — {days_overdue} días de retraso"
+            body = f"Estimado/a {invoice.client_name}, notamos que la factura por ${invoice.amount:.2f} lleva {days_overdue} días vencida. Le agradecemos regularizar a la brevedad posible."
+        elif days_overdue <= 30:
+            tone, subject = "urgente", f"URGENTE: Factura ${invoice.amount:.2f} — {days_overdue} días vencida"
+            body = f"Estimado/a {invoice.client_name}, su factura por ${invoice.amount:.2f} tiene {days_overdue} días de mora. Requerimos su pago inmediato para evitar cargos adicionales."
+        else:
+            tone, subject = "formal", f"AVISO FINAL: Factura ${invoice.amount:.2f} — {days_overdue} días"
+            body = f"De nuestra mayor consideración, Sr./Sra. {invoice.client_name}: Su cuenta presenta una deuda de ${invoice.amount:.2f} con {days_overdue} días de mora. De no regularizar en 48 horas, procederemos según corresponda."
+        return {
+            "subject": subject,
+            "greeting": f"Estimado/a {invoice.client_name},",
+            "body": body,
+            "call_to_action": "Realizar pago ahora",
+            "tone_label": tone,
+            "days_overdue": days_overdue,
+            "engine": "template",
+        }
+
+    result = await _generate_with_gemini()
+    if result is None:
+        result = _fallback_tone()
+    result["invoice_id"] = invoice_id
+    result["client_name"] = invoice.client_name
+    result["amount"] = invoice.amount
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Export endpoint — Skill: backend-architect
+# ---------------------------------------------------------------------------
+@invoice_router.get("/export")
+async def export_invoices(
+    format: Literal["csv", "xlsx", "json"] = Query(default="csv"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Export all invoices as CSV, XLSX, or JSON."""
+    result = await session.execute(
+        select(Invoice).where(Invoice.user_id == user.id).order_by(Invoice.created_at.desc())
+    )
+    invoices = result.scalars().all()
+    rows = [{
+        "id": inv.id,
+        "client_name": inv.client_name,
+        "client_email": inv.client_email,
+        "amount": inv.amount,
+        "due_date": str(inv.due_date),
+        "status": inv.status,
+        "reminders_sent": inv.reminders_sent,
+        "created_at": inv.created_at.isoformat(),
+    } for inv in invoices]
+
+    if format == "json":
+        return StreamingResponse(
+            io.BytesIO(json.dumps(rows, indent=2).encode()),
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=invoicefollow_export.json"}
+        )
+    df = pd.DataFrame(rows)
+    buf = io.BytesIO()
+    if format == "xlsx":
+        df.to_excel(buf, index=False, engine="openpyxl")
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = "invoicefollow_export.xlsx"
+    else:
+        df.to_csv(buf, index=False)
+        media_type = "text/csv"
+        filename = "invoicefollow_export.csv"
+    buf.seek(0)
+    return StreamingResponse(buf, media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
 app = create_app(

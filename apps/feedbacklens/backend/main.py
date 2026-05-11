@@ -1,14 +1,16 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-import json, logging
-from fastapi import APIRouter, Depends, HTTPException
+import json, logging, io
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime, timezone, timedelta
 from collections import Counter
+import pandas as pd
 
 from backend_core import create_app, get_current_user, get_session, get_settings, User, require_user_access
 from backend_core.database import get_managed_session
@@ -448,6 +450,173 @@ async def cron_feedback_summary(authorization: str = None):
         raise HTTPException(status_code=401, detail="Unauthorized")
     await weekly_summary_cron()
     return {"status": "success", "task": "weekly_summary"}
+
+
+# ---------------------------------------------------------------------------
+# Export endpoint — Skill: backend-architect + react-patterns
+# ---------------------------------------------------------------------------
+@feedback_router.get("/feedback/export")
+async def export_feedback(
+    format: Literal["csv", "xlsx", "json"] = Query(default="csv"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Export all feedback entries as CSV, XLSX, or JSON."""
+    result = await session.execute(
+        select(FeedbackEntry)
+        .where(FeedbackEntry.user_id == user.id)
+        .order_by(FeedbackEntry.created_at.desc())
+    )
+    entries = result.scalars().all()
+
+    rows = [{
+        "id": e.id,
+        "text": e.text,
+        "sentiment": e.sentiment or "",
+        "confidence": round(e.confidence * 100, 1) if e.confidence else None,
+        "themes": ", ".join(json.loads(e.themes_json or "[]")),
+        "is_urgent": e.is_urgent,
+        "draft_reply": e.draft_reply or "",
+        "analysis_engine": e.analysis_engine or "",
+        "created_at": e.created_at.isoformat(),
+    } for e in entries]
+
+    if format == "json":
+        return StreamingResponse(
+            io.BytesIO(json.dumps(rows, indent=2).encode()),
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=feedbacklens_export.json"}
+        )
+
+    df = pd.DataFrame(rows)
+    buf = io.BytesIO()
+    if format == "xlsx":
+        df.to_excel(buf, index=False, engine="openpyxl")
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = "feedbacklens_export.xlsx"
+    else:
+        df.to_csv(buf, index=False)
+        media_type = "text/csv"
+        filename = "feedbacklens_export.csv"
+    buf.seek(0)
+    return StreamingResponse(buf, media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+# ---------------------------------------------------------------------------
+# Bulk Import — Skill: backend-architect
+# ---------------------------------------------------------------------------
+class BulkImportRequest(BaseModel):
+    texts: List[str]  # array of feedback texts to import
+
+@feedback_router.post("/feedback/bulk")
+async def bulk_import_feedback(
+    body: BulkImportRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Import multiple feedback texts at once. Each text becomes a FeedbackEntry pending analysis."""
+    if len(body.texts) > 500:
+        raise HTTPException(status_code=400, detail="Max 500 items per bulk import")
+    created_ids = []
+    for text in body.texts:
+        text = text.strip()
+        if not text:
+            continue
+        entry = FeedbackEntry(user_id=user.id, text=text)
+        session.add(entry)
+        await session.flush()  # get id
+        created_ids.append(entry.id)
+    await session.commit()
+    return {"created": len(created_ids), "ids": created_ids}
+
+
+@feedback_router.post("/feedback/bulk-csv")
+async def bulk_import_csv(
+    file: UploadFile = File(...),
+    column: str = Query(default="text", description="Column name containing the feedback text"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Import feedback from a CSV file. Reads the specified column as feedback texts."""
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="CSV limited to 5MB for bulk import")
+    try:
+        df = pd.read_csv(io.BytesIO(content))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid CSV: {e}")
+    if column not in df.columns:
+        raise HTTPException(status_code=400, detail=f"Column '{column}' not found. Available: {list(df.columns)}")
+
+    texts = df[column].dropna().astype(str).tolist()
+    created_ids = []
+    for text in texts[:500]:
+        text = text.strip()
+        if not text:
+            continue
+        entry = FeedbackEntry(user_id=user.id, text=text)
+        session.add(entry)
+        await session.flush()
+        created_ids.append(entry.id)
+    await session.commit()
+    return {"created": len(created_ids), "ids": created_ids, "total_rows": len(df)}
+
+
+# ---------------------------------------------------------------------------
+# Draft Reply Generator — Skill: gemini-api-dev
+# ---------------------------------------------------------------------------
+@feedback_router.post("/feedback/{feedback_id}/draft-reply")
+async def generate_draft_reply(
+    feedback_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Uses Gemini Flash to generate a professional support reply.
+    Falls back to a template-based reply if Gemini is unavailable.
+    """
+    entry = await session.get(FeedbackEntry, feedback_id)
+    if not entry or entry.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+
+    async def _draft_with_gemini(text: str, sentiment: str, is_urgent: bool) -> str:
+        if not settings.gemini_api_key:
+            return None
+        try:
+            from google import genai
+            client = genai.Client(api_key=settings.gemini_api_key)
+            tone = "urgente y priorizando la resolución" if is_urgent else (
+                "empático y comprensivo" if sentiment == "negative" else "amigable y positivo"
+            )
+            prompt = f"""Eres un agente de soporte al cliente profesional. Escribe una respuesta al siguiente feedback del cliente.
+Tono: {tone}. Máximo 3 párrafos. En el idioma del mensaje del cliente.
+
+Feedback del cliente:
+\"{text}\"
+
+Responde SOLO con el texto de la respuesta, sin saludos genericos ni firmas."""
+            resp = client.models.generate_content(model="gemini-3-flash-preview", contents=prompt)
+            return resp.text.strip()
+        except Exception as e:
+            logger.warning(f"Gemini draft-reply failed: {e}")
+            return None
+
+    def _fallback_draft(sentiment: str, is_urgent: bool) -> str:
+        if is_urgent:
+            return "Gracias por contactarnos. Hemos recibido tu mensaje y lo estamos tratando como prioridad. Un especialista se pondrá en contacto contigo en las próximas horas."
+        if sentiment == "negative":
+            return "Lamentamos que tu experiencia no haya sido la esperada. Queremos ayudarte a resolver esto lo antes posible. ¿Podrías darnos más detalles sobre lo ocurrido?"
+        return "Gracias por tu mensaje! Valoramos mucho tu opinión y estamos aquí para ayudarte en lo que necesites."
+
+    draft = await _draft_with_gemini(entry.text, entry.sentiment or "neutral", entry.is_urgent)
+    if draft is None:
+        draft = _fallback_draft(entry.sentiment or "neutral", entry.is_urgent)
+
+    entry.draft_reply = draft
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+    return _serialize_entry(entry)
 
 
 app = create_app(

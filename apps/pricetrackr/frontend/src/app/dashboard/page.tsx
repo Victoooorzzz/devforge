@@ -1,6 +1,7 @@
-﻿"use client";
-import { useState, useEffect } from "react";
+"use client";
+import { useState, useEffect, useRef } from "react";
 import { apiClient, trackEvent } from "@devforge/core";
+import { Download, ChevronDown, Bell, BellOff, Send, Loader2, X, Check } from "lucide-react";
 
 interface TrackedUrl {
   id: number;
@@ -21,6 +22,16 @@ interface PricePoint {
   recorded_at: string;
 }
 
+type ExportFormat = "csv" | "xlsx" | "json";
+
+interface AlertConfig {
+  threshold: string;
+  open: boolean;
+  saving: boolean;
+  testing: boolean;
+  saved: boolean;
+}
+
 export default function DashboardPage() {
   const [trackers, setTrackers]   = useState<TrackedUrl[]>([]);
   const [showForm, setShowForm]   = useState(false);
@@ -29,9 +40,20 @@ export default function DashboardPage() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [deleting, setDeleting]   = useState<Set<number>>(new Set());
   const [form, setForm]           = useState({ url: "", label: "" });
+  const [exportOpen, setExportOpen] = useState(false);
+  const [alertConfigs, setAlertConfigs] = useState<Record<number, AlertConfig>>({});
+  const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     apiClient.get<TrackedUrl[]>("/trackers/list").then(({ data }) => setTrackers(data)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setExportOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -65,6 +87,59 @@ export default function DashboardPage() {
     finally { setLoadingHistory(false); }
   };
 
+  // Export — Skill: react-patterns
+  const handleExport = async (format: ExportFormat) => {
+    setExportOpen(false);
+    trackEvent("feature_used", { feature_name: "export_trackers", format });
+    const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/trackers/export?format=${format}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) { alert("Error al exportar"); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `pricetrackr_export.${format}`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Alert threshold config — Skill: backend-architect
+  const toggleAlertPanel = (id: number) => {
+    setAlertConfigs(prev => ({
+      ...prev,
+      [id]: prev[id]?.open 
+        ? { ...prev[id], open: false }
+        : { threshold: "", open: true, saving: false, testing: false, saved: false }
+    }));
+  };
+
+  const handleSaveAlert = async (id: number) => {
+    const cfg = alertConfigs[id];
+    if (!cfg?.threshold) return;
+    setAlertConfigs(prev => ({ ...prev, [id]: { ...prev[id], saving: true, saved: false } }));
+    trackEvent("feature_used", { feature_name: "set_price_alert" });
+    try {
+      await apiClient.patch(`/trackers/${id}/alert-threshold`, {
+        alert_threshold: parseFloat(cfg.threshold)
+      });
+      setAlertConfigs(prev => ({ ...prev, [id]: { ...prev[id], saving: false, saved: true, open: false } }));
+      setTimeout(() => setAlertConfigs(prev => ({ ...prev, [id]: { ...prev[id], saved: false } })), 3000);
+    } catch {
+      setAlertConfigs(prev => ({ ...prev, [id]: { ...prev[id], saving: false } }));
+      alert("Error al guardar alerta");
+    }
+  };
+
+  const handleTestAlert = async (id: number) => {
+    setAlertConfigs(prev => ({ ...prev, [id]: { ...(prev[id] || { threshold: "", open: false, saving: false, saved: false }), testing: true } }));
+    trackEvent("feature_used", { feature_name: "test_price_alert" });
+    try {
+      await apiClient.post(`/trackers/${id}/test-alert`, {});
+      alert("📧 Email de prueba enviado exitosamente!");
+    } catch { alert("Error al enviar test alert"); }
+    finally { setAlertConfigs(prev => ({ ...prev, [id]: { ...prev[id], testing: false } })); }
+  };
+
   const priceDiff = (t: TrackedUrl) => {
     if (!t.current_price || !t.previous_price) return null;
     return ((t.current_price - t.previous_price) / t.previous_price) * 100;
@@ -73,7 +148,6 @@ export default function DashboardPage() {
   const isMinHistoric = (t: TrackedUrl) =>
     t.current_price !== null && t.min_price !== null && t.current_price <= t.min_price;
 
-  // Mini sparkline SVG desde array de precios
   const Sparkline = ({ points }: { points: PricePoint[] }) => {
     const prices = points.map(p => p.price).filter(Boolean) as number[];
     if (prices.length < 2) return <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Sin datos</span>;
@@ -97,7 +171,31 @@ export default function DashboardPage() {
             <h1 className="text-2xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>Price Tracker</h1>
             <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>{trackers.length} productos rastreados</p>
           </div>
-          <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Agregar URL</button>
+          <div className="flex items-center gap-2">
+            {/* Export dropdown */}
+            <div className="relative" ref={exportRef}>
+              <button onClick={() => setExportOpen(!exportOpen)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all"
+                style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}>
+                <Download size={14} />
+                <span>Export</span>
+                <ChevronDown size={12} className={`transition-transform ${exportOpen ? "rotate-180" : ""}`} />
+              </button>
+              {exportOpen && (
+                <div className="absolute right-0 top-full mt-2 w-44 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
+                  style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+                  {(["csv", "xlsx", "json"] as ExportFormat[]).map(f => (
+                    <button key={f} onClick={() => handleExport(f)}
+                      className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5 transition-colors"
+                      style={{ color: "var(--color-text)" }}>
+                      {f.toUpperCase()} — {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON"}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Agregar URL</button>
+          </div>
         </div>
 
         {showForm && (
@@ -126,32 +224,32 @@ export default function DashboardPage() {
           {trackers.map(t => {
             const diff = priceDiff(t);
             const isMin = isMinHistoric(t);
+            const alertCfg = alertConfigs[t.id];
             return (
-              <div key={t.id} onClick={() => handleSelect(t)} className="p-4 rounded-lg cursor-pointer transition-colors"
-                style={{
-                  backgroundColor: selected?.id === t.id ? "var(--color-surface-raised)" : "var(--color-surface)",
-                  border: isMin ? "1px solid rgba(16,185,129,0.4)" : "1px solid transparent",
-                }}>
-                <div className="flex items-start justify-between gap-4">
+              <div key={t.id} className="rounded-lg overflow-hidden" style={{ backgroundColor: selected?.id === t.id ? "var(--color-surface-raised)" : "var(--color-surface)", border: isMin ? "1px solid rgba(16,185,129,0.4)" : "1px solid transparent" }}>
+                <div onClick={() => handleSelect(t)} className="p-4 flex items-start justify-between gap-4 cursor-pointer">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <p className="text-sm font-semibold truncate" style={{ color: "var(--color-text)" }}>{t.label}</p>
                       {isMin && (
                         <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: "rgba(16,185,129,0.15)", color: "#10B981" }}>
-                          MINIMO HISTORICO
-                        </span>
+                          style={{ backgroundColor: "rgba(16,185,129,0.15)", color: "#10B981" }}>MINIMO</span>
                       )}
                       {t.in_stock === false && (
                         <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: "rgba(239,68,68,0.15)", color: "#EF4444" }}>
-                          SIN STOCK
+                          style={{ backgroundColor: "rgba(239,68,68,0.15)", color: "#EF4444" }}>SIN STOCK</span>
+                      )}
+                      {/* Alert configured badge */}
+                      {alertCfg?.saved && (
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0 animate-in fade-in"
+                          style={{ backgroundColor: "rgba(99,102,241,0.15)", color: "#6366F1" }}>
+                          <Bell size={10} className="inline mr-1" />ALERTA ACTIVA
                         </span>
                       )}
                     </div>
                     <p className="text-xs truncate" style={{ color: "var(--color-text-secondary)" }}>{t.url}</p>
                   </div>
-                  <div className="flex items-center gap-4 flex-shrink-0">
+                  <div className="flex items-center gap-3 flex-shrink-0">
                     <div className="text-right">
                       {t.current_price !== null ? (
                         <p className="text-lg font-bold font-mono" style={{ color: "var(--color-accent)" }}>
@@ -166,6 +264,18 @@ export default function DashboardPage() {
                         </p>
                       )}
                     </div>
+                    {/* Alert button */}
+                    <button
+                      onClick={e => { e.stopPropagation(); toggleAlertPanel(t.id); }}
+                      className="p-2 rounded-lg transition-colors"
+                      style={{
+                        backgroundColor: alertCfg?.open ? "rgba(99,102,241,0.1)" : "var(--color-surface-high)",
+                        color: alertCfg?.open ? "#6366F1" : "var(--color-text-secondary)"
+                      }}
+                      title="Configurar alerta de precio"
+                    >
+                      {alertCfg?.saved ? <Bell size={16} /> : <BellOff size={16} />}
+                    </button>
                     <button onClick={e => { e.stopPropagation(); handleDelete(t.id); }}
                       disabled={deleting.has(t.id)}
                       className="text-xs px-2 py-1 rounded transition-colors"
@@ -174,12 +284,58 @@ export default function DashboardPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Alert configuration panel */}
+                {alertCfg?.open && (
+                  <div className="px-4 pb-4 border-t border-[var(--color-border)] pt-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <p className="text-xs font-medium mb-2 flex items-center gap-1.5"
+                      style={{ color: "var(--color-text-secondary)" }}>
+                      <Bell size={12} /> Alerta cuando el precio baje de:
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-mono"
+                          style={{ color: "var(--color-text-secondary)" }}>$</span>
+                        <input
+                          type="number" step="0.01" min="0"
+                          value={alertCfg.threshold}
+                          onChange={e => setAlertConfigs(prev => ({ ...prev, [t.id]: { ...prev[t.id], threshold: e.target.value } }))}
+                          className="input-field pl-7 text-sm"
+                          placeholder={t.current_price ? (t.current_price * 0.9).toFixed(2) : "0.00"}
+                        />
+                      </div>
+                      <button onClick={() => handleSaveAlert(t.id)}
+                        disabled={alertCfg.saving || !alertCfg.threshold}
+                        className="px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5"
+                        style={{ backgroundColor: "var(--color-primary)", color: "#000", opacity: alertCfg.saving || !alertCfg.threshold ? 0.6 : 1 }}>
+                        {alertCfg.saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                        Guardar
+                      </button>
+                      <button onClick={() => handleTestAlert(t.id)}
+                        disabled={alertCfg.testing}
+                        className="px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5"
+                        style={{ backgroundColor: "var(--color-surface-high)", color: "var(--color-text)" }}>
+                        {alertCfg.testing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                        Test
+                      </button>
+                      <button onClick={() => toggleAlertPanel(t.id)}
+                        className="p-2 rounded-lg hover:bg-black/5 transition-colors"
+                        style={{ color: "var(--color-text-secondary)" }}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <p className="text-[10px] mt-2" style={{ color: "var(--color-text-secondary)" }}>
+                      Se enviará un email a tu cuenta cuando el precio detectado sea menor al umbral configurado.
+                    </p>
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       </div>
 
+      {/* History sidebar */}
       {selected && (
         <div className="w-80 flex-shrink-0 rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)" }}>
           <div className="flex items-center justify-between mb-4">
