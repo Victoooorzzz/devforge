@@ -42,7 +42,7 @@ async def cron_cleanup_files():
         if not old_files:
             return 0
             
-        bucket_name = os.getenv("R2_BUCKET_NAME")
+        bucket_name = settings.s3_bucket_name
         s3 = _get_s3_client()
         
         count = 0
@@ -86,9 +86,9 @@ class ProcessedFile(SQLModel, table=True):
 def _get_s3_client():
     return boto3.client(
         's3',
-        endpoint_url=os.getenv("S3_ENDPOINT_URL"),
-        aws_access_key_id=os.getenv("S3_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("S3_SECRET_ACCESS_KEY"),
+        endpoint_url=settings.s3_endpoint_url,
+        aws_access_key_id=settings.s3_access_key_id,
+        aws_secret_access_key=settings.s3_secret_access_key,
         region_name="auto"
     )
 
@@ -112,7 +112,7 @@ async def handle_process_csv(payload: dict):
     object_key = payload["object_key"]
     filename = payload["filename"]
     
-    bucket_name = os.getenv("R2_BUCKET_NAME")
+    bucket_name = settings.s3_bucket_name
     s3 = _get_s3_client()
     
     # Download raw file
@@ -216,7 +216,7 @@ async def upload_file(
     await session.refresh(record)
 
     # Upload raw to R2
-    bucket_name = os.getenv("R2_BUCKET_NAME")
+    bucket_name = settings.s3_bucket_name
     if not bucket_name:
         raise HTTPException(status_code=500, detail="Storage not configured")
         
@@ -266,7 +266,7 @@ async def demo_upload(
     await session.commit()
     await session.refresh(record)
 
-    bucket_name = os.getenv("R2_BUCKET_NAME")
+    bucket_name = settings.s3_bucket_name
     if not bucket_name:
         raise HTTPException(status_code=500, detail="Storage not configured")
         
@@ -329,7 +329,7 @@ async def download_demo_file(
     if not record or record.user_id != 0:
         raise HTTPException(status_code=404, detail="File not found")
 
-    bucket_name = os.getenv("R2_BUCKET_NAME")
+    bucket_name = settings.s3_bucket_name
     if bucket_name:
         s3 = _get_s3_client()
         object_name = f"cleaned/{record.id}_{record.original_name}"
@@ -481,7 +481,7 @@ async def magic_clean(
     await session.refresh(record)
 
     # Upload raw to R2
-    bucket_name = os.getenv("R2_BUCKET_NAME")
+    bucket_name = settings.s3_bucket_name
     if not bucket_name:
         raise HTTPException(status_code=500, detail="Storage not configured")
         
@@ -510,7 +510,7 @@ async def handle_magic_clean(payload: dict):
     object_key = payload["object_key"]
     filename = payload["filename"]
     
-    bucket_name = os.getenv("R2_BUCKET_NAME")
+    bucket_name = settings.s3_bucket_name
     s3 = _get_s3_client()
     
     # Download raw file
@@ -591,7 +591,7 @@ async def download_file(
     if not record or record.user_id != user.id:
         raise HTTPException(status_code=404, detail="File not found")
 
-    bucket_name = os.getenv("R2_BUCKET_NAME")
+    bucket_name = settings.s3_bucket_name
     if bucket_name:
         s3 = _get_s3_client()
         object_name = f"cleaned/{record.id}_{record.original_name}"

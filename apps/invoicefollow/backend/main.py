@@ -108,7 +108,7 @@ async def lemonsqueezy_webhook(request: Request, session: AsyncSession = Depends
             invoice = result.scalar_one_or_none()
             if invoice:
                 invoice.status = "paid"
-                invoice.bot_active = False  # stop reminders
+                invoice.cron_paused = True  # stop reminders (replaces non-existent bot_active)
                 session.add(invoice)
                 await session.commit()
                 logger.info(f"Invoice {invoice_id} auto-marked as paid via LemonSqueezy webhook")

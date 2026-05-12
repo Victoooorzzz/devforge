@@ -14,6 +14,7 @@ from sqlmodel import select
 
 from .config import get_settings
 from .database import get_session
+from .auth import get_current_user, User
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -86,19 +87,16 @@ async def create_ls_checkout(user_id: int, user_email: str, variant_id: str):
 @ls_router.post("/checkout", response_model=CheckoutResponse)
 async def create_checkout(
     body: CheckoutRequest,
-    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
 ):
-    # Import locally to avoid circular dependency
-    from .auth import get_current_user
-    user = await get_current_user(await request.app.state.security_dependency(request))
-    
     url = await create_ls_checkout(user.id, user.email, body.variant_id)
     return CheckoutResponse(checkout_url=url)
 
 @ls_router.get("/portal", response_model=PortalResponse)
-async def get_portal(request: Request):
-    from .auth import get_current_user
-    user = await get_current_user(await request.app.state.security_dependency(request))
+async def get_portal(
+    user: User = Depends(get_current_user),
+):
 
     if not user.lemonsqueezy_customer_id:
         raise HTTPException(status_code=400, detail="User has no active subscription")

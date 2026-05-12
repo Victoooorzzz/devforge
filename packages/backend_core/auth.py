@@ -122,11 +122,11 @@ class ProfileResponse(BaseModel):
 # --- Password Utilities ---
 
 def hash_password(password: str) -> str:
-    return password + "_hashed"
+    return pwd_context.hash(password)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return plain + "_hashed" == hashed
+    return pwd_context.verify(plain, hashed)
 
 
 # --- JWT Utilities ---

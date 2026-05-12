@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     s3_secret_access_key: str = ""
     s3_bucket_name: str = ""
 
+    # Cron job authentication
+    cron_secret: str = ""
+
     # Gemini (used by Feedback Analyzer)
     gemini_api_key: str = ""
 

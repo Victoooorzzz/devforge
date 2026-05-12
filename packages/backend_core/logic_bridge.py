@@ -118,7 +118,7 @@ async def detect_and_act_on_payment(user_id: int, headers: dict, body: str) -> b
             from sqlalchemy import text
             query = text("""
                 UPDATE invoices
-                SET status = 'paid', bot_active = false
+                SET status = 'paid', cron_paused = true
                 WHERE user_id = :user_id
                   AND LOWER(client_email) = :email
                   AND status != 'paid'
