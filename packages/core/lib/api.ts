@@ -28,9 +28,8 @@ async function request<T>(
     ...(options.headers as Record<string, string>),
   };
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
+  // Use HttpOnly cookies
+  options.credentials = "include";
 
   const response = await fetch(`${API_BASE}${path}`, {
     method,
@@ -68,6 +67,9 @@ export const apiClient = {
 
   put: <T>(path: string, body?: unknown, options?: RequestInit) =>
     request<T>("PUT", path, body, options),
+
+  patch: <T>(path: string, body?: unknown, options?: RequestInit) =>
+    request<T>("PATCH", path, body, options),
 
   delete: <T>(path: string, options?: RequestInit) =>
     request<T>("DELETE", path, undefined, options),

@@ -197,8 +197,9 @@ async def upload_file(
     Accepts a file, creates a DB record immediately (status=queued), and
     processes it in the background. Returns {id, status} so the client can poll.
     """
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
+    # Get file size without reading into memory
+    file_size = file.size or 0
+    if file_size > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File too large (200MB max)")
 
     ext = (file.filename or "file.csv").rsplit(".", 1)[-1].lower()
@@ -208,21 +209,25 @@ async def upload_file(
     record = ProcessedFile(
         user_id=user.id,
         original_name=file.filename or "unnamed",
-        size_bytes=len(content),
+        size_bytes=file_size,
         status="queued",
     )
     session.add(record)
     await session.commit()
     await session.refresh(record)
 
-    # Upload raw to R2
+    # Upload raw to R2 via streaming
     bucket_name = settings.s3_bucket_name
     if not bucket_name:
         raise HTTPException(status_code=500, detail="Storage not configured")
         
     s3 = _get_s3_client()
     raw_key = f"raw/{record.id}_{record.original_name}"
-    s3.upload_fileobj(io.BytesIO(content), bucket_name, raw_key)
+    
+    # Run upload_fileobj in a threadpool to avoid blocking event loop
+    await run_in_threadpool(
+        s3.upload_fileobj, file.file, bucket_name, raw_key
+    )
 
     # Enqueue to system_outbox
     job = SystemOutbox(
@@ -252,14 +257,14 @@ async def demo_upload(
     Uses a hardcoded GUEST_USER_ID (0).
     """
     GUEST_USER_ID = 0
-    content = await file.read()
-    if len(content) > 5 * 1024 * 1024:  # Limit demo to 5MB
+    file_size = file.size or 0
+    if file_size > 5 * 1024 * 1024:  # Limit demo to 5MB
         raise HTTPException(status_code=413, detail="Demo limited to 5MB")
 
     record = ProcessedFile(
         user_id=GUEST_USER_ID,
         original_name=file.filename or "demo_file.csv",
-        size_bytes=len(content),
+        size_bytes=file_size,
         status="queued",
     )
     session.add(record)
@@ -272,7 +277,11 @@ async def demo_upload(
         
     s3 = _get_s3_client()
     raw_key = f"demo/{record.id}_{record.original_name}"
-    s3.upload_fileobj(io.BytesIO(content), bucket_name, raw_key)
+    
+    # Run upload_fileobj in a threadpool to avoid blocking event loop
+    await run_in_threadpool(
+        s3.upload_fileobj, file.file, bucket_name, raw_key
+    )
 
     job = SystemOutbox(
         app_name="filecleaner",
@@ -568,7 +577,7 @@ async def handle_magic_clean(payload: dict):
             s3.upload_fileobj(out_buf, bucket_name, object_name)
 
             rec.status = "complete"
-            rec.download_url = f"/files/{rec.id}/download"
+            rec.download_url = f"/files/{rec.id}/download?type=magic"
             rec.rows_original = rows_orig
             rec.rows_clean = rows_clean
         except Exception as e:
@@ -584,6 +593,7 @@ register_job_handler("filecleaner", "magic_clean", handle_magic_clean)
 @file_router.get("/{file_id}/download")
 async def download_file(
     file_id: int,
+    type: Optional[str] = Query(None),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -594,7 +604,8 @@ async def download_file(
     bucket_name = settings.s3_bucket_name
     if bucket_name:
         s3 = _get_s3_client()
-        object_name = f"cleaned/{record.id}_{record.original_name}"
+        prefix = "magic-clean" if type == "magic" else "cleaned"
+        object_name = f"{prefix}/{record.id}_{record.original_name}"
         url = s3.generate_presigned_url('get_object', Params={'Bucket': bucket_name, 'Key': object_name}, ExpiresIn=3600)
         return RedirectResponse(url)
     raise HTTPException(status_code=404, detail="Storage not configured")

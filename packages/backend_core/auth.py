@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -82,7 +82,7 @@ class LoginRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    access_token: str
+    access_token: Optional[str] = None
     token_type: str = "bearer"
     is_email_verified: bool = False
     checkout_url: Optional[str] = None
@@ -154,11 +154,48 @@ def verify_token(token: str) -> dict:
 
 # --- Dependencies ---
 
+def set_auth_cookies(response: Response, token: str):
+    response.set_cookie(
+        key="devforge_token",
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        max_age=30 * 24 * 60 * 60,
+        path="/"
+    )
+    response.set_cookie(
+        key="devforge_auth_status",
+        value="true",
+        httponly=False,
+        secure=True,
+        samesite="none",
+        max_age=30 * 24 * 60 * 60,
+        path="/"
+    )
+
+def clear_auth_cookies(response: Response):
+    response.delete_cookie("devforge_token", path="/", secure=True, samesite="none")
+    response.delete_cookie("devforge_auth_status", path="/", secure=True, samesite="none")
+
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> User:
-    payload = verify_token(credentials.credentials)
+    token = request.cookies.get("devforge_token")
+    if not token:
+        # Fallback to Authorization header
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+        
+    payload = verify_token(token)
     user_id = int(payload["sub"])
 
     result = await session.execute(select(User).where(User.id == user_id))
@@ -183,7 +220,7 @@ async def require_user_access(user: User = Depends(get_current_user)) -> User:
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
 @auth_router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session)):
+async def register(body: RegisterRequest, background_tasks: BackgroundTasks, response: Response, session: AsyncSession = Depends(get_session)):
     existing = await session.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -245,15 +282,16 @@ async def register(body: RegisterRequest, background_tasks: BackgroundTasks, ses
             except Exception as e:
                 print(f"Error creating checkout URL: {e}")
 
+    set_auth_cookies(response, token)
+    
     return TokenResponse(
-        access_token=token, 
         is_email_verified=False,
         checkout_url=checkout_url
     )
 
 
 @auth_router.post("/verify", response_model=TokenResponse)
-async def verify_email(body: VerifyRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+async def verify_email(body: VerifyRequest, response: Response, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     if user.verification_code != body.code:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -266,11 +304,12 @@ async def verify_email(body: VerifyRequest, user: User = Depends(get_current_use
     await session.commit()
     
     token = create_access_token(user.id, user.email)
-    return TokenResponse(access_token=token, is_email_verified=True)
+    set_auth_cookies(response, token)
+    return TokenResponse(is_email_verified=True)
 
 
 @auth_router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)):
+async def login(body: LoginRequest, response: Response, session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
@@ -281,10 +320,15 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
         )
 
     token = create_access_token(user.id, user.email)
+    set_auth_cookies(response, token)
     return TokenResponse(
-        access_token=token,
         is_email_verified=user.is_email_verified
     )
+
+@auth_router.post("/logout")
+async def logout(response: Response):
+    clear_auth_cookies(response)
+    return {"success": True}
 
 
 @auth_router.get("/profile", response_model=ProfileResponse)

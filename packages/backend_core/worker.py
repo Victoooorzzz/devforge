@@ -32,7 +32,7 @@ async def acquire_job(session: AsyncSession, filter_app: str | None = None) -> S
     """Atomically lock and return the next available job."""
     instance_id = get_instance_id()
     
-    app_filter_sql = f"AND app_name = '{filter_app}'" if filter_app else ""
+    app_filter_sql = "AND app_name = :filter_app" if filter_app else ""
     
     # We use raw SQL for FOR UPDATE SKIP LOCKED
     query = f"""
@@ -53,7 +53,11 @@ async def acquire_job(session: AsyncSession, filter_app: str | None = None) -> S
         RETURNING *;
     """
     
-    result = await session.execute(text(query), {"instance_id": instance_id})
+    params = {"instance_id": instance_id}
+    if filter_app:
+        params["filter_app"] = filter_app
+        
+    result = await session.execute(text(query), params)
     row = result.fetchone()
     
     if row:

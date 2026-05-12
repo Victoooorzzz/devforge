@@ -1,11 +1,10 @@
 // packages/core/lib/auth.ts
 
-const TOKEN_KEY = "devforge_token";
+const TOKEN_KEY = "devforge_auth_status";
 
-export function setToken(token: string): void {
-  if (typeof window !== "undefined") {
-    document.cookie = `${TOKEN_KEY}=${token}; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax; Secure`;
-  }
+export function setToken(token?: string): void {
+  // Token is now set via HttpOnly cookie by backend.
+  // devforge_auth_status is also set by backend, so we don't strictly need to do anything here.
 }
 
 export function getToken(): string | null {
@@ -14,26 +13,32 @@ export function getToken(): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-export function removeToken(): void {
+export async function removeToken(): Promise<void> {
   if (typeof window !== "undefined") {
     document.cookie = `${TOKEN_KEY}=; path=/; max-age=0`;
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+    } catch (e) {
+      // Ignore network errors on logout
+    }
   }
 }
 
 export function isAuthenticated(): boolean {
-  return getToken() !== null;
+  return getToken() === "true";
 }
 
 export async function fetchWithAuth(
   url: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const token = getToken();
   const headers = new Headers(options.headers);
 
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  // Use cookies for auth
+  options.credentials = "include";
 
   const response = await fetch(url, {
     ...options,
@@ -50,19 +55,19 @@ export async function fetchWithAuth(
   return response;
 }
 
-export async function login(email: string, password: string): Promise<{ success: boolean; token?: string; error?: string; isEmailVerified?: boolean }> {
+export async function login(email: string, password: string): Promise<{ success: boolean; error?: string; isEmailVerified?: boolean }> {
   try {
     const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
+      credentials: 'include'
     });
 
     const data = await response.json();
 
     if (response.ok) {
-      setToken(data.access_token);
-      return { success: true, token: data.access_token, isEmailVerified: data.is_email_verified };
+      return { success: true, isEmailVerified: data.is_email_verified };
     }
 
     return { success: false, error: data.detail || 'Login failed' };
@@ -77,14 +82,12 @@ export async function verify(code: string): Promise<{ success: boolean; error?: 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code }),
+      credentials: 'include'
     });
 
     const data = await response.json();
 
     if (response.ok) {
-      if (data.access_token) {
-        setToken(data.access_token);
-      }
       return { success: true };
     }
 
@@ -100,14 +103,12 @@ export async function register(data: { email: string; password: string; app_name
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
+      credentials: 'include'
     });
 
     const result = await response.json();
 
     if (response.ok) {
-      if (result.access_token) {
-        setToken(result.access_token);
-      }
       return { 
         success: true, 
         isEmailVerified: result.is_email_verified,

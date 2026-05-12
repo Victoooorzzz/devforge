@@ -1,6 +1,6 @@
-﻿"use client";
+"use client";
 import Link from "next/link";
-import { Check, Zap, Shield, BarChart3, ArrowRight, FileSpreadsheet, Download, Layers } from "lucide-react";
+import { Check, Zap, Shield, BarChart3, ArrowRight, FileSpreadsheet, Download, Layers, RefreshCw } from "lucide-react";
 
 export default function LandingPage() {
   return (
