@@ -30,7 +30,7 @@ from apps.feedbacklens.backend.main import (
 from apps.filecleaner.backend.main import (
     file_router,
     ProcessedFile,
-    cron_cleanup_files as file_cleanup_cron,
+    cron_cleanup_files,
 )
 
 # InvoiceFollow
@@ -40,7 +40,7 @@ from apps.invoicefollow.backend.main import (
     public_router as iv_public_router,
     Invoice,
     InvoiceSettings,
-    cron_enqueue_reminders as invoice_cron,
+    enqueue_overdue_reminders,
 )
 
 # PriceTrackr
@@ -50,7 +50,7 @@ from apps.pricetrackr.backend.main import (
     TrackedUrl,
     PriceHistory,
     TrackerSettings,
-    cron_update_prices as price_cron
+    run_price_updates,
 )
 
 # WebhookMonitor
@@ -61,8 +61,8 @@ from apps.webhookmonitor.backend.main import (
     WebhookEndpoint,
     WebhookRequest,
     WebhookSettings,
-    cron_silence_check as webhook_silence_cron,
-    cron_cleanup_logs as webhook_cleanup_cron
+    check_webhook_silences,
+    cleanup_old_logs,
 )
 
 # Admin
@@ -113,21 +113,20 @@ async def enqueue_periodic_tasks(authenticated: bool = Depends(verify_cron_secre
     
     # 1. PriceTrackr: Check which prices need updating
     try:
-        await price_cron()
+        await run_price_updates()
         results["pricetrackr"] = "enqueued"
     except Exception as e:
         results["pricetrackr"] = f"error: {str(e)}"
         
     # 2. InvoiceFollow: Check for overdue invoices
     try:
-        await invoice_cron()
+        await enqueue_overdue_reminders()
         results["invoicefollow"] = "enqueued"
     except Exception as e:
         results["invoicefollow"] = f"error: {str(e)}"
         
     # 3. FeedbackLens: Send weekly summaries (internally checks day of week)
     try:
-        from apps.feedbacklens.backend.main import weekly_summary_cron
         await weekly_summary_cron()
         results["feedbacklens"] = "enqueued"
     except Exception as e:
@@ -135,15 +134,15 @@ async def enqueue_periodic_tasks(authenticated: bool = Depends(verify_cron_secre
 
     # 4. WebhookMonitor: Silence checks and log cleanup
     try:
-        await webhook_silence_cron()
-        await webhook_cleanup_cron()
+        await check_webhook_silences()
+        await cleanup_old_logs()
         results["webhookmonitor"] = "enqueued"
     except Exception as e:
         results["webhookmonitor"] = f"error: {str(e)}"
 
     # 5. FileCleaner: Delete files older than 24h
     try:
-        count = await file_cleanup_cron()
+        count = await cron_cleanup_files()
         results["filecleaner"] = f"cleaned {count} files"
     except Exception as e:
         results["filecleaner"] = f"error: {str(e)}"

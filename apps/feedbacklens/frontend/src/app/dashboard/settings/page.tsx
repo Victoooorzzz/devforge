@@ -12,7 +12,7 @@ export default function SettingsPage() {
     has_access: false,
     trial_ends_at: null as string | null,
   });
-  const [feedbackSettings, setFeedbackSettings] = useState({ custom_prompt: "", negative_threshold: 0.5 });
+  const [feedbackSettings, setFeedbackSettings] = useState({ custom_prompt: "", negative_threshold: 0.5, alert_email: "", weekly_summary_enabled: true });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -36,10 +36,12 @@ export default function SettingsPage() {
         });
       }),
       apiClient.get("/settings/feedback-prefs").then((r) => {
-        const data = r.data as { custom_prompt: string; negative_threshold: number };
+        const data = r.data as { custom_prompt: string; negative_threshold: number; alert_email: string; weekly_summary_enabled: boolean };
         setFeedbackSettings({
           custom_prompt: data.custom_prompt || "",
-          negative_threshold: data.negative_threshold ?? 0.5
+          negative_threshold: data.negative_threshold ?? 0.5,
+          alert_email: data.alert_email || "",
+          weekly_summary_enabled: data.weekly_summary_enabled ?? true,
         });
       })
     ]).finally(() => setLoading(false));
@@ -62,7 +64,9 @@ export default function SettingsPage() {
     try {
       await apiClient.put("/settings/feedback-prefs", { 
         custom_prompt: feedbackSettings.custom_prompt,
-        negative_threshold: Number(feedbackSettings.negative_threshold)
+        negative_threshold: Number(feedbackSettings.negative_threshold),
+        alert_email: feedbackSettings.alert_email,
+        weekly_summary_enabled: feedbackSettings.weekly_summary_enabled,
       });
       alert("Feedback preferences updated successfully");
     } catch (err: any) {
@@ -199,6 +203,34 @@ export default function SettingsPage() {
               className="w-full accent-[var(--color-primary)]" 
             />
             <p className="text-xs mt-1.5" style={{ color: "var(--color-text-secondary)" }}>Sentiment score below this value will be flagged as negative (0.0 to 1.0).</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Alert Email</label>
+            <input
+              type="email"
+              value={feedbackSettings.alert_email}
+              onChange={(e) => setFeedbackSettings({ ...feedbackSettings, alert_email: e.target.value })}
+              className="input-field w-full"
+              placeholder="you@example.com"
+            />
+            <p className="text-xs mt-1.5" style={{ color: "var(--color-text-secondary)" }}>Weekly digest emails will be sent to this address.</p>
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>Weekly Summary Email</p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--color-text-secondary)" }}>Receive a weekly digest of your feedback activity.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFeedbackSettings({ ...feedbackSettings, weekly_summary_enabled: !feedbackSettings.weekly_summary_enabled })}
+              className="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200"
+              style={{ backgroundColor: feedbackSettings.weekly_summary_enabled ? "var(--color-accent)" : "var(--color-border)" }}
+            >
+              <span
+                className="inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200"
+                style={{ transform: feedbackSettings.weekly_summary_enabled ? "translateX(20px)" : "translateX(0)" }}
+              />
+            </button>
           </div>
           <button type="submit" className="btn-primary">Save AI Preferences</button>
         </form>

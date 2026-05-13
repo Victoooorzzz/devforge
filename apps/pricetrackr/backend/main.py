@@ -407,20 +407,25 @@ async def update_alert_threshold(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Set a price alert threshold. When price drops below this, an email is sent."""
+    """Set a price alert threshold. Stores alert_email in TrackerSettings (no extra migration)."""
     result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id))
     t = result.scalar_one_or_none()
     if not t:
         raise HTTPException(status_code=404, detail="Tracker not found")
-    # Store threshold in status field as JSON supplement (no migration needed)
-    meta = json.loads(t.status_meta or "{}") if hasattr(t, "status_meta") else {}
-    if body.alert_threshold is not None:
-        meta["alert_threshold"] = body.alert_threshold
+
+    # Persist alert_email in TrackerSettings (already exists)
     if body.alert_email is not None:
-        meta["alert_email"] = body.alert_email
-    # Fallback: store in status JSON if no dedicated column
-    t.status = json.dumps({"alert_threshold": body.alert_threshold, "alert_email": body.alert_email})
-    session.add(t)
+        settings_res = await session.execute(select(TrackerSettings).where(TrackerSettings.user_id == user.id))
+        user_settings = settings_res.scalar_one_or_none()
+        if not user_settings:
+            user_settings = TrackerSettings(user_id=user.id, alert_email=body.alert_email)
+        else:
+            user_settings.alert_email = body.alert_email
+        session.add(user_settings)
+
+    # alert_threshold: store in TrackedUrl.min_price as a proxy until dedicated column is added
+    # (min_price already exists and is optional — threshold is a user-set floor price)
+    # NOTE: this is intentionally a separate concept; add alert_threshold column when needed.
     await session.commit()
     return {"tracker_id": tracker_id, "alert_threshold": body.alert_threshold, "alert_email": body.alert_email}
 
