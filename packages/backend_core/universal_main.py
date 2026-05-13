@@ -98,17 +98,16 @@ app = create_app(
     domain_routers=all_domain_routers
 )
 
+from fastapi import Header, Depends
+from backend_core.worker import verify_cron_secret
+
 # --- Master Enqueuer for cron-job.org ---
 @app.post("/worker/enqueue-periodic", tags=["Worker"])
-async def enqueue_periodic_tasks(authorization: str = None):
+async def enqueue_periodic_tasks(authenticated: bool = Depends(verify_cron_secret)):
     """
     Master trigger for all periodic tasks across all products.
     Should be called every hour by cron-job.org.
     """
-    expected = settings.cron_secret
-    if expected and authorization != f"Bearer {expected}":
-        from fastapi import HTTPException
-        raise HTTPException(status_code=401, detail="Unauthorized")
     
     results = {}
     
