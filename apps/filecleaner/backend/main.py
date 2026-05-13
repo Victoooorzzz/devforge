@@ -31,7 +31,7 @@ async def cron_cleanup_files():
     Periodic task to delete files older than 24 hours from S3/R2 and database.
     """
     from datetime import timedelta
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.utcnow() - timedelta(hours=24)
     
     async with get_managed_session() as session:
         result = await session.execute(

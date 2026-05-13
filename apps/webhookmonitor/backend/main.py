@@ -310,7 +310,7 @@ async def cleanup_old_logs():
     Prevents the table from growing indefinitely.
     """
     async with get_managed_session() as session:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        cutoff = datetime.utcnow() - timedelta(days=30)
         result = await session.execute(
             delete(WebhookRequest).where(WebhookRequest.received_at < cutoff)
         )

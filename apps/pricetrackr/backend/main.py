@@ -118,7 +118,7 @@ async def run_price_updates():
     """Cron job: enqueues price checks for trackers whose next_check_at <= NOW()."""
     from datetime import timedelta
     async with get_managed_session() as session:
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         # Only fetch trackers that are due for a check
         result = await session.execute(
             select(TrackedUrl).where(
