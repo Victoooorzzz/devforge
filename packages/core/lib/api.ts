@@ -25,10 +25,10 @@ async function request<T>(
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
     ...(options.headers as Record<string, string>),
   };
 
-  // Use HttpOnly cookies
   options.credentials = "include";
 
   const response = await fetch(`${API_BASE}${path}`, {

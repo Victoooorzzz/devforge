@@ -285,6 +285,7 @@ async def register(body: RegisterRequest, background_tasks: BackgroundTasks, res
     set_auth_cookies(response, token)
     
     return TokenResponse(
+        access_token=token,
         is_email_verified=False,
         checkout_url=checkout_url
     )

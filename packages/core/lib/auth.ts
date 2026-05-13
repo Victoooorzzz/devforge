@@ -1,21 +1,24 @@
 // packages/core/lib/auth.ts
 
-const TOKEN_KEY = "devforge_auth_status";
+const JWT_KEY = "devforge_token";
 
 export function setToken(token?: string): void {
-  // Token is now set via HttpOnly cookie by backend.
-  // devforge_auth_status is also set by backend, so we don't strictly need to do anything here.
+  if (typeof window === "undefined" || !token) return;
+  localStorage.setItem(JWT_KEY, token);
 }
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  const match = document.cookie.match(new RegExp(`(?:^|; )${TOKEN_KEY}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : null;
+  return localStorage.getItem(JWT_KEY);
+}
+
+export function isTokenSaved(): boolean {
+  return !!getToken();
 }
 
 export async function removeToken(): Promise<void> {
   if (typeof window !== "undefined") {
-    document.cookie = `${TOKEN_KEY}=; path=/; max-age=0`;
+    localStorage.removeItem(JWT_KEY);
     try {
       await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/logout`, {
         method: 'POST',
@@ -28,7 +31,7 @@ export async function removeToken(): Promise<void> {
 }
 
 export function isAuthenticated(): boolean {
-  return getToken() === "true";
+  return !!getToken();
 }
 
 export async function fetchWithAuth(
@@ -78,16 +81,22 @@ export async function login(email: string, password: string): Promise<{ success:
 
 export async function verify(code: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const response = await fetchWithAuth(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/verify`, {
+    const token = getToken();
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/verify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({ code }),
-      credentials: 'include'
+      credentials: 'include',
     });
 
     const data = await response.json();
 
     if (response.ok) {
+      // Refresh token from response if backend sends a new one
+      if (data.access_token) setToken(data.access_token);
       return { success: true };
     }
 
@@ -109,6 +118,8 @@ export async function register(data: { email: string; password: string; app_name
     const result = await response.json();
 
     if (response.ok) {
+      // Save JWT to localStorage so /auth/verify can send it as Authorization: Bearer
+      if (result.access_token) setToken(result.access_token);
       return { 
         success: true, 
         isEmailVerified: result.is_email_verified,
