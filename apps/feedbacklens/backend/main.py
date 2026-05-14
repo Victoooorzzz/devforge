@@ -336,7 +336,7 @@ register_job_handler("feedbacklens", "analyze_feedback", process_feedback_analys
 @feedback_router.get("/summary/weekly")
 async def get_weekly_summary(user: User = Depends(require_user_access), session: AsyncSession = Depends(get_session)):
     """Returns a structured weekly digest for the dashboard."""
-    one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    one_week_ago = datetime.utcnow() - timedelta(days=7)
     result = await session.execute(
         select(FeedbackEntry).where(
             FeedbackEntry.user_id == user.id,
@@ -399,7 +399,7 @@ async def weekly_summary_cron():
         )
         all_prefs = prefs_result.scalars().all()
 
-        one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+        one_week_ago = datetime.utcnow() - timedelta(days=7)
 
         for prefs in all_prefs:
             if not prefs.alert_email:

@@ -70,6 +70,7 @@ export async function login(email: string, password: string): Promise<{ success:
     const data = await response.json();
 
     if (response.ok) {
+      if (data.access_token) setToken(data.access_token);
       return { success: true, isEmailVerified: data.is_email_verified };
     }
 

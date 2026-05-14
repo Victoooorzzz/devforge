@@ -269,7 +269,7 @@ async def check_webhook_silences():
             )
             last_req = last_res.scalar_one_or_none()
 
-            now = datetime.now(timezone.utc)
+            now = datetime.utcnow()
             silence_threshold = timedelta(minutes=ws.expected_interval_minutes * 2)
 
             if last_req is None:

@@ -139,7 +139,7 @@ async def run_price_updates():
             session.add(job)
             
             # Anti-duplicate: Set next check to future immediately
-            t.next_check_at = datetime.now(timezone.utc) + timedelta(hours=t.check_frequency_hours)
+            t.next_check_at = datetime.utcnow() + timedelta(hours=t.check_frequency_hours)
             session.add(t)
 
         await session.commit()
@@ -160,7 +160,7 @@ async def process_price_check(payload: dict):
         try:
             new_price = await scraper.fetch_price(t.url)
             new_stock = await scraper.fetch_stock(t.url)
-            now = datetime.now(timezone.utc)
+            now = datetime.utcnow()
 
             price_changed = new_price is not None and new_price != t.current_price
             stock_changed = new_stock is not None and new_stock != t.in_stock
@@ -252,9 +252,9 @@ async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_u
         current_price=initial_price,
         min_price=initial_price,
         in_stock=initial_stock,
-        last_checked=datetime.now(timezone.utc) if initial_price else None,
+        last_checked=datetime.utcnow() if initial_price else None,
         check_frequency_hours=freq_hours,
-        next_check_at=datetime.now(timezone.utc) + timedelta(hours=freq_hours),
+        next_check_at=datetime.utcnow() + timedelta(hours=freq_hours),
     )
     session.add(t)
     await session.flush()
@@ -324,7 +324,7 @@ async def update_tracker_frequency(
 
     from datetime import timedelta
     t.check_frequency_hours = body.hours
-    t.next_check_at = datetime.now(timezone.utc) + timedelta(hours=body.hours)
+    t.next_check_at = datetime.utcnow() + timedelta(hours=body.hours)
     session.add(t)
     await session.flush()
     return {

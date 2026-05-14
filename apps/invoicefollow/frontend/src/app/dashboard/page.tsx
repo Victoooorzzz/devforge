@@ -87,7 +87,7 @@ export default function DashboardPage() {
     setLoadingIds(prev => new Set(prev).add(id));
     trackEvent("feature_used", { feature_name: "pause_invoice_reminders" });
     try {
-      const { data } = await apiClient.put(`/invoices/${id}/pause-reminders`);
+      const { data } = await apiClient.put<{ payment_promise_date: string }>(`/invoices/${id}/pause-reminders`);
       setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, cron_paused: true, payment_promise_date: data.payment_promise_date } : inv));
     } catch { alert("Error al pausar recordatorios"); }
     finally { setLoadingIds(prev => { const s = new Set(prev); s.delete(id); return s; }); }

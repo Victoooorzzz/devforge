@@ -306,7 +306,40 @@ async def verify_email(body: VerifyRequest, response: Response, user: User = Dep
     
     token = create_access_token(user.id, user.email)
     set_auth_cookies(response, token)
-    return TokenResponse(is_email_verified=True)
+    return TokenResponse(access_token=token, is_email_verified=True)
+
+
+@auth_router.post("/resend-code")
+async def resend_verification_code(
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    """Generates a new verification code and resends the verification email."""
+    if user.is_email_verified:
+        raise HTTPException(status_code=400, detail="Account is already verified")
+
+    v_code = str(random.randint(100000, 999999))
+    user.verification_code = v_code
+    session.add(user)
+    await session.commit()
+
+    background_tasks.add_task(
+        send_email,
+        to=user.email,
+        subject="Tu nuevo código de verificación — DevForge",
+        html_body=f"""
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #6366f1; border-radius: 12px;">
+            <h2 style="color: #4338ca;">Nuevo código de verificación</h2>
+            <p>Tu nuevo código es:</p>
+            <div style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #6366f1; margin: 20px 0;">
+                {v_code}
+            </div>
+            <p>Este código expira en 30 minutos.</p>
+        </div>
+        """
+    )
+    return {"success": True}
 
 
 @auth_router.post("/login", response_model=TokenResponse)
@@ -323,6 +356,7 @@ async def login(body: LoginRequest, response: Response, session: AsyncSession = 
     token = create_access_token(user.id, user.email)
     set_auth_cookies(response, token)
     return TokenResponse(
+        access_token=token,
         is_email_verified=user.is_email_verified
     )
 

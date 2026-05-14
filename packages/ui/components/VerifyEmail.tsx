@@ -4,10 +4,16 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { verify } from "@devforge/core";
 
+const API_BASE = typeof window !== "undefined"
+  ? (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")
+  : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
+
 export function VerifyEmail({ onVerified }: { onVerified?: () => void }) {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
+  const [resendDone, setResendDone] = useState(false);
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -32,6 +38,28 @@ export function VerifyEmail({ onVerified }: { onVerified?: () => void }) {
       setError(result.error || "Código inválido");
     }
     setLoading(false);
+  };
+
+  const handleResend = async () => {
+    setResending(true);
+    setResendDone(false);
+    setError(null);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
+      await fetch(`${API_BASE}/auth/resend-code`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: "include",
+      });
+      setResendDone(true);
+    } catch {
+      setError("No se pudo reenviar el código. Intenta de nuevo.");
+    } finally {
+      setResending(false);
+    }
   };
 
   return (
@@ -97,12 +125,16 @@ export function VerifyEmail({ onVerified }: { onVerified?: () => void }) {
             ¿No recibiste el código?{" "}
             <button 
               type="button"
-              className="text-indigo-400 hover:text-indigo-300 font-medium transition-colors"
-              onClick={() => {/* Add resend logic if needed */}}
+              disabled={resending}
+              className="text-indigo-400 hover:text-indigo-300 font-medium transition-colors disabled:opacity-50"
+              onClick={handleResend}
             >
-              Reenviar código
+              {resending ? "Enviando..." : "Reenviar código"}
             </button>
           </p>
+          {resendDone && (
+            <p className="text-green-400 text-xs mt-2">¡Código reenviado! Revisa tu correo.</p>
+          )}
         </div>
       </div>
     </div>

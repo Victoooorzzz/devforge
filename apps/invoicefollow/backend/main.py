@@ -255,7 +255,7 @@ async def enqueue_overdue_reminders():
             ml = InvoiceMagicLink(
                 token=magic_token,
                 invoice_id=str(inv.id),
-                expires_at=datetime.now(timezone.utc) + timedelta(hours=24)
+                expires_at=datetime.utcnow() + timedelta(hours=24)
             )
             session.add(ml)
             
@@ -365,7 +365,7 @@ async def download_invoice_magic_link(token: str, session: AsyncSession = Depend
     res = await session.execute(select(InvoiceMagicLink).where(InvoiceMagicLink.token == token))
     ml = res.scalar_one_or_none()
     
-    if not ml or ml.used or ml.expires_at < datetime.now(timezone.utc):
+    if not ml or ml.used or ml.expires_at < datetime.utcnow():
         raise HTTPException(status_code=403, detail="Link expirado o inválido")
         
     inv_res = await session.execute(select(Invoice).where(Invoice.id == int(ml.invoice_id)))
