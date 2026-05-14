@@ -71,6 +71,23 @@ export async function login(email: string, password: string): Promise<{ success:
 
     if (response.ok) {
       if (data.access_token) setToken(data.access_token);
+
+      // If account not verified, auto-send a fresh code before redirecting to /verify
+      if (data.is_email_verified === false) {
+        try {
+          await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/resend-code`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(data.access_token ? { 'Authorization': `Bearer ${data.access_token}` } : {}),
+            },
+            credentials: 'include',
+          });
+        } catch {
+          // Non-blocking — user can still click resend manually on /verify
+        }
+      }
+
       return { success: true, isEmailVerified: data.is_email_verified };
     }
 
