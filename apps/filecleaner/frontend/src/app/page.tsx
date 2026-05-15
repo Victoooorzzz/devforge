@@ -1,6 +1,141 @@
 "use client";
 import Link from "next/link";
 import { Check, Zap, Shield, BarChart3, ArrowRight, FileSpreadsheet, Download, Layers, RefreshCw } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+
+function FileCleanerDemo() {
+  const [phase, setPhase] = useState<"idle" | "scanning" | "cleaning" | "done">("idle");
+  const [progress, setProgress] = useState(0);
+  const [nullsFixed, setNullsFixed] = useState(0);
+  const [dupsFixed, setDupsFixed] = useState(0);
+  const [formatsFixed, setFormatsFixed] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const TOTAL_NULLS = 3402;
+  const TOTAL_DUPS = 847;
+  const TOTAL_FORMATS = 312;
+  const DURATION_MS = 3200;
+  const TICK_MS = 40;
+
+  function startDemo() {
+    if (phase === "scanning" || phase === "cleaning") return;
+    setPhase("scanning");
+    setProgress(0);
+    setNullsFixed(0);
+    setDupsFixed(0);
+    setFormatsFixed(0);
+
+    let elapsed = 0;
+    intervalRef.current = setInterval(() => {
+      elapsed += TICK_MS;
+      const pct = Math.min(elapsed / DURATION_MS, 1);
+      setProgress(Math.round(pct * 100));
+      setNullsFixed(Math.round(pct * TOTAL_NULLS));
+      setDupsFixed(Math.round(pct * TOTAL_DUPS));
+      setFormatsFixed(Math.round(pct * TOTAL_FORMATS));
+
+      if (pct >= 0.3 && phase !== "cleaning") setPhase("cleaning");
+
+      if (pct >= 1) {
+        clearInterval(intervalRef.current!);
+        setPhase("done");
+      }
+    }, TICK_MS);
+  }
+
+  useEffect(() => () => { if (intervalRef.current) clearInterval(intervalRef.current); }, []);
+
+  const isRunning = phase === "scanning" || phase === "cleaning";
+  const isDone = phase === "done";
+
+  return (
+    <div className="max-w-3xl mx-auto mb-16 glass p-6 md:p-8 rounded-2xl border border-white/10 bg-black/50">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
+            <FileSpreadsheet size={18} className="text-accent" />
+          </div>
+          <div className="text-left">
+            <p className="text-[10px] font-mono text-neutral-500 uppercase tracking-tighter">Dataset</p>
+            <p className="text-sm font-bold">sales_data_2024.csv</p>
+          </div>
+        </div>
+        <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
+          isDone ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
+          : isRunning ? "bg-accent/10 border border-accent/20 text-accent animate-pulse"
+          : "bg-white/5 border border-white/10 text-neutral-400"
+        }`}>
+          {isDone ? "✓ Complete" : isRunning ? "Processing..." : "Ready"}
+        </div>
+      </div>
+
+      {/* Stats Grid */}
+      <div className="grid grid-cols-3 gap-3 mb-6">
+        {[
+          { label: "NULL values", total: TOTAL_NULLS, fixed: nullsFixed, color: "red" },
+          { label: "Duplicates", total: TOTAL_DUPS, fixed: dupsFixed, color: "amber" },
+          { label: "Format errors", total: TOTAL_FORMATS, fixed: formatsFixed, color: "orange" },
+        ].map(({ label, total, fixed, color }) => (
+          <div key={label} className="bg-black/40 rounded-xl p-3 border border-white/5">
+            <p className="text-[9px] font-mono text-neutral-500 uppercase mb-1">{label}</p>
+            <p className={`text-lg font-bold font-mono ${isDone ? "text-emerald-400" : isRunning ? `text-${color}-400` : "text-white"}`}>
+              {isDone ? 0 : total - fixed}
+            </p>
+            {isRunning && (
+              <p className="text-[9px] text-emerald-500 font-mono">↓ {fixed} fixed</p>
+            )}
+            {isDone && (
+              <p className="text-[9px] text-emerald-500 font-mono">↓ {total} fixed</p>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Progress Bar */}
+      <div className="mb-6">
+        <div className="flex justify-between text-[10px] font-mono text-neutral-500 uppercase mb-2">
+          <span>{phase === "idle" ? "Awaiting job" : phase === "done" ? "Cleaning complete" : "Scanning & cleaning..."}</span>
+          <span className={isDone ? "text-emerald-400" : "text-accent"}>{progress}%</span>
+        </div>
+        <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${isDone ? "bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.6)]" : "bg-accent shadow-[0_0_12px_rgba(130,19,70,0.6)]"}`}
+            style={{ width: `${progress}%`, transition: "width 40ms linear" }}
+          />
+        </div>
+      </div>
+
+      {/* Result Row */}
+      {isDone && (
+        <div className="flex items-center justify-between p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 mb-6">
+          <div className="text-left">
+            <p className="text-xs font-mono text-neutral-400">Output file</p>
+            <p className="text-sm font-bold text-emerald-400">✅ sales_data_2024_clean.csv</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs font-mono text-neutral-400">Size reduction</p>
+            <p className="text-sm font-bold text-emerald-400">4.2 MB → 1.1 MB</p>
+          </div>
+        </div>
+      )}
+
+      {/* CTA Button */}
+      <button
+        onClick={startDemo}
+        disabled={isRunning}
+        className={`w-full py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+          isRunning ? "bg-white/5 text-neutral-500 cursor-not-allowed"
+          : isDone ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+          : "bg-accent text-black hover:bg-accent/90"
+        }`}
+      >
+        <RefreshCw size={14} className={isRunning ? "animate-spin" : ""} />
+        {isDone ? "Run Again" : isRunning ? "Cleaning in progress..." : "▶ Run Demo — No signup needed"}
+      </button>
+    </div>
+  );
+}
 
 export default function LandingPage() {
   return (
@@ -27,48 +162,20 @@ export default function LandingPage() {
       <section className="pt-32 pb-20 px-6 min-h-[90vh] flex flex-col items-center justify-center relative overflow-hidden">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-[radial-gradient(circle_at_center,rgba(130,19,70,0.08)_0,transparent_70%)] pointer-events-none"></div>
         
-        <div className="max-w-6xl mx-auto w-full text-center mb-16 relative z-10">
+        <div className="max-w-6xl mx-auto w-full text-center mb-10 relative z-10">
           <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent uppercase">
             Industrial-Grade Data Cleaning
           </h1>
           <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto mb-12">
             Transform chaotic payloads into ready-to-use intelligence. No more duplicates, nulls, or broken formats.
           </p>
-          
-          {/* BEFORE -> AFTER VISUAL */}
-          <div className="flex flex-col md:flex-row items-center justify-center gap-8 md:gap-16 mb-16">
-            <div className="glass p-6 rounded-xl border border-red-500/20 w-64 text-left relative">
-              <div className="absolute -top-3 -right-3 bg-red-500 text-[10px] font-bold px-2 py-0.5 rounded-full">MESSY</div>
-              <p className="text-xs font-mono text-neutral-500 mb-2">📄 messy.csv</p>
-              <div className="space-y-1 text-sm font-mono">
-                <p className="text-white">12,453 rows</p>
-                <p className="text-red-400">NULL: 3,402</p>
-                <p className="text-red-400">Duplicates: 847</p>
-                <p className="text-red-400">Format: MIXED</p>
-                <p className="mt-4 text-neutral-500 line-through">4.2 MB</p>
-              </div>
-            </div>
-            
-            <div className="hidden md:block">
-              <ArrowRight className="text-accent animate-pulse" size={48} />
-            </div>
 
-            <div className="glass p-6 rounded-xl border border-emerald-500/20 w-64 text-left relative">
-              <div className="absolute -top-3 -right-3 bg-emerald-500 text-[10px] font-bold px-2 py-0.5 rounded-full">CLEAN</div>
-              <p className="text-xs font-mono text-neutral-500 mb-2">✅ clean.csv</p>
-              <div className="space-y-1 text-sm font-mono">
-                <p className="text-white">12,453 rows</p>
-                <p className="text-emerald-400">NULL: 0</p>
-                <p className="text-emerald-400">Duplicates: 0</p>
-                <p className="text-emerald-400">Format: ISO</p>
-                <p className="mt-4 text-emerald-500 font-bold">1.1 MB</p>
-              </div>
-            </div>
-          </div>
+          {/* LIVE DEMO */}
+          <FileCleanerDemo />
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link href="/demo" className="btn-primary px-10 py-4 text-lg shadow-[0_0_30px_rgba(130,19,70,0.4)]">
-              Try Live Demo — No signup required
+              Try Full Demo — No signup required
             </Link>
           </div>
         </div>
@@ -102,52 +209,6 @@ export default function LandingPage() {
               </div>
               <h4 className="text-xl font-bold mb-3">3. Download</h4>
               <p className="text-neutral-400 text-sm">Get your cleaned data instantly in CSV or Excel format.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* LIVE EXAMPLE */}
-      <section className="py-24 px-6 relative overflow-hidden">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-[radial-gradient(circle_at_bottom,rgba(130,19,70,0.05)_0,transparent_70%)] pointer-events-none"></div>
-        <div className="max-w-5xl mx-auto glass p-8 md:p-12 rounded-[2.5rem] border border-white/10 relative overflow-hidden group">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-12 relative z-10">
-            <div className="flex-1">
-              <div className="inline-flex items-center gap-2 bg-accent/10 text-accent px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-6">
-                <RefreshCw size={12} className="animate-spin-slow" /> Interactive Example
-              </div>
-              <h3 className="text-3xl md:text-4xl font-bold mb-6">See the transformation.</h3>
-              <div className="space-y-4 text-neutral-400 mb-10">
-                <div className="flex items-center gap-3">
-                  <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                  <p className="text-sm">Detected <span className="text-white font-bold">153 duplicates</span> and <span className="text-white font-bold">42 format errors</span></p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                  <p className="text-sm">Saved <span className="text-white font-bold">12.4 MB</span> of cloud storage space</p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-4">
-                <Link href="/demo" className="px-6 py-3 bg-white text-black rounded-xl text-sm font-bold hover:bg-neutral-200 transition-colors flex items-center gap-2">
-                  Launch Demo Workspace <ArrowRight size={16} />
-                </Link>
-                <button className="px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-bold transition-colors border border-white/5">
-                  View Sample Report
-                </button>
-              </div>
-            </div>
-            <div className="w-full md:w-5/12 aspect-square bg-black/40 rounded-3xl border border-white/5 flex items-center justify-center relative group-hover:border-accent/20 transition-colors">
-              <div className="absolute inset-0 bg-gradient-to-br from-accent/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-              <BarChart3 className="text-accent/20 group-hover:text-accent/40 transition-colors" size={120} />
-              <div className="absolute bottom-6 left-6 right-6 glass p-4 rounded-xl border border-white/10 backdrop-blur-md">
-                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-neutral-500 mb-2">
-                    <span>Processing efficiency</span>
-                    <span className="text-emerald-500">+94.2%</span>
-                </div>
-                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-                    <div className="w-[94%] h-full bg-emerald-500 rounded-full shadow-[0_0_10px_rgba(16,185,129,0.5)]"></div>
-                </div>
-              </div>
             </div>
           </div>
         </div>

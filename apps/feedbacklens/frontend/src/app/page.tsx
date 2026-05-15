@@ -1,6 +1,202 @@
-﻿"use client";
+"use client";
 import Link from "next/link";
-import { Check, Zap, MessageSquare, ThumbsUp, ThumbsDown, BarChart3, Brain, Share2, ArrowRight, Activity } from "lucide-react";
+import { Check, MessageSquare, ThumbsUp, ThumbsDown, BarChart3, Brain, Share2, Activity } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+
+type FeedbackEntry = {
+  text: string;
+  sentiment: "positive" | "negative" | "neutral";
+  score: number;
+  themes: string[];
+};
+
+const FEEDBACK_QUEUE: FeedbackEntry[] = [
+  {
+    text: "The new performance update is incredible. My workflow is 2x faster now.",
+    sentiment: "positive",
+    score: 94,
+    themes: ["#Performance", "#UX"],
+  },
+  {
+    text: "Export feature keeps failing on large CSV files. Please fix this bug.",
+    sentiment: "negative",
+    score: 12,
+    themes: ["#Bug", "#Export"],
+  },
+  {
+    text: "Dashboard is clean but I wish there was a dark mode option.",
+    sentiment: "neutral",
+    score: 50,
+    themes: ["#UI", "#Feature-Request"],
+  },
+  {
+    text: "Absolutely love the AI summaries. Saves me hours every week!",
+    sentiment: "positive",
+    score: 97,
+    themes: ["#AI", "#Productivity"],
+  },
+  {
+    text: "Onboarding was confusing at first but support team was amazing.",
+    sentiment: "neutral",
+    score: 58,
+    themes: ["#Onboarding", "#Support"],
+  },
+];
+
+function FeedbackLensDemo() {
+  const [processed, setProcessed] = useState<FeedbackEntry[]>([]);
+  const [current, setCurrent] = useState<FeedbackEntry | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [done, setDone] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const queueRef = useRef<FeedbackEntry[]>([...FEEDBACK_QUEUE]);
+
+  function runAnalysis() {
+    if (analyzing) return;
+    setProcessed([]);
+    setCurrent(null);
+    setDone(false);
+    setAnalyzing(true);
+    queueRef.current = [...FEEDBACK_QUEUE];
+    let i = 0;
+
+    function processNext() {
+      if (i >= FEEDBACK_QUEUE.length) {
+        setAnalyzing(false);
+        setCurrent(null);
+        setDone(true);
+        return;
+      }
+      const entry = FEEDBACK_QUEUE[i];
+      setCurrent(entry);
+      setTimeout(() => {
+        setProcessed(prev => [entry, ...prev]);
+        setCurrent(null);
+        i++;
+        setTimeout(processNext, 400);
+      }, 1100);
+    }
+
+    setTimeout(processNext, 300);
+  }
+
+  useEffect(() => {
+    runAnalysis();
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, []);
+
+  const positiveCount = processed.filter(f => f.sentiment === "positive").length;
+  const negativeCount = processed.filter(f => f.sentiment === "negative").length;
+  const avgScore = processed.length ? Math.round(processed.reduce((a, f) => a + f.score, 0) / processed.length) : 0;
+
+  const sentimentColor = {
+    positive: "border-emerald-500/30 bg-emerald-500/5",
+    negative: "border-red-500/30 bg-red-500/5",
+    neutral: "border-blue-500/20 bg-blue-500/5",
+  };
+  const sentimentIcon = {
+    positive: <ThumbsUp size={11} className="text-emerald-400 flex-shrink-0" />,
+    negative: <ThumbsDown size={11} className="text-red-400 flex-shrink-0" />,
+    neutral: <MessageSquare size={11} className="text-blue-400 flex-shrink-0" />,
+  };
+  const sentimentLabel = {
+    positive: "text-emerald-400",
+    negative: "text-red-400",
+    neutral: "text-blue-400",
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto mb-16 glass p-6 md:p-8 rounded-2xl border border-white/10 bg-black/50">
+      {/* Stats Bar */}
+      <div className="grid grid-cols-3 gap-3 mb-6">
+        <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
+          <p className="text-[9px] font-mono text-neutral-500 uppercase mb-1">Processed</p>
+          <p className="text-xl font-bold font-mono text-white">{processed.length}<span className="text-neutral-600">/{FEEDBACK_QUEUE.length}</span></p>
+        </div>
+        <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
+          <p className="text-[9px] font-mono text-neutral-500 uppercase mb-1">Avg Score</p>
+          <p className={`text-xl font-bold font-mono ${avgScore >= 60 ? "text-emerald-400" : avgScore >= 40 ? "text-amber-400" : "text-red-400"}`}>
+            {processed.length ? avgScore : "—"}
+          </p>
+        </div>
+        <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
+          <p className="text-[9px] font-mono text-neutral-500 uppercase mb-1">Bugs Found</p>
+          <p className="text-xl font-bold font-mono text-red-400">{negativeCount}</p>
+        </div>
+      </div>
+
+      {/* Analyzing indicator */}
+      {current && (
+        <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 flex items-start gap-3 animate-pulse">
+          <Brain size={16} className="text-accent mt-0.5 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-mono text-accent uppercase tracking-widest mb-1">Analyzing...</p>
+            <p className="text-xs text-neutral-300 italic truncate">&ldquo;{current.text}&rdquo;</p>
+            <div className="mt-2 h-1 w-full bg-white/5 rounded-full overflow-hidden">
+              <div className="h-full bg-accent animate-[shimmer_1.5s_infinite] w-3/4" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Results list */}
+      <div className="space-y-2 max-h-64 overflow-y-auto mb-5 pr-1">
+        {processed.length === 0 && !current && !analyzing && !done && (
+          <p className="text-[10px] font-mono text-neutral-600 text-center py-8">No feedback analyzed yet.</p>
+        )}
+        {processed.map((entry, i) => (
+          <div key={i} className={`flex gap-3 items-start p-3 rounded-xl border text-left transition-all ${sentimentColor[entry.sentiment]}`}>
+            <div className="mt-0.5">{sentimentIcon[entry.sentiment]}</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-neutral-300 italic truncate">&ldquo;{entry.text}&rdquo;</p>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                <span className={`text-[9px] font-bold uppercase ${sentimentLabel[entry.sentiment]}`}>
+                  Score: {entry.score}/100
+                </span>
+                {entry.themes.map(t => (
+                  <span key={t} className="text-[8px] px-1.5 py-0.5 rounded-full bg-white/5 text-neutral-500 border border-white/5">{t}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Sentiment summary bar */}
+      {processed.length > 0 && (
+        <div className="mb-5">
+          <div className="flex justify-between text-[9px] font-mono text-neutral-500 uppercase mb-1.5">
+            <span>Sentiment breakdown</span>
+            <span>{positiveCount} positive · {negativeCount} negative</span>
+          </div>
+          <div className="w-full h-2 rounded-full bg-white/5 overflow-hidden flex">
+            <div
+              className="h-full bg-emerald-500 transition-all duration-500"
+              style={{ width: `${(positiveCount / processed.length) * 100}%` }}
+            />
+            <div
+              className="h-full bg-red-500 transition-all duration-500"
+              style={{ width: `${(negativeCount / processed.length) * 100}%` }}
+            />
+            <div className="h-full bg-blue-500 flex-1 transition-all duration-500" />
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={runAnalysis}
+        disabled={analyzing}
+        className={`w-full py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+          analyzing ? "bg-white/5 text-neutral-500 cursor-not-allowed"
+          : "bg-accent text-black hover:bg-accent/90"
+        }`}
+      >
+        <Brain size={14} />
+        {analyzing ? "Analyzing feedback..." : done ? "▶ Re-analyze" : "▶ Analyze Demo Feedback"}
+      </button>
+    </div>
+  );
+}
 
 export default function LandingPage() {
   return (
@@ -42,45 +238,8 @@ export default function LandingPage() {
             Transform thousands of reviews into actionable intelligence in seconds.
           </p>
 
-          {/* SENTIMENT VISUAL */}
-          <div className="max-w-4xl mx-auto mb-16 relative">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
-              <div className="glass p-6 rounded-xl border border-emerald-500/20 text-left bg-black/60 transform -rotate-2">
-                <div className="flex items-center gap-2 mb-3">
-                  <ThumbsUp size={16} className="text-emerald-500" />
-                  <span className="text-[10px] font-bold text-emerald-500 uppercase">Positive Sentiment</span>
-                </div>
-                <p className="text-xs text-neutral-400 italic mb-4">"The new performance update is incredible. My workflow is 2x faster now."</p>
-                <div className="flex gap-2">
-                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/5 text-neutral-500 border border-white/5">#UX</span>
-                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/5 text-neutral-500 border border-white/5">#Speed</span>
-                </div>
-              </div>
-
-              <div className="glass p-8 rounded-xl border border-accent/30 text-center bg-black/80 scale-110 z-20 shadow-[0_0_40px_rgba(130,19,70,0.2)]">
-                <Brain className="text-accent mx-auto mb-4 animate-pulse" size={40} />
-                <h4 className="text-sm font-bold uppercase tracking-widest mb-2">Analyzing Themes</h4>
-                <div className="space-y-2">
-                  <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                    <div className="h-full bg-accent w-3/4 animate-[shimmer_2s_infinite]"></div>
-                  </div>
-                  <p className="text-[10px] font-mono text-neutral-500 uppercase">Processing 1,402 entries...</p>
-                </div>
-              </div>
-
-              <div className="glass p-6 rounded-xl border border-red-500/20 text-left bg-black/60 transform rotate-2">
-                <div className="flex items-center gap-2 mb-3">
-                  <ThumbsDown size={16} className="text-red-500" />
-                  <span className="text-[10px] font-bold text-red-500 uppercase">Negative Sentiment</span>
-                </div>
-                <p className="text-xs text-neutral-400 italic mb-4">"The export feature keeps failing on large CSV files. Please fix this bug."</p>
-                <div className="flex gap-2">
-                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/5 text-neutral-500 border border-white/5">#Bug</span>
-                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/5 text-neutral-500 border border-white/5">#Export</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          {/* LIVE DEMO */}
+          <FeedbackLensDemo />
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link href="/register" className="btn-primary px-10 py-4 text-lg">

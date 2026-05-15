@@ -1,6 +1,199 @@
-﻿"use client";
+"use client";
 import Link from "next/link";
-import { Check, Zap, Eye, ShieldCheck, Terminal, Server, RefreshCcw, Code, ArrowRight, Activity } from "lucide-react";
+import { Check, Eye, Server, RefreshCcw, Activity } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+
+type WebhookEvent = {
+  id: string;
+  time: string;
+  method: "POST" | "GET";
+  path: string;
+  status: number;
+  detail?: string;
+  detailColor?: string;
+  payload?: string;
+};
+
+const INITIAL_EVENTS: WebhookEvent[] = [
+  {
+    id: "e1",
+    time: "14:02:11",
+    method: "POST",
+    path: "/api/webhooks/stripe",
+    status: 200,
+    payload: `{ "type": "payment_intent.succeeded", "amount": 9900, "currency": "usd" }`,
+  },
+  {
+    id: "e2",
+    time: "14:02:15",
+    method: "POST",
+    path: "/api/webhooks/github",
+    status: 500,
+    detail: "→ Critical: Webhook signature verification failed.",
+    detailColor: "text-red-400",
+  },
+];
+
+const STREAM_EVENTS: WebhookEvent[] = [
+  {
+    id: "e3",
+    time: "14:03:02",
+    method: "POST",
+    path: "/api/webhooks/shopify",
+    status: 200,
+    payload: `{ "topic": "orders/create", "order_id": 50312, "total": "149.00" }`,
+  },
+  {
+    id: "e4",
+    time: "14:03:44",
+    method: "POST",
+    path: "/api/webhooks/stripe",
+    status: 200,
+    payload: `{ "type": "customer.subscription.updated", "plan": "pro" }`,
+  },
+  {
+    id: "e5",
+    time: "14:04:11",
+    method: "POST",
+    path: "/api/webhooks/github",
+    status: 200,
+    payload: `{ "action": "push", "ref": "refs/heads/main", "commits": 3 }`,
+  },
+  {
+    id: "e6",
+    time: "14:04:58",
+    method: "POST",
+    path: "/api/webhooks/stripe",
+    status: 422,
+    detail: "→ Error: Invalid payload schema — missing `customer_id`.",
+    detailColor: "text-amber-400",
+  },
+];
+
+function WebhookMonitorDemo() {
+  const [events, setEvents] = useState<WebhookEvent[]>(INITIAL_EVENTS);
+  const [streaming, setStreaming] = useState(false);
+  const [streamIdx, setStreamIdx] = useState(0);
+  const [cursor, setCursor] = useState(true);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cursorRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    cursorRef.current = setInterval(() => setCursor(p => !p), 500);
+    return () => {
+      if (cursorRef.current) clearInterval(cursorRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [events]);
+
+  function startStream() {
+    if (streaming) return;
+    setStreaming(true);
+    setEvents(INITIAL_EVENTS);
+    setStreamIdx(0);
+    let idx = 0;
+    timerRef.current = setInterval(() => {
+      setEvents(prev => [...prev, STREAM_EVENTS[idx]]);
+      idx++;
+      if (idx >= STREAM_EVENTS.length) {
+        clearInterval(timerRef.current!);
+        setStreaming(false);
+        setStreamIdx(STREAM_EVENTS.length);
+      }
+    }, 1100);
+  }
+
+  function reset() {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setEvents(INITIAL_EVENTS);
+    setStreaming(false);
+    setStreamIdx(0);
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto mb-16 relative group">
+      <div className="absolute inset-0 bg-accent/10 blur-3xl rounded-full opacity-0 group-hover:opacity-60 transition-opacity duration-1000" />
+
+      <div className="relative glass rounded-xl border border-white/10 bg-black/60 overflow-hidden shadow-2xl">
+        {/* Title Bar */}
+        <div className="bg-white/5 border-b border-white/5 px-4 py-2 flex items-center justify-between">
+          <div className="flex gap-1.5">
+            <div className="w-2.5 h-2.5 rounded-full bg-red-500/50" />
+            <div className="w-2.5 h-2.5 rounded-full bg-amber-500/50" />
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/50" />
+          </div>
+          <div className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest">devforge-monitor --stream</div>
+          <div className="flex gap-2">
+            <div className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${streaming ? "bg-accent/20 text-accent animate-pulse" : "bg-white/5 text-neutral-500"}`}>
+              {streaming ? "● live" : "● idle"}
+            </div>
+          </div>
+        </div>
+
+        {/* Terminal Body */}
+        <div className="p-5 font-mono text-xs text-left space-y-3 min-h-[280px] max-h-[320px] overflow-y-auto">
+          {events.map((ev) => (
+            <div key={ev.id} className="space-y-1 animate-[fadeIn_0.3s_ease]">
+              <div className="flex gap-3 items-center flex-wrap">
+                <span className="text-neutral-500">{ev.time}</span>
+                <span className="text-emerald-400">{ev.method}</span>
+                <span className="text-white">{ev.path}</span>
+                <span className={`ml-auto font-bold ${ev.status >= 500 ? "text-red-500" : ev.status >= 400 ? "text-amber-400" : "text-emerald-500"}`}>
+                  {ev.status} {ev.status >= 500 ? "ERR" : ev.status >= 400 ? "WARN" : "OK"}
+                </span>
+              </div>
+              {ev.payload && (
+                <div className="pl-4 text-neutral-500 border-l border-white/5 text-[10px] truncate">
+                  <span className="text-accent">{"{"}</span> {ev.payload.replace(/[{}]/g, "").trim()} <span className="text-accent">{"}"}</span>
+                </div>
+              )}
+              {ev.detail && (
+                <div className={`pl-4 text-[10px] italic ${ev.detailColor ?? "text-neutral-400"}`}>{ev.detail}</div>
+              )}
+            </div>
+          ))}
+
+          <div className="flex gap-3 mt-4">
+            <span className="text-accent">&gt;</span>
+            <span className="text-white">Waiting for incoming requests...</span>
+            <div className={`w-1.5 h-3.5 bg-accent ${cursor ? "opacity-100" : "opacity-0"} transition-opacity`} />
+          </div>
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Footer Bar */}
+        <div className="bg-white/5 border-t border-white/5 px-4 py-2 flex items-center justify-between">
+          <span className="text-[9px] font-mono text-neutral-500">
+            {events.length} events captured — {events.filter(e => e.status >= 400).length} errors
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={reset}
+              className="text-[9px] font-bold text-neutral-500 hover:text-white transition-colors px-2 py-0.5 rounded border border-white/5 hover:border-white/20"
+            >
+              Clear
+            </button>
+            <button
+              onClick={startStream}
+              disabled={streaming}
+              className={`text-[9px] font-bold px-3 py-0.5 rounded transition-all ${
+                streaming ? "bg-white/5 text-neutral-500 cursor-not-allowed"
+                : "bg-accent text-black hover:bg-accent/90"
+              }`}
+            >
+              {streaming ? "Streaming..." : streamIdx > 0 ? "▶ Replay" : "▶ Simulate incoming"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function LandingPage() {
   return (
@@ -42,56 +235,8 @@ export default function LandingPage() {
             Industrial-grade payload inspection for elite engineering teams.
           </p>
 
-          {/* TERMINAL UI (Interactive Simulation) */}
-          <div className="max-w-4xl mx-auto mb-16 relative group">
-            <div className="absolute inset-0 bg-accent/10 blur-3xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-1000"></div>
-            
-            <div className="relative glass rounded-xl border border-white/10 bg-black/60 overflow-hidden shadow-2xl">
-              {/* Terminal Title Bar */}
-              <div className="bg-white/5 border-b border-white/5 px-4 py-2 flex items-center justify-between">
-                <div className="flex gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-red-500/40"></div>
-                  <div className="w-2.5 h-2.5 rounded-full bg-amber-500/40"></div>
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/40"></div>
-                </div>
-                <div className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest">devforge-monitor --stream</div>
-                <div className="w-10"></div>
-              </div>
-
-              {/* Terminal Body */}
-              <div className="p-6 font-mono text-xs text-left space-y-4 min-h-[320px]">
-                <div className="flex gap-4">
-                  <span className="text-neutral-500">14:02:11</span>
-                  <span className="text-emerald-400">POST</span>
-                  <span className="text-white">/api/webhooks/stripe</span>
-                  <span className="text-emerald-500 ml-auto font-bold">200 OK</span>
-                </div>
-                <div className="pl-16 text-neutral-400 border-l border-white/5 ml-4 pb-2">
-                  <span className="text-accent">{"{"}</span> <br />
-                  &nbsp;&nbsp;"type": "payment_intent.succeeded", <br />
-                  &nbsp;&nbsp;"amount": 9900, <br />
-                  &nbsp;&nbsp;"currency": "usd" <br />
-                  <span className="text-accent">{"}"}</span>
-                </div>
-
-                <div className="flex gap-4">
-                  <span className="text-neutral-500">14:02:15</span>
-                  <span className="text-emerald-400">POST</span>
-                  <span className="text-white">/api/webhooks/github</span>
-                  <span className="text-red-500 ml-auto font-bold uppercase tracking-tighter">500 ERR</span>
-                </div>
-                <div className="pl-16 text-red-400/80 italic">
-                  {"->"} Critical: Webhook signature verification failed.
-                </div>
-
-                <div className="flex gap-4 mt-6">
-                  <span className="text-accent animate-pulse">{">"}</span>
-                  <span className="text-white">Waiting for incoming requests...</span>
-                  <div className="w-2 h-4 bg-accent animate-pulse"></div>
-                </div>
-              </div>
-            </div>
-          </div>
+          {/* LIVE DEMO */}
+          <WebhookMonitorDemo />
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link href="/register" className="btn-primary px-10 py-4 text-lg">
@@ -191,4 +336,3 @@ export default function LandingPage() {
     </div>
   );
 }
-

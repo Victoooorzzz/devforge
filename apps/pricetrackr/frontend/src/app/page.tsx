@@ -1,6 +1,153 @@
-﻿"use client";
+"use client";
 import Link from "next/link";
-import { Check, Zap, Target, TrendingDown, Search, Bell, BarChart2, Globe, ArrowUpRight, Activity } from "lucide-react";
+import { Check, Search, Bell, BarChart2, Globe, Activity, TrendingDown } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+
+const PRICE_HISTORY = [
+  { time: "08:00", price: 1399 },
+  { time: "10:00", price: 1380 },
+  { time: "12:00", price: 1420 },
+  { time: "14:00", price: 1310 },
+  { time: "16:00", price: 1290 },
+  { time: "18:00", price: 1249 },
+];
+
+function PriceTrackrDemo() {
+  const [visiblePoints, setVisiblePoints] = useState(1);
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertDismissed, setAlertDismissed] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function startDemo() {
+    setVisiblePoints(1);
+    setAlertVisible(false);
+    setAlertDismissed(false);
+    let idx = 1;
+    timerRef.current = setInterval(() => {
+      idx++;
+      setVisiblePoints(idx);
+      if (idx >= PRICE_HISTORY.length) {
+        clearInterval(timerRef.current!);
+        setTimeout(() => setAlertVisible(true), 400);
+      }
+    }, 700);
+  }
+
+  useEffect(() => {
+    startDemo();
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, []);
+
+  const points = PRICE_HISTORY.slice(0, visiblePoints);
+  const currentPrice = points[points.length - 1]?.price ?? 1399;
+  const startPrice = PRICE_HISTORY[0].price;
+  const drop = startPrice - currentPrice;
+  const dropPct = ((drop / startPrice) * 100).toFixed(1);
+
+  const svgPoints = points.map((p, i) => {
+    const x = (i / (PRICE_HISTORY.length - 1)) * 360 + 20;
+    const y = 100 - ((p.price - 1200) / 250) * 80;
+    return `${x},${y}`;
+  }).join(" ");
+
+  const svgFill = points.map((p, i) => {
+    const x = (i / (PRICE_HISTORY.length - 1)) * 360 + 20;
+    const y = 100 - ((p.price - 1200) / 250) * 80;
+    return `${x},${y}`;
+  });
+  const fillPath = svgFill.length > 1
+    ? `M${svgFill[0]} L${svgFill.slice(1).join(" L")} L${svgFill[svgFill.length - 1].split(",")[0]},110 L${svgFill[0].split(",")[0]},110 Z`
+    : "";
+
+  return (
+    <div className="max-w-4xl mx-auto mb-16 glass p-6 rounded-2xl border border-white/5 bg-black/40 relative overflow-hidden">
+      {/* Price Drop Alert */}
+      {alertVisible && !alertDismissed && (
+        <div className="absolute inset-x-4 top-4 z-20 flex items-start gap-3 bg-accent/10 border border-accent/30 rounded-xl p-4 shadow-[0_0_30px_rgba(130,19,70,0.3)] backdrop-blur-md">
+          <Bell size={16} className="text-accent mt-0.5 flex-shrink-0 animate-bounce" />
+          <div className="flex-1 text-left">
+            <p className="text-xs font-bold text-accent uppercase tracking-widest mb-0.5">🔔 Price Drop Alert — amazon.com/pro-laptop-2024</p>
+            <p className="text-xs text-neutral-300">Price dropped from <span className="text-white font-bold">${startPrice.toLocaleString()}</span> to <span className="text-emerald-400 font-bold">${currentPrice.toLocaleString()}</span> — save <span className="text-emerald-400 font-bold">${drop} ({dropPct}%)</span></p>
+          </div>
+          <button onClick={() => setAlertDismissed(true)} className="text-neutral-500 hover:text-white text-xs ml-2">✕</button>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center border border-white/10">
+            <Globe size={20} className="text-neutral-400" />
+          </div>
+          <div className="text-left">
+            <p className="text-[10px] font-mono text-neutral-500 uppercase tracking-tighter">Tracked URL</p>
+            <p className="text-sm font-bold truncate max-w-[200px]">amazon.com/pro-laptop-2024</p>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap justify-end">
+          <div className="px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-bold uppercase tracking-widest">
+            Live: ${currentPrice.toLocaleString()}
+          </div>
+          {visiblePoints >= PRICE_HISTORY.length && (
+            <div className="px-3 py-1 rounded-md bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold uppercase tracking-widest animate-pulse flex items-center gap-1">
+              <TrendingDown size={10} /> Drop −{dropPct}%
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Chart */}
+      <div className="h-44 relative mb-3">
+        <svg viewBox="0 0 400 110" className="w-full h-full" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="pg2" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#821346" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#821346" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {fillPath && <path d={fillPath} fill="url(#pg2)" />}
+          {svgPoints && (
+            <polyline points={svgPoints} fill="none" stroke="#821346" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          )}
+          {points.map((p, i) => {
+            const x = (i / (PRICE_HISTORY.length - 1)) * 360 + 20;
+            const y = 100 - ((p.price - 1200) / 250) * 80;
+            return (
+              <g key={i}>
+                {i === points.length - 1 ? (
+                  <>
+                    <circle cx={x} cy={y} r="5" fill="#821346" className="animate-ping" opacity="0.4" />
+                    <circle cx={x} cy={y} r="3" fill="#821346" />
+                    <circle cx={x} cy={y} r="2" fill="#fff" />
+                  </>
+                ) : (
+                  <circle cx={x} cy={y} r="2.5" fill="#821346" />
+                )}
+              </g>
+            );
+          })}
+        </svg>
+        {/* Grid */}
+        <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
+          {[0,1,2,3].map(i => <div key={i} className="border-t border-white/5 w-full" />)}
+        </div>
+      </div>
+
+      {/* Time axis */}
+      <div className="flex justify-between text-[10px] font-mono text-neutral-500 uppercase mb-5">
+        {PRICE_HISTORY.map((p, i) => (
+          <span key={i} className={i < visiblePoints ? "text-neutral-400" : "text-neutral-700"}>{p.time}</span>
+        ))}
+      </div>
+
+      <button
+        onClick={startDemo}
+        className="w-full py-3 rounded-xl font-bold text-sm bg-white/5 border border-white/10 text-neutral-300 hover:bg-white/10 hover:text-white transition-all flex items-center justify-center gap-2"
+      >
+        <Activity size={14} /> Replay Simulation
+      </button>
+    </div>
+  );
+}
 
 export default function LandingPage() {
   return (
@@ -41,58 +188,8 @@ export default function LandingPage() {
             Detect price drops, stock changes, and market shifts before anyone else.
           </p>
 
-          {/* PRICE CHART VISUAL */}
-          <div className="max-w-4xl mx-auto mb-16 glass p-6 rounded-2xl border border-white/5 bg-black/40 relative overflow-hidden group">
-            <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center border border-white/10">
-                  <Globe size={20} className="text-neutral-400" />
-                </div>
-                <div className="text-left">
-                  <p className="text-xs font-mono text-neutral-500 uppercase tracking-tighter">Target URL</p>
-                  <p className="text-sm font-bold truncate max-w-[200px]">amazon.com/pro-laptop-2024</p>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <div className="px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-bold uppercase tracking-widest">
-                  Live: $1,249.00
-                </div>
-                <div className="px-3 py-1 rounded-md bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold uppercase tracking-widest animate-pulse">
-                  Drop Detected
-                </div>
-              </div>
-            </div>
-
-            <div className="h-48 relative">
-              <svg viewBox="0 0 400 100" className="w-full h-full preserve-3d" preserveAspectRatio="none">
-                <defs>
-                  <linearGradient id="priceGradient" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#821346" stopOpacity="0.3" />
-                    <stop offset="100%" stopColor="#821346" stopOpacity="0" />
-                  </linearGradient>
-                </defs>
-                <path d="M0 80 L 50 75 L 100 85 L 150 40 L 200 45 L 250 20 L 300 25 L 350 10 L 400 15 L 400 100 L 0 100 Z" fill="url(#priceGradient)" />
-                <path d="M0 80 L 50 75 L 100 85 L 150 40 L 200 45 L 250 20 L 300 25 L 350 10 L 400 15" fill="none" stroke="#821346" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                <circle cx="150" cy="40" r="3" fill="#821346" />
-                <circle cx="350" cy="10" r="4" fill="#821346" className="animate-ping" />
-                <circle cx="350" cy="10" r="2" fill="#fff" />
-              </svg>
-              
-              {/* Grid Lines */}
-              <div className="absolute inset-0 border-b border-white/5 flex flex-col justify-between pointer-events-none">
-                <div className="border-t border-white/5 w-full"></div>
-                <div className="border-t border-white/5 w-full"></div>
-                <div className="border-t border-white/5 w-full"></div>
-              </div>
-            </div>
-            
-            <div className="mt-4 flex justify-between text-[10px] font-mono text-neutral-500 uppercase">
-              <span>08:00 AM</span>
-              <span>12:00 PM</span>
-              <span>04:00 PM</span>
-              <span>08:00 PM</span>
-            </div>
-          </div>
+          {/* LIVE DEMO */}
+          <PriceTrackrDemo />
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link href="/register" className="btn-primary px-10 py-4 text-lg">
@@ -192,4 +289,3 @@ export default function LandingPage() {
     </div>
   );
 }
-
