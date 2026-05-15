@@ -34,7 +34,7 @@ function FileCleanerDemo() {
       setDupsFixed(Math.round(pct * TOTAL_DUPS));
       setFormatsFixed(Math.round(pct * TOTAL_FORMATS));
 
-      if (pct >= 0.3 && phase !== "cleaning") setPhase("cleaning");
+      if (pct >= 0.3) setPhase("cleaning");
 
       if (pct >= 1) {
         clearInterval(intervalRef.current!);
