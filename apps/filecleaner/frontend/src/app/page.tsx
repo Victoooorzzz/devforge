@@ -106,17 +106,46 @@ function FileCleanerDemo() {
         </div>
       </div>
 
-      {/* Result Row */}
+      {/* Result Row + Download */}
       {isDone && (
-        <div className="flex items-center justify-between p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 mb-6">
-          <div className="text-left">
-            <p className="text-xs font-mono text-neutral-400">Output file</p>
-            <p className="text-sm font-bold text-emerald-400">✅ sales_data_2024_clean.csv</p>
+        <div className="mb-6 space-y-3">
+          <div className="flex items-center justify-between p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
+            <div className="text-left">
+              <p className="text-xs font-mono text-neutral-400">Output file</p>
+              <p className="text-sm font-bold text-emerald-400">✅ sales_data_2024_clean.csv</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs font-mono text-neutral-400">Size reduction</p>
+              <p className="text-sm font-bold text-emerald-400">4.2 MB → 1.1 MB</p>
+            </div>
           </div>
-          <div className="text-right">
-            <p className="text-xs font-mono text-neutral-400">Size reduction</p>
-            <p className="text-sm font-bold text-emerald-400">4.2 MB → 1.1 MB</p>
-          </div>
+          <button
+            onClick={() => {
+              const rows = [
+                "id,name,email,signup_date,amount,status,country",
+                "1,Alice Johnson,alice@example.com,2024-01-15,1250.00,paid,US",
+                "2,Bob Martinez,bob@company.com,2024-01-16,890.50,paid,MX",
+                "3,Carol Smith,carol@startup.io,2024-01-17,2100.00,paid,CA",
+                "4,David Lee,david@agency.com,2024-01-18,450.00,paid,GB",
+                "5,Emma Wilson,emma@tech.co,2024-01-19,3200.00,paid,AU",
+                "6,Frank Brown,frank@dev.io,2024-01-20,780.00,paid,DE",
+                "7,Grace Kim,grace@saas.com,2024-01-21,1560.00,paid,KR",
+                "8,Henry Davis,henry@corp.net,2024-01-22,920.00,paid,US",
+                "9,Isabel Ruiz,isabel@media.es,2024-01-23,340.00,paid,ES",
+                "10,James Clark,james@fintech.io,2024-01-24,4100.00,paid,US"
+              ];
+              const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "sales_data_2024_clean.csv";
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="w-full py-3 rounded-xl font-bold text-sm bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-2"
+          >
+            <Download size={14} /> Download Clean File
+          </button>
         </div>
       )}
 
@@ -126,7 +155,7 @@ function FileCleanerDemo() {
         disabled={isRunning}
         className={`w-full py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
           isRunning ? "bg-white/5 text-neutral-500 cursor-not-allowed"
-          : isDone ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+          : isDone ? "bg-white/5 border border-white/10 text-neutral-400 hover:bg-white/10"
           : "bg-accent text-black hover:bg-accent/90"
         }`}
       >
@@ -174,8 +203,8 @@ export default function LandingPage() {
           <FileCleanerDemo />
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/demo" className="btn-primary px-10 py-4 text-lg shadow-[0_0_30px_rgba(130,19,70,0.4)]">
-              Try Full Demo — No signup required
+            <Link href="/register" className="btn-primary px-10 py-4 text-lg shadow-[0_0_30px_rgba(130,19,70,0.4)]">
+              Start 7-Day Free Trial
             </Link>
           </div>
         </div>

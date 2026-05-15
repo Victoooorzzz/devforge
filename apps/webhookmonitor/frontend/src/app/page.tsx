@@ -98,7 +98,13 @@ function WebhookMonitorDemo() {
     setStreamIdx(0);
     let idx = 0;
     timerRef.current = setInterval(() => {
-      setEvents(prev => [...prev, STREAM_EVENTS[idx]]);
+      const event = STREAM_EVENTS[idx];
+      if (!event) {
+        clearInterval(timerRef.current!);
+        setStreaming(false);
+        return;
+      }
+      setEvents(prev => [...prev, event]);
       idx++;
       if (idx >= STREAM_EVENTS.length) {
         clearInterval(timerRef.current!);
