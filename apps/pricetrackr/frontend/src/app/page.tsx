@@ -61,9 +61,9 @@ function PriceTrackrDemo() {
 
   return (
     <div className="max-w-4xl mx-auto mb-16 glass p-6 rounded-2xl border border-white/5 bg-black/40 relative overflow-hidden">
-      {/* Price Drop Alert */}
+      {/* Price Drop Alert — normal flow, above header */}
       {alertVisible && !alertDismissed && (
-        <div className="absolute inset-x-4 top-4 z-20 flex items-start gap-3 bg-accent/10 border border-accent/30 rounded-xl p-4 shadow-[0_0_30px_rgba(130,19,70,0.3)] backdrop-blur-md">
+        <div className="flex items-start gap-3 bg-accent/10 border border-accent/30 rounded-xl p-4 shadow-[0_0_30px_rgba(130,19,70,0.3)] backdrop-blur-md mb-5">
           <Bell size={16} className="text-accent mt-0.5 flex-shrink-0 animate-bounce" />
           <div className="flex-1 text-left">
             <p className="text-xs font-bold text-accent uppercase tracking-widest mb-0.5">🔔 Price Drop Alert — amazon.com/pro-laptop-2024</p>
