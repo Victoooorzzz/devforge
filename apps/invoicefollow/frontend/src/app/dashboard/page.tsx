@@ -332,7 +332,7 @@ export default function DashboardPage() {
                           {(inv.status === "pending" || inv.status === "overdue") && !inv.cron_paused && (
                             <button onClick={() => handlePauseReminders(inv.id)} disabled={loadingIds.has(inv.id)}
                               className="text-xs font-medium px-3 py-1.5 rounded transition-colors"
-                              title="Pausar recordatorios (promesa de pago)"
+                              title="Pause reminders (promise to pay)"
                               style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text-secondary)", opacity: loadingIds.has(inv.id) ? 0.5 : 1 }}>
                               Pausar
                             </button>

@@ -1,20 +1,30 @@
+import React from "react";
 import Link from "next/link";
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-black text-white p-10 md:p-24 selection:bg-accent selection:text-black">
-      <div className="max-w-3xl mx-auto">
-        <Link href="/" className="text-accent hover:underline mb-8 inline-block">&larr; Volver al inicio</Link>
-        <h1 className="text-4xl font-bold mb-6">Privacy Policy</h1>
-        <div className="space-y-4 text-neutral-300">
-          <p>Last updated: May 2024</p>
-          <p>En FileCleaner, valoramos su privacidad. Esta política explica cómo recopilamos, usamos y protegemos sus datos.</p>
-          <h2 className="text-2xl font-semibold mt-6 mb-2">1. Collected Data</h2>
-          <p>Recopilamos su dirección de correo electrónico para la gestión de cuentas y comunicación, y datos de uso de la aplicación para mejorar nuestros servicios.</p>
-          <h2 className="text-2xl font-semibold mt-6 mb-2">2. Procesamiento de Pagos</h2>
-          <p>Sus pagos son procesados de forma segura por Lemon Squeezy. Nosotros no almacenamos información de su tarjeta de crédito.</p>
-          <h2 className="text-2xl font-semibold mt-6 mb-2">3. Contacto</h2>
-          <p>Para solicitudes de eliminación de datos o dudas sobre privacidad, contáctenos en support@devforgeapp.pro.</p>
+    <div className="min-h-screen bg-black text-white p-6 md:p-24 max-w-3xl mx-auto selection:bg-accent selection:text-black">
+      <Link href="/" className="text-neutral-400 hover:text-white transition-colors mb-8 inline-block text-sm">
+        ← Back to home
+      </Link>
+      <h1 className="text-4xl font-bold mb-6">Privacy Policy</h1>
+      <div className="space-y-6 text-neutral-400">
+        <p>Last updated: May 2024</p>
+        <p>At FileCleaner, we value your privacy. This policy explains how we collect, use, and protect your data.</p>
+        
+        <div>
+          <h2 className="text-2xl font-semibold mt-6 mb-2 text-white">1. Collected Data</h2>
+          <p>We collect your email address for account management and communication, and app usage data to improve our services.</p>
+        </div>
+
+        <div>
+          <h2 className="text-2xl font-semibold mt-6 mb-2 text-white">2. Payment Processing</h2>
+          <p>Your payments are securely processed by Lemon Squeezy. We do not store your credit card information.</p>
+        </div>
+
+        <div>
+          <h2 className="text-2xl font-semibold mt-6 mb-2 text-white">3. Contact</h2>
+          <p>For data deletion requests or privacy concerns, contact us at support@devforgeapp.pro.</p>
         </div>
       </div>
     </div>

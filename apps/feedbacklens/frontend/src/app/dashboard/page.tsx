@@ -237,7 +237,7 @@ export default function DashboardPage() {
                 backgroundColor: tab === t ? "var(--color-accent-dim)" : "var(--color-surface)",
                 color: tab === t ? "var(--color-accent)" : "var(--color-text-secondary)",
               }}>
-              {t === "single" ? <><MessageSquare size={12} /> Individual</> : <><Upload size={12} /> Importar en masa</>}
+              {t === "single" ? <><MessageSquare size={12} /> Individual</> : <><Upload size={12} /> Bulk import</>}
             </button>
           ))}
         </div>

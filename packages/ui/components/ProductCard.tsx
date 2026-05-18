@@ -81,9 +81,9 @@ export function ProductCard({ product }: ProductCardProps) {
 
       {(product.problem || product.solution || product.target) && (
         <div className="mb-4 text-sm space-y-2 border-t pt-4" style={{ borderColor: "var(--color-border)", color: "var(--color-text-secondary)" }}>
-          {product.problem && <p><strong style={{ color: "var(--color-text)" }}>El problema:</strong> {product.problem}</p>}
-          {product.solution && <p><strong style={{ color: "var(--color-text)" }}>La solución:</strong> {product.solution}</p>}
-          {product.target && <p><strong style={{ color: "var(--color-text)" }}>Para quién es:</strong> {product.target}</p>}
+          {product.problem && <p><strong style={{ color: "var(--color-text)" }}>The Problem:</strong> {product.problem}</p>}
+          {product.solution && <p><strong style={{ color: "var(--color-text)" }}>The Solution:</strong> {product.solution}</p>}
+          {product.target && <p><strong style={{ color: "var(--color-text)" }}>Who is it for:</strong> {product.target}</p>}
         </div>
       )}
 

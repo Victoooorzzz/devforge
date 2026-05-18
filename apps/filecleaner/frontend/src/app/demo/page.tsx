@@ -70,7 +70,7 @@ export default function DemoPage() {
         file_name:            data.file_name            ?? file.name,
       });
     } catch (err: any) {
-      setError(err.message || "Error desconocido");
+      setError(err.message || "Unknown error");
     } finally {
       setLoading(false);
     }
@@ -89,12 +89,12 @@ export default function DemoPage() {
       <nav className="fixed top-0 w-full z-50 glass border-b border-white/5">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 text-sm" style={{ color: "var(--color-text-secondary)" }}>
-            ← Volver
+            ← Back
           </Link>
           <span className="text-sm font-bold" style={{ color: "var(--color-text)" }}>
             File<span style={{ color: "var(--color-accent)" }}>Cleaner</span> — Demo
           </span>
-          <Link href="/register" className="btn-primary text-xs px-4 py-2">Crear cuenta gratis</Link>
+          <Link href="/register" className="btn-primary text-xs px-4 py-2">Create free account</Link>
         </div>
       </nav>
 

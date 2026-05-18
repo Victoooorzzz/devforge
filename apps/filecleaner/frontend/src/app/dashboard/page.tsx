@@ -196,7 +196,7 @@ export default function DashboardPage() {
       const data: AIAnalysis = await res.json();
       setAiPanel(data);
     } catch (e: any) {
-      alert(e.message || "Error en análisis de IA");
+      alert(e.message || "AI analysis error");
     } finally {
       setAiLoading(false);
     }
@@ -319,7 +319,7 @@ export default function DashboardPage() {
             {aiPanel.suggestions.length === 0 ? (
               <div className="text-center py-6 text-sm opacity-40">
                 <CheckCircle size={24} className="mx-auto mb-2 text-emerald-500 opacity-100" />
-                No se detectaron problemas — los datos parecen limpios.
+                No issues detected — the data appears clean.
               </div>
             ) : (
               aiPanel.suggestions.map((s, i) => (

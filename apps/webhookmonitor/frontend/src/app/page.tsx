@@ -352,7 +352,7 @@ export default function LandingPage() {
           <div className="text-xs space-y-2">
             <p><strong>Soporte:</strong> <a href="mailto:support@devforgeapp.pro" className="hover:text-white transition-colors">support@devforgeapp.pro</a></p>
             <p><strong>Ubicación:</strong> Lima, Perú</p>
-            <p><strong>Reembolsos:</strong> Tienes un trial gratuito de 7 días. Una vez procesado el cargo mensual de $9.99, todas las ventas son definitivas y no se emiten reembolsos.</p>
+            <p><strong>Refunds:</strong> You have a 7-day free trial. Once the $9.99 monthly charge is processed, all sales are final and no refunds are issued.</p>
           </div>
           <p className="mt-4">&copy; 2024 WebhookMonitor. Part of the DevForge ecosystem.</p>
         </div>
