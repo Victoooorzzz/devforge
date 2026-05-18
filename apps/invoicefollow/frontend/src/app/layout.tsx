@@ -1,13 +1,16 @@
 import type { Metadata } from "next";
+import { generateMetadata as seoMetadata } from "@devforge/core";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
 
-export const metadata: Metadata = {
-  title: "InvoiceFollow - Smart Invoice Tracking",
-  description: "Never miss a payment again with automated invoice tracking and follow-ups.",
-};
+export const metadata: Metadata = seoMetadata({
+  title: "InvoiceFollow - Automated payment recovery",
+  description: "Automate invoice follow-ups and get paid faster. Perfect for freelancers and agencies. Send smart reminders.",
+  url: "https://invoicefollow.devforgeapp.pro",
+  productName: "InvoiceFollow",
+});
 
 export default function RootLayout({
   children,

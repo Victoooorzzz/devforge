@@ -233,10 +233,16 @@ export default function LandingPage() {
             Stop Chasing Payments. <br className="hidden md:block" />
             Automate Your Recovery.
           </h1>
-          <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto mb-12">
+          <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto mb-6">
             The world's first industrial-grade escalation sequence for SaaS and B2B. 
             Recover up to 94% of overdue invoices automatically.
           </p>
+          <div className="text-sm text-neutral-400 space-y-3 mt-6 mb-12 max-w-2xl mx-auto border border-white/5 bg-white/[0.02] p-6 rounded-xl text-left">
+            <p><strong className="text-white">The Problem:</strong> Tired of chasing clients who don't pay their invoices on time?</p>
+            <p><strong className="text-white">The Solution:</strong> This tool automates the sending of smart payment reminders.</p>
+            <p><strong className="text-white">Who is it for:</strong> Ideal for freelancers, agencies, and project-based consultants.</p>
+          </div>
+
 
           {/* LIVE DEMO */}
           <InvoiceFollowDemo />
@@ -334,7 +340,19 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="py-12 px-6 border-t border-white/5 text-center text-neutral-500 text-sm">
-        <p>&copy; 2024 InvoiceFollow. Part of the DevForge ecosystem.</p>
+        <div className="max-w-4xl mx-auto flex flex-col gap-6">
+          <div className="flex flex-wrap justify-center gap-6 text-neutral-400">
+            <Link href="/terms" className="hover:text-white transition-colors">Terms of Service</Link>
+            <Link href="/privacy" className="hover:text-white transition-colors">Privacy Policy</Link>
+            <Link href="/refunds" className="hover:text-white transition-colors">Refund Policy</Link>
+          </div>
+          <div className="text-xs space-y-2">
+            <p><strong>Soporte:</strong> <a href="mailto:support@devforgeapp.pro" className="hover:text-white transition-colors">support@devforgeapp.pro</a></p>
+            <p><strong>Ubicación:</strong> Lima, Perú</p>
+            <p><strong>Reembolsos:</strong> Tienes un trial gratuito de 7 días. Una vez procesado el cargo mensual de $9.99, todas las ventas son definitivas y no se emiten reembolsos.</p>
+          </div>
+          <p className="mt-4">&copy; 2024 InvoiceFollow. Part of the DevForge ecosystem.</p>
+        </div>
       </footer>
     </div>
   );

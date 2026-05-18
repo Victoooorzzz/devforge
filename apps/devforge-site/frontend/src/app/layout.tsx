@@ -4,7 +4,7 @@ import "@devforge/ui/styles/globals.css";
 
 export const metadata: Metadata = seoMetadata({
   title: "DevForge — Indie SaaS Tools for Developers & Freelancers",
-  description: "5 micro-products that solve real problems. File management, invoice tracking, price monitoring, webhook debugging, and AI feedback analysis. Built by one developer, used by thousands.",
+  description: "5 micro-SaaS tools to solve real developer problems: File management, invoice tracking, webhook debugging & AI analysis. Built for indie makers and teams.",
   url: "https://devforgeapp.pro",
   productName: "DevForge",
   keywords: ["saas tools", "developer tools", "micro saas", "indie maker", "devforge"],

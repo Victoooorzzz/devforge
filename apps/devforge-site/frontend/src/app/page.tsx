@@ -1,4 +1,4 @@
-﻿import { Layout, LandingHero, ProductGrid } from "@devforge/ui";
+import { Layout, LandingHero, ProductGrid } from "@devforge/ui";
 import type { ProductInfo } from "@devforge/ui";
 
 const products: ProductInfo[] = [
@@ -9,6 +9,9 @@ const products: ProductInfo[] = [
     accentColor: "#821346",
     price: 9.99,
     status: "live",
+    problem: "Tired of wasting hours cleaning CSV files full of nulls and duplicates?",
+    solution: "This tool processes and fixes anomalies blazingly fast using FastAPI.",
+    target: "Ideal for data analysts and operations teams."
   },
   {
     name: "Invoice Follow-up",
@@ -17,6 +20,9 @@ const products: ProductInfo[] = [
     accentColor: "#821346",
     price: 9.99,
     status: "live",
+    problem: "Tired of chasing clients who don't pay their invoices on time?",
+    solution: "This tool automates the sending of smart payment reminders.",
+    target: "Ideal for freelancers, agencies, and project-based consultants."
   },
   {
     name: "Price Tracker",
@@ -25,6 +31,9 @@ const products: ProductInfo[] = [
     accentColor: "#821346",
     price: 9.99,
     status: "live",
+    problem: "Tired of manually checking your competitors' prices every day?",
+    solution: "This tool monitors URLs in the background and alerts you to price changes.",
+    target: "Ideal for e-commerce owners, dropshippers, and market strategists."
   },
   {
     name: "Webhook Monitor",
@@ -33,6 +42,9 @@ const products: ProductInfo[] = [
     accentColor: "#821346",
     price: 9.99,
     status: "live",
+    problem: "Tired of failing Stripe or Shopify integrations without knowing why?",
+    solution: "This tool intercepts, inspects, and allows you to replay webhooks.",
+    target: "Ideal for backend developers, integrators, and DevOps teams."
   },
   {
     name: "Feedback Lens",
@@ -41,6 +53,9 @@ const products: ProductInfo[] = [
     accentColor: "#821346",
     price: 9.99,
     status: "live",
+    problem: "Tired of reading thousands of user reviews without finding the core issue?",
+    solution: "This tool extracts common complaints and sentiment using artificial intelligence.",
+    target: "Ideal for Product Managers, support teams, and SaaS founders."
   },
 ];
 

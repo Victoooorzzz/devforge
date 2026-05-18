@@ -8,6 +8,9 @@ export interface ProductInfo {
   accentColor: string;
   price: number;
   status: "live" | "beta" | "coming-soon";
+  problem?: string;
+  solution?: string;
+  target?: string;
 }
 
 interface ProductCardProps {
@@ -75,6 +78,14 @@ export function ProductCard({ product }: ProductCardProps) {
       >
         {product.tagline}
       </p>
+
+      {(product.problem || product.solution || product.target) && (
+        <div className="mb-4 text-sm space-y-2 border-t pt-4" style={{ borderColor: "var(--color-border)", color: "var(--color-text-secondary)" }}>
+          {product.problem && <p><strong style={{ color: "var(--color-text)" }}>El problema:</strong> {product.problem}</p>}
+          {product.solution && <p><strong style={{ color: "var(--color-text)" }}>La solución:</strong> {product.solution}</p>}
+          {product.target && <p><strong style={{ color: "var(--color-text)" }}>Para quién es:</strong> {product.target}</p>}
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <span

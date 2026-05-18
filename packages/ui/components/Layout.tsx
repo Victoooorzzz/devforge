@@ -84,23 +84,18 @@ export function Layout({
               </span>
             </div>
 
-            <div className="flex items-center gap-6">
-              <a
-                href="https://devforgeapp.pro"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm transition-colors duration-200 hover:opacity-80"
-                style={{ color: "var(--color-text-secondary)" }}
-              >
-                Built by DevForge
-              </a>
+            <div className="flex flex-wrap justify-center md:justify-end items-center gap-6">
+              <a href="/terms" className="text-sm transition-colors duration-200 hover:opacity-80" style={{ color: "var(--color-text-secondary)" }}>Terms of Service</a>
+              <a href="/privacy" className="text-sm transition-colors duration-200 hover:opacity-80" style={{ color: "var(--color-text-secondary)" }}>Privacy Policy</a>
+              <a href="/refunds" className="text-sm transition-colors duration-200 hover:opacity-80" style={{ color: "var(--color-text-secondary)" }}>Refund Policy</a>
+              <a href="mailto:support@devforgeapp.pro" className="text-sm transition-colors duration-200 hover:opacity-80" style={{ color: "var(--color-text-secondary)" }}>support@devforgeapp.pro</a>
             </div>
           </div>
 
           <div className="divider my-8" />
 
           <p className="text-center text-xs" style={{ color: "var(--color-text-secondary)" }}>
-            &copy; {new Date().getFullYear()} {productName}. All rights reserved.
+            &copy; {new Date().getFullYear()} {productName}. All rights reserved. Built by DevForge.
           </p>
         </div>
       </footer>

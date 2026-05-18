@@ -183,10 +183,16 @@ export default function LandingPage() {
           <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent uppercase text-balance">
             Outsmart Competitors with Real-Time Data.
           </h1>
-          <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto mb-12">
+          <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto mb-6">
             Monitor thousands of URLs with 10-minute refresh rates. 
             Detect price drops, stock changes, and market shifts before anyone else.
           </p>
+          <div className="text-sm text-neutral-400 space-y-3 mt-6 mb-12 max-w-2xl mx-auto border border-white/5 bg-white/[0.02] p-6 rounded-xl text-left">
+            <p><strong className="text-white">The Problem:</strong> Tired of manually checking your competitors' prices every day?</p>
+            <p><strong className="text-white">The Solution:</strong> This tool monitors URLs in the background and alerts you to price changes.</p>
+            <p><strong className="text-white">Who is it for:</strong> Ideal for e-commerce owners, dropshippers, and market strategists.</p>
+          </div>
+
 
           {/* LIVE DEMO */}
           <PriceTrackrDemo />
@@ -284,7 +290,19 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="py-12 px-6 border-t border-white/5 text-center text-neutral-500 text-sm">
-        <p>&copy; 2024 PriceTrackr. Part of the DevForge ecosystem.</p>
+        <div className="max-w-4xl mx-auto flex flex-col gap-6">
+          <div className="flex flex-wrap justify-center gap-6 text-neutral-400">
+            <Link href="/terms" className="hover:text-white transition-colors">Terms of Service</Link>
+            <Link href="/privacy" className="hover:text-white transition-colors">Privacy Policy</Link>
+            <Link href="/refunds" className="hover:text-white transition-colors">Refund Policy</Link>
+          </div>
+          <div className="text-xs space-y-2">
+            <p><strong>Soporte:</strong> <a href="mailto:support@devforgeapp.pro" className="hover:text-white transition-colors">support@devforgeapp.pro</a></p>
+            <p><strong>Ubicación:</strong> Lima, Perú</p>
+            <p><strong>Reembolsos:</strong> Tienes un trial gratuito de 7 días. Una vez procesado el cargo mensual de $9.99, todas las ventas son definitivas y no se emiten reembolsos.</p>
+          </div>
+          <p className="mt-4">&copy; 2024 PriceTrackr. Part of the DevForge ecosystem.</p>
+        </div>
       </footer>
     </div>
   );
