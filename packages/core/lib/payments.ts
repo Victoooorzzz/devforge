@@ -6,17 +6,16 @@ interface CheckoutResponse {
   checkout_url: string;
 }
 
-export async function createCheckoutSession(variantId: string): Promise<string> {
-  const { data } = await apiClient.post<CheckoutResponse>("/lemonsqueezy/checkout", {
-    variant_id: variantId,
+export async function createCheckoutSession(productId: string): Promise<string> {
+  const { data } = await apiClient.post<CheckoutResponse>("/polar/checkout", {
+    product_id: productId,
   });
   return data.checkout_url;
 }
 
-export async function redirectToCheckout(variantId: string): Promise<void> {
-  const url = await createCheckoutSession(variantId);
+export async function redirectToCheckout(productId: string): Promise<void> {
+  const url = await createCheckoutSession(productId);
   if (typeof window !== "undefined") {
     window.location.href = url;
   }
 }
-

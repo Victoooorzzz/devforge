@@ -33,6 +33,20 @@ class Settings(BaseSettings):
     next_public_ls_variant_id_webhookmonitor: str = ""
     next_public_ls_variant_id_feedbacklens: str = ""
 
+    # Polar
+    polar_access_token: str = ""
+    polar_webhook_secret: str = ""
+    polar_product_id_filecleaner: str = ""
+    polar_product_id_invoicefollow: str = ""
+    polar_product_id_pricetrackr: str = ""
+    polar_product_id_webhookmonitor: str = ""
+    polar_product_id_feedbacklens: str = ""
+    next_public_polar_product_id_filecleaner: str = ""
+    next_public_polar_product_id_invoicefollow: str = ""
+    next_public_polar_product_id_pricetrackr: str = ""
+    next_public_polar_product_id_webhookmonitor: str = ""
+    next_public_polar_product_id_feedbacklens: str = ""
+
     # Stripe (Optional)
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""

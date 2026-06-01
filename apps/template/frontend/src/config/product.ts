@@ -28,7 +28,7 @@ export interface Product {
     planName: string;
     price: number;
     description: string;
-    lsVariantId: string;
+    polarProductId: string;
     features: { text: string; included: boolean }[];
   };
   testimonials: { quote: string; name: string; role: string }[];
@@ -87,7 +87,7 @@ export const product: Product = {
     planName: "Pro",
     price: 19,
     description: "Everything you need to get started",
-    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID || "",
+    polarProductId: process.env.NEXT_PUBLIC_POLAR_PRODUCT_ID || "",
 
     features: [
       { text: "Core feature 1", included: true },

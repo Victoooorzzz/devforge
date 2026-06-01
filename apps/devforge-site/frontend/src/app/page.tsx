@@ -61,12 +61,15 @@ const products: ProductInfo[] = [
 
 export default function HomePage() {
   return (
-    <Layout 
-      productName="DevForge" 
-      productDomain="devforgeapp.pro" 
+    <Layout
+      productName="DevForge"
+      productDomain="devforgeapp.pro"
       logoSrc="/devforge-logo-white.svg"
-      navLinks={[{ label: "Products", href: "#products" }]} 
-      ctaText="Explore" 
+      navLinks={[
+        { label: "Products", href: "#products" },
+        { label: "Hire", href: "/hire" },
+      ]}
+      ctaText="Explore"
       ctaHref="#products"
     >
       <LandingHero

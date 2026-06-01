@@ -9,7 +9,7 @@ export default function TermsPage() {
       </Link>
       <h1 className="text-4xl font-bold mb-6">Terms of Service</h1>
       <div className="space-y-6 text-neutral-400">
-        <p>Last updated: May 2024</p>
+        <p>Last updated: May 2026</p>
         <p>By using FeedbackLens, you agree to these terms. We provide this tool "as is", without any warranties. You are responsible for your use of the platform.</p>
         
         <div>

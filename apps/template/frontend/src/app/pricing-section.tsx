@@ -8,7 +8,7 @@ import { product } from "@/config/product";
 export function PricingSection() {
   const handleCheckout = async () => {
     trackEvent("checkout_started");
-    await redirectToCheckout(product.pricing.lsVariantId);
+    await redirectToCheckout(product.pricing.polarProductId);
 
   };
 

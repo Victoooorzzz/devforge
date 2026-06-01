@@ -50,15 +50,15 @@ export default function SettingsPage() {
     trackEvent("subscription_manage_clicked");
     if (profile.has_active_subscription) {
       try {
-        const { data } = await apiClient.get("/lemonsqueezy/portal") as { data: { portal_url: string } };
+        const { data } = await apiClient.get("/polar/portal") as { data: { portal_url: string } };
         window.open(data.portal_url, "_blank");
       } catch (err) {
         alert("Failed to open portal");
       }
     } else {
       try {
-        const { data } = await apiClient.post("/lemonsqueezy/checkout", { 
-          variant_id: product.pricing.lsVariantId 
+        const { data } = await apiClient.post("/polar/checkout", {
+          product_id: product.pricing.polarProductId
         }) as { data: { checkout_url: string } };
         window.open(data.checkout_url, "_blank");
       } catch (err) {

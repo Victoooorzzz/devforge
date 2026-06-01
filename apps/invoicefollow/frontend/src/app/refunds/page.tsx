@@ -9,7 +9,7 @@ export default function RefundsPage() {
       </Link>
       <h1 className="text-4xl font-bold mb-6">Refund Policy</h1>
       <div className="space-y-6 text-neutral-400">
-        <p>Last updated: May 2024</p>
+        <p>Last updated: May 2026</p>
         
         <div>
           <h2 className="text-2xl font-semibold mt-6 mb-2 text-white">Trial Period & Charges</h2>

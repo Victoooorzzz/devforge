@@ -9,7 +9,7 @@ export default function PrivacyPage() {
       </Link>
       <h1 className="text-4xl font-bold mb-6">Privacy Policy</h1>
       <div className="space-y-6 text-neutral-400">
-        <p>Last updated: May 2024</p>
+        <p>Last updated: May 2026</p>
         <p>At DevForge, we value your privacy. This policy explains how we collect, use, and protect your data.</p>
         
         <div>

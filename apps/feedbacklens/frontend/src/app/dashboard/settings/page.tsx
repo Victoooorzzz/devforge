@@ -62,7 +62,7 @@ export default function SettingsPage() {
     e.preventDefault();
     trackEvent("settings_updated", { section: "feedback_prefs" });
     try {
-      await apiClient.put("/settings/feedback-prefs", { 
+      await apiClient.put("/settings/feedback-prefs", {
         custom_prompt: feedbackSettings.custom_prompt,
         negative_threshold: Number(feedbackSettings.negative_threshold),
         alert_email: feedbackSettings.alert_email,
@@ -78,15 +78,15 @@ export default function SettingsPage() {
     trackEvent("subscription_manage_clicked");
     if (profile.has_active_subscription) {
       try {
-        const { data } = await apiClient.get("/lemonsqueezy/portal") as { data: { portal_url: string } };
+        const { data } = await apiClient.get("/polar/portal") as { data: { portal_url: string } };
         window.open(data.portal_url, "_blank");
       } catch (err) {
         alert("Failed to open portal");
       }
     } else {
       try {
-        const { data } = await apiClient.post("/lemonsqueezy/checkout", { 
-          variant_id: product.pricing.lsVariantId 
+        const { data } = await apiClient.post("/polar/checkout", {
+          product_id: product.pricing.polarProductId
         }) as { data: { checkout_url: string } };
         window.open(data.checkout_url, "_blank");
       } catch (err) {
@@ -180,10 +180,10 @@ export default function SettingsPage() {
         <form onSubmit={handleFeedbackSave} className="space-y-6 max-w-2xl">
           <div>
             <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Custom Prompt</label>
-            <textarea 
-              value={feedbackSettings.custom_prompt} 
-              onChange={(e) => setFeedbackSettings({ ...feedbackSettings, custom_prompt: e.target.value })} 
-              className="input-field w-full h-32 py-3" 
+            <textarea
+              value={feedbackSettings.custom_prompt}
+              onChange={(e) => setFeedbackSettings({ ...feedbackSettings, custom_prompt: e.target.value })}
+              className="input-field w-full h-32 py-3"
               placeholder="e.g. Focus specifically on pricing complaints and feature requests..."
             />
             <p className="text-xs mt-1.5" style={{ color: "var(--color-text-secondary)" }}>Additional instructions for the Gemini AI when analyzing feedback.</p>
@@ -193,14 +193,14 @@ export default function SettingsPage() {
               <label className="block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>Negative Threshold</label>
               <span className="text-sm font-medium" style={{ color: "var(--color-text)" }}>{feedbackSettings.negative_threshold}</span>
             </div>
-            <input 
+            <input
               type="range"
               min="0"
               max="1"
               step="0.1"
-              value={feedbackSettings.negative_threshold} 
-              onChange={(e) => setFeedbackSettings({ ...feedbackSettings, negative_threshold: parseFloat(e.target.value) })} 
-              className="w-full accent-[var(--color-primary)]" 
+              value={feedbackSettings.negative_threshold}
+              onChange={(e) => setFeedbackSettings({ ...feedbackSettings, negative_threshold: parseFloat(e.target.value) })}
+              className="w-full accent-[var(--color-primary)]"
             />
             <p className="text-xs mt-1.5" style={{ color: "var(--color-text-secondary)" }}>Sentiment score below this value will be flagged as negative (0.0 to 1.0).</p>
           </div>

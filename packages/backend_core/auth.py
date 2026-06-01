@@ -266,19 +266,19 @@ async def register(body: RegisterRequest, background_tasks: BackgroundTasks, res
     # Generate checkout URL if app_name is provided
     checkout_url = None
     if body.app_name:
-        from .lemonsqueezy_handler import create_ls_checkout
-        variant_id = None
+        from .polar_handler import create_polar_checkout
+        product_id = None
         app = body.app_name.lower()
         
-        if "filecleaner" in app: variant_id = settings.next_public_ls_variant_id_filecleaner
-        elif "invoicefollow" in app: variant_id = settings.next_public_ls_variant_id_invoicefollow
-        elif "pricetrackr" in app: variant_id = settings.next_public_ls_variant_id_pricetrackr
-        elif "webhookmonitor" in app: variant_id = settings.next_public_ls_variant_id_webhookmonitor
-        elif "feedbacklens" in app: variant_id = settings.next_public_ls_variant_id_feedbacklens
+        if "filecleaner" in app: product_id = settings.polar_product_id_filecleaner or settings.next_public_polar_product_id_filecleaner
+        elif "invoicefollow" in app: product_id = settings.polar_product_id_invoicefollow or settings.next_public_polar_product_id_invoicefollow
+        elif "pricetrackr" in app: product_id = settings.polar_product_id_pricetrackr or settings.next_public_polar_product_id_pricetrackr
+        elif "webhookmonitor" in app: product_id = settings.polar_product_id_webhookmonitor or settings.next_public_polar_product_id_webhookmonitor
+        elif "feedbacklens" in app: product_id = settings.polar_product_id_feedbacklens or settings.next_public_polar_product_id_feedbacklens
         
-        if variant_id:
+        if product_id:
             try:
-                checkout_url = await create_ls_checkout(user.id, user.email, variant_id)
+                checkout_url = await create_polar_checkout(user.id, user.email, product_id)
             except Exception as e:
                 print(f"Error creating checkout URL: {e}")
 

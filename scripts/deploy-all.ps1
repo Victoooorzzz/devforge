@@ -73,6 +73,20 @@ function Set-VercelEnvVar {
 }
 # ────────────────────────────────────────────────────────────────────────────
 
+function Invoke-VercelDeploy {
+    param(
+        [string]$Token,
+        [string]$Cwd
+    )
+
+    if (Get-Command vercel -ErrorAction SilentlyContinue) {
+        & vercel deploy --prod --yes --token $Token --cwd $Cwd
+        return
+    }
+
+    & corepack pnpm dlx vercel@latest deploy --prod --yes --token $Token --cwd $Cwd
+}
+
 $apps = @(
     @{ Name = "devforge-site"; Root = "apps/devforge-site/frontend" },
     @{ Name = "filecleaner"; Root = "apps/filecleaner/frontend" },
@@ -172,6 +186,13 @@ foreach ($app in $apps) {
         Set-VercelEnvVar -ProjectId $project.id -Key $variantKey -Value $variantValue
     }
 
+    $polarProductKey = "POLAR_PRODUCT_ID_$($app.Name.ToUpper().Replace('-', ''))"
+    $polarProductValue = [Environment]::GetEnvironmentVariable($polarProductKey, "Process")
+    if ($polarProductValue) {
+        Set-VercelEnvVar -ProjectId $project.id -Key $polarProductKey -Value $polarProductValue
+        Set-VercelEnvVar -ProjectId $project.id -Key "NEXT_PUBLIC_$polarProductKey" -Value $polarProductValue
+    }
+
     # Paso 2 - Inyectar .vercel/project.json
     Write-Host "  [2/3] Inyectando .vercel/project.json..."
     $vercelDir = Join-Path $monorepoRoot ".vercel"
@@ -186,7 +207,7 @@ foreach ($app in $apps) {
 
     # Paso 3 - Deploy
     Write-Host "  [3/3] Desplegando..."
-    & vercel deploy --prod --yes --token $env:VERCEL_TOKEN --cwd $monorepoRoot
+    Invoke-VercelDeploy -Token $env:VERCEL_TOKEN -Cwd $monorepoRoot
 
     Write-Host "  OK: $($app.Name) desplegado."
 }

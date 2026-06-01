@@ -29,7 +29,7 @@ export const product = {
     planName: "Pro",
     price: 9.99,
     description: "Unlimited file processing",
-    lsVariantId: process.env.NEXT_PUBLIC_LS_VARIANT_ID || process.env.NEXT_PUBLIC_LS_VARIANT_ID_FILECLEANER || "",
+    polarProductId: process.env.NEXT_PUBLIC_POLAR_PRODUCT_ID || process.env.NEXT_PUBLIC_POLAR_PRODUCT_ID_FILECLEANER || "",
     features: [
       { text: "Unlimited file uploads", included: true },
       { text: "Metadata stripping", included: true },
