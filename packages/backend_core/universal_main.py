@@ -98,8 +98,8 @@ app = create_app(
     domain_routers=all_domain_routers
 )
 
-from fastapi import Header, Depends
-from backend_core.worker import verify_cron_secret
+from fastapi import Depends
+from backend_core.worker import run_worker_cycle, verify_cron_secret
 
 # --- Master Enqueuer for cron-job.org ---
 @app.post("/worker/enqueue-periodic", tags=["Worker"])
@@ -107,6 +107,7 @@ async def enqueue_periodic_tasks(authenticated: bool = Depends(verify_cron_secre
     """
     Master trigger for all periodic tasks across all products.
     Should be called every hour by cron-job.org.
+    It enqueues due periodic work and then runs one worker cycle.
     """
     
     results = {}
@@ -147,10 +148,10 @@ async def enqueue_periodic_tasks(authenticated: bool = Depends(verify_cron_secre
     except Exception as e:
         results["filecleaner"] = f"error: {str(e)}"
 
-    return {"status": "success", "results": results}
+    processed_jobs = await run_worker_cycle()
+    return {"status": "success", "results": results, "processed_jobs": processed_jobs}
 
 if __name__ == "__main__":
     import uvicorn
     # En producción se usará el comando de Railway/Render
     uvicorn.run("packages.backend_core.universal_main:app", host="0.0.0.0", port=8000, reload=True)
-

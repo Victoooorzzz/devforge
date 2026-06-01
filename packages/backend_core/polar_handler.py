@@ -12,11 +12,14 @@ from .config import get_settings
 from .database import get_session
 from .polar_utils import (
     build_polar_checkout_payload,
+    get_polar_event_product_id,
     get_polar_event_user_id,
     should_activate_for_polar_event,
     should_deactivate_for_polar_event,
     verify_standard_webhook_signature,
 )
+from .product_access import set_user_product_access
+from .product_catalog import resolve_app_from_product_id, resolve_product_id_for_app
 
 
 settings = get_settings()
@@ -29,7 +32,8 @@ POLAR_API_URL = "https://api.polar.sh/v1"
 
 
 class PolarCheckoutRequest(BaseModel):
-    product_id: str
+    app_name: str | None = None
+    product_id: str | None = None
 
 
 class PolarCheckoutResponse(BaseModel):
@@ -50,12 +54,29 @@ def _polar_headers() -> dict[str, str]:
     }
 
 
-async def create_polar_checkout(user_id: int, user_email: str, product_id: str):
+def _checkout_frontend_url(request: Request) -> str:
+    origin = request.headers.get("origin", "").rstrip("/")
+    allowed_origins = {
+        value.strip().rstrip("/")
+        for value in settings.allowed_origins.split(",")
+        if value.strip()
+    }
+    if origin and origin in allowed_origins:
+        return origin
+    return settings.frontend_url
+
+
+async def create_polar_checkout(
+    user_id: int,
+    user_email: str,
+    product_id: str,
+    frontend_url: str | None = None,
+):
     payload = build_polar_checkout_payload(
         user_id=user_id,
         user_email=user_email,
         product_id=product_id,
-        frontend_url=settings.frontend_url,
+        frontend_url=frontend_url or settings.frontend_url,
     )
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -71,9 +92,25 @@ async def create_polar_checkout(user_id: int, user_email: str, product_id: str):
 @polar_router.post("/checkout", response_model=PolarCheckoutResponse)
 async def create_checkout(
     body: PolarCheckoutRequest,
+    request: Request,
     user: User = Depends(get_current_user),
 ):
-    url = await create_polar_checkout(user.id, user.email, body.product_id)
+    app_name = body.app_name
+    product_id = resolve_product_id_for_app(settings, app_name)
+
+    if not product_id and body.product_id:
+        app_name = resolve_app_from_product_id(settings, body.product_id)
+        product_id = body.product_id if app_name else None
+
+    if not app_name or not product_id:
+        raise HTTPException(status_code=400, detail="Invalid product")
+
+    url = await create_polar_checkout(
+        user.id,
+        user.email,
+        product_id,
+        frontend_url=_checkout_frontend_url(request),
+    )
     return PolarCheckoutResponse(checkout_url=url)
 
 
@@ -113,27 +150,44 @@ async def handle_polar_webhook(
     event = json.loads(payload)
     event_type = event.get("type", "")
     user_id = get_polar_event_user_id(event)
+    product_id = get_polar_event_product_id(event)
+    app_name = resolve_app_from_product_id(settings, product_id)
 
     logger.info("Polar webhook received: %s for user %s", event_type, user_id)
 
     if should_activate_for_polar_event(event_type):
-        await _set_user_active(user_id, session, is_active=True)
+        await _set_user_active(user_id, session, is_active=True, app_name=app_name, product_id=product_id)
     elif should_deactivate_for_polar_event(event_type):
-        await _set_user_active(user_id, session, is_active=False)
+        await _set_user_active(user_id, session, is_active=False, app_name=app_name, product_id=product_id)
 
     return {"status": "ok"}
 
 
-async def _set_user_active(user_id: str | None, session: AsyncSession, is_active: bool):
+async def _set_user_active(
+    user_id: str | None,
+    session: AsyncSession,
+    is_active: bool,
+    app_name: str | None = None,
+    product_id: str | None = None,
+):
     if not user_id:
         return
 
     result = await session.execute(select(User).where(User.id == int(user_id)))
     user = result.scalar_one_or_none()
     if user:
-        user.is_active = is_active
-        if is_active:
-            user.trial_ends_at = None
-        session.add(user)
+        if app_name:
+            await set_user_product_access(
+                session=session,
+                user=user,
+                app_name=app_name,
+                polar_product_id=product_id,
+                is_active=is_active,
+            )
+        else:
+            user.is_active = is_active
+            if is_active:
+                user.trial_ends_at = None
+            session.add(user)
         await session.flush()
         logger.info("Set user %s active=%s via Polar", user.email, is_active)

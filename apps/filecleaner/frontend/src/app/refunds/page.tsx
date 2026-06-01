@@ -24,7 +24,7 @@ export default function RefundsPage() {
 
         <div>
           <h2 className="text-2xl font-semibold mt-6 mb-2 text-white">Cancellations</h2>
-          <p>You are free to cancel your subscription at any time before the trial period ends to avoid charges, or at any time thereafter to avoid future monthly charges. You can cancel directly from your dashboard or via Lemon Squeezy emails.</p>
+          <p>You are free to cancel your subscription at any time before the trial period ends to avoid charges, or at any time thereafter to avoid future monthly charges. You can cancel directly from your dashboard or through the customer portal.</p>
         </div>
       </div>
     </div>

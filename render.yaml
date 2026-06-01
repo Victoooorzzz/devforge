@@ -20,7 +20,23 @@ services:
         sync: false
       - key: POLAR_WEBHOOK_SECRET
         sync: false
+      - key: POLAR_PRODUCT_ID_FILECLEANER
+        sync: false
+      - key: POLAR_PRODUCT_ID_INVOICEFOLLOW
+        sync: false
+      - key: POLAR_PRODUCT_ID_PRICETRACKR
+        sync: false
+      - key: POLAR_PRODUCT_ID_WEBHOOKMONITOR
+        sync: false
+      - key: POLAR_PRODUCT_ID_FEEDBACKLENS
+        sync: false
       - key: FRONTEND_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: ADMIN_SECRET
         sync: false
       - key: SMTP_HOST
         sync: false

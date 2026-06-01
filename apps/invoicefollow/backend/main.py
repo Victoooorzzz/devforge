@@ -1,7 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
@@ -11,7 +11,7 @@ from datetime import datetime, date, timezone
 import uuid, logging, json, io
 import pandas as pd
 
-from backend_core import create_app, get_current_user, get_session, User, require_user_access, get_settings
+from backend_core import create_app, get_current_user, get_session, User, require_product_access, get_settings
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.outbox_models import SystemOutbox, InvoiceMagicLink
@@ -60,61 +60,18 @@ class InvoiceTemplateUpdate(BaseModel):
     email_template: str
 
 
-invoice_router = APIRouter(prefix="/invoices", tags=["invoices"], dependencies=[Depends(require_user_access)])
-settings_router = APIRouter(prefix="/settings", tags=["settings"])
+invoice_router = APIRouter(prefix="/invoices", tags=["invoices"], dependencies=[Depends(require_product_access("invoicefollow"))])
+settings_router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_product_access("invoicefollow"))])
 public_router = APIRouter(prefix="/invoices", tags=["public"])
 
 @invoice_router.post("/cron/reminders/enqueue", tags=["cron"])
-async def cron_enqueue_reminders(authorization: str = None):
-    """Endpoint para Vercel Cron. Solo encola, no envía correos sincrónicamente."""
+async def cron_enqueue_reminders(authorization: str | None = Header(default=None)):
+    """Endpoint para cron-job.org. Solo encola, no envía correos sincrónicamente."""
     expected = os.getenv("CRON_SECRET")
     if expected and authorization != f"Bearer {expected}":
          raise HTTPException(status_code=401, detail="Unauthorized")
     await enqueue_overdue_reminders()
     return {"status": "success", "task": "overdue_reminders_enqueued"}
-
-
-@public_router.post("/webhooks/lemonsqueezy")
-async def lemonsqueezy_webhook(request: Request, session: AsyncSession = Depends(get_session)):
-    """
-    Webhook from LemonSqueezy. On order_created, marks the matching invoice as paid.
-    Signature verified via X-Signature header and LEMONSQUEEZY_WEBHOOK_SECRET env var.
-    """
-    import hmac, hashlib
-
-    secret = os.getenv("LEMONSQUEEZY_WEBHOOK_SECRET", "")
-    raw_body = await request.body()
-
-    if secret:
-        sig = request.headers.get("X-Signature", "")
-        expected_sig = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected_sig):
-            raise HTTPException(status_code=401, detail="Invalid webhook signature")
-
-    try:
-        payload = json.loads(raw_body)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
-
-    event_name = payload.get("meta", {}).get("event_name", "")
-    custom_data = payload.get("meta", {}).get("custom_data", {})
-
-    if event_name == "order_created":
-        invoice_id = custom_data.get("invoice_id")
-        if invoice_id:
-            result = await session.execute(
-                select(Invoice).where(Invoice.id == int(invoice_id))
-            )
-            invoice = result.scalar_one_or_none()
-            if invoice:
-                invoice.status = "paid"
-                invoice.cron_paused = True  # stop reminders (replaces non-existent bot_active)
-                session.add(invoice)
-                await session.commit()
-                logger.info(f"Invoice {invoice_id} auto-marked as paid via LemonSqueezy webhook")
-                return {"status": "ok", "action": "invoice_paid", "invoice_id": invoice_id}
-
-    return {"status": "ok", "action": "no_op", "event": event_name}
 
 
 @settings_router.get("/invoice-template")

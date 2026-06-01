@@ -86,7 +86,7 @@ export default function SettingsPage() {
     } else {
       try {
         const { data } = await apiClient.post("/polar/checkout", {
-          product_id: product.pricing.polarProductId
+          app_name: product.name
         }) as { data: { checkout_url: string } };
         window.open(data.checkout_url, "_blank");
       } catch (err) {

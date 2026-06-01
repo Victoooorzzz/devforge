@@ -59,6 +59,33 @@ def get_polar_event_user_id(event: dict[str, Any]) -> str | None:
     return str(user_id) if user_id else None
 
 
+def get_polar_event_product_id(event: dict[str, Any]) -> str | None:
+    data = event.get("data") or {}
+
+    product_id = data.get("product_id")
+    if product_id:
+        return str(product_id)
+
+    product = data.get("product") or {}
+    product_id = product.get("id")
+    if product_id:
+        return str(product_id)
+
+    products = data.get("products") or []
+    if products and isinstance(products[0], dict) and products[0].get("id"):
+        return str(products[0]["id"])
+
+    items = data.get("items") or []
+    for item in items:
+        item_product = item.get("product") if isinstance(item, dict) else None
+        if isinstance(item_product, dict) and item_product.get("id"):
+            return str(item_product["id"])
+        if isinstance(item, dict) and item.get("product_id"):
+            return str(item["product_id"])
+
+    return None
+
+
 def verify_standard_webhook_signature(
     *,
     payload: bytes,

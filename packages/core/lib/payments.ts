@@ -6,15 +6,15 @@ interface CheckoutResponse {
   checkout_url: string;
 }
 
-export async function createCheckoutSession(productId: string): Promise<string> {
+export async function createCheckoutSession(appName: string): Promise<string> {
   const { data } = await apiClient.post<CheckoutResponse>("/polar/checkout", {
-    product_id: productId,
+    app_name: appName,
   });
   return data.checkout_url;
 }
 
-export async function redirectToCheckout(productId: string): Promise<void> {
-  const url = await createCheckoutSession(productId);
+export async function redirectToCheckout(appName: string): Promise<void> {
+  const url = await createCheckoutSession(appName);
   if (typeof window !== "undefined") {
     window.location.href = url;
   }

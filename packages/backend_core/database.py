@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
 from .config import get_settings
+from .db_migrations import run_lightweight_migrations
 from .outbox_models import SystemOutbox, InvoiceMagicLink
 
 settings = get_settings()
@@ -32,6 +33,7 @@ SessionLocal = async_session_factory
 async def create_db_and_tables() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await run_lightweight_migrations(conn)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

@@ -15,6 +15,7 @@ import random
 from .config import get_settings
 from .email_service import send_email
 from .database import get_session
+from .product_catalog import app_slug_from_url, resolve_product_id_for_app
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -118,6 +119,7 @@ class ProfileResponse(BaseModel):
     trial_ends_at: Optional[datetime]
     created_at: datetime
     lemonsqueezy_customer_id: Optional[str]
+    active_products: list[str] = Field(default_factory=list)
 
 # --- Password Utilities ---
 
@@ -267,14 +269,7 @@ async def register(body: RegisterRequest, background_tasks: BackgroundTasks, res
     checkout_url = None
     if body.app_name:
         from .polar_handler import create_polar_checkout
-        product_id = None
-        app = body.app_name.lower()
-        
-        if "filecleaner" in app: product_id = settings.polar_product_id_filecleaner or settings.next_public_polar_product_id_filecleaner
-        elif "invoicefollow" in app: product_id = settings.polar_product_id_invoicefollow or settings.next_public_polar_product_id_invoicefollow
-        elif "pricetrackr" in app: product_id = settings.polar_product_id_pricetrackr or settings.next_public_polar_product_id_pricetrackr
-        elif "webhookmonitor" in app: product_id = settings.polar_product_id_webhookmonitor or settings.next_public_polar_product_id_webhookmonitor
-        elif "feedbacklens" in app: product_id = settings.polar_product_id_feedbacklens or settings.next_public_polar_product_id_feedbacklens
+        product_id = resolve_product_id_for_app(settings, body.app_name)
         
         if product_id:
             try:
@@ -367,7 +362,27 @@ async def logout(response: Response):
 
 
 @auth_router.get("/profile", response_model=ProfileResponse)
-async def get_profile(user: User = Depends(get_current_user)):
+async def get_profile(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    from .product_access import UserProductAccess
+
+    result = await session.execute(
+        select(UserProductAccess).where(
+            UserProductAccess.user_id == user.id,
+            UserProductAccess.is_active == True,  # noqa: E712
+        )
+    )
+    active_products = [p.app_name for p in result.scalars().all()]
+    request_app = app_slug_from_url(request.headers.get("origin")) or app_slug_from_url(request.headers.get("referer"))
+    has_active_subscription = (
+        request_app in active_products
+        if request_app
+        else user.is_active or bool(active_products)
+    )
+    has_access = user.is_on_trial or has_active_subscription
     return ProfileResponse(
         id=user.id,
         email=user.email,
@@ -375,11 +390,12 @@ async def get_profile(user: User = Depends(get_current_user)):
         is_active=user.is_active,
         is_email_verified=user.is_email_verified,
         is_on_trial=user.is_on_trial,
-        has_access=user.has_access,
-        has_active_subscription=user.is_active,
+        has_access=has_access,
+        has_active_subscription=has_active_subscription,
         trial_ends_at=user.trial_ends_at,
         created_at=user.created_at,
         lemonsqueezy_customer_id=user.lemonsqueezy_customer_id,
+        active_products=active_products,
     )
 
 @auth_router.put("/profile", response_model=ProfileResponse)
@@ -401,6 +417,18 @@ async def update_profile(body: ProfileUpdateRequest, user: User = Depends(get_cu
     await session.refresh(user)
     await session.commit()
 
+    from .product_access import UserProductAccess
+    active_result = await session.execute(
+        select(UserProductAccess).where(
+            UserProductAccess.user_id == user.id,
+            UserProductAccess.is_active == True,  # noqa: E712
+        )
+    )
+    active_products = [p.app_name for p in active_result.scalars().all()]
+
+    has_active_subscription = user.is_active or bool(active_products)
+    has_access = user.is_on_trial or has_active_subscription
+
     return ProfileResponse(
         id=user.id,
         email=user.email,
@@ -408,9 +436,10 @@ async def update_profile(body: ProfileUpdateRequest, user: User = Depends(get_cu
         is_active=user.is_active,
         is_email_verified=user.is_email_verified,
         is_on_trial=user.is_on_trial,
-        has_access=user.has_access,
-        has_active_subscription=user.is_active,
+        has_access=has_access,
+        has_active_subscription=has_active_subscription,
         trial_ends_at=user.trial_ends_at,
         created_at=user.created_at,
         lemonsqueezy_customer_id=user.lemonsqueezy_customer_id,
+        active_products=active_products,
     )

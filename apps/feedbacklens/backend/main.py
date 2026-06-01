@@ -2,7 +2,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
 import json, logging, io
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 from collections import Counter
 import pandas as pd
 
-from backend_core import create_app, get_current_user, get_session, get_settings, User, require_user_access
+from backend_core import create_app, get_current_user, get_session, get_settings, User, require_product_access
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.outbox_models import SystemOutbox
@@ -211,12 +211,12 @@ def _serialize(entry: FeedbackEntry) -> dict:
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
-feedback_router = APIRouter(prefix="/feedback", tags=["feedback"])
-settings_router = APIRouter(prefix="/settings", tags=["settings"])
+feedback_router = APIRouter(prefix="/feedback", tags=["feedback"], dependencies=[Depends(require_product_access("feedbacklens"))])
+settings_router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_product_access("feedbacklens"))])
 
 
 @settings_router.get("/feedback-prefs")
-async def get_feedback_prefs(user: User = Depends(require_user_access), session: AsyncSession = Depends(get_session)):
+async def get_feedback_prefs(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == user.id))
     prefs = result.scalar_one_or_none()
     if not prefs:
@@ -232,7 +232,7 @@ async def get_feedback_prefs(user: User = Depends(require_user_access), session:
 
 
 @settings_router.put("/feedback-prefs")
-async def update_feedback_prefs(body: FeedbackPrefsUpdate, user: User = Depends(require_user_access), session: AsyncSession = Depends(get_session)):
+async def update_feedback_prefs(body: FeedbackPrefsUpdate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == user.id))
     prefs = result.scalar_one_or_none()
     if not prefs:
@@ -247,7 +247,7 @@ async def update_feedback_prefs(body: FeedbackPrefsUpdate, user: User = Depends(
 
 
 @feedback_router.post("")
-async def create_feedback(body: FeedbackCreate, user: User = Depends(require_user_access), session: AsyncSession = Depends(get_session)):
+async def create_feedback(body: FeedbackCreate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     entry = FeedbackEntry(user_id=user.id, text=body.text)
     session.add(entry)
     await session.flush()
@@ -256,7 +256,7 @@ async def create_feedback(body: FeedbackCreate, user: User = Depends(require_use
 
 
 @feedback_router.get("/list")
-async def list_feedback(user: User = Depends(require_user_access), session: AsyncSession = Depends(get_session)):
+async def list_feedback(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     result = await session.execute(
         select(FeedbackEntry)
         .where(FeedbackEntry.user_id == user.id)
@@ -267,7 +267,7 @@ async def list_feedback(user: User = Depends(require_user_access), session: Asyn
 
 
 @feedback_router.post("/{entry_id}/analyze")
-async def analyze_feedback(entry_id: int, user: User = Depends(require_user_access), session: AsyncSession = Depends(get_session)):
+async def analyze_feedback(entry_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     """
     Enqueues feedback analysis using Gemini / VADER fallback.
     Users never need to provide an API key.
@@ -334,7 +334,7 @@ register_job_handler("feedbacklens", "analyze_feedback", process_feedback_analys
 
 
 @feedback_router.get("/summary/weekly")
-async def get_weekly_summary(user: User = Depends(require_user_access), session: AsyncSession = Depends(get_session)):
+async def get_weekly_summary(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     """Returns a structured weekly digest for the dashboard."""
     one_week_ago = datetime.utcnow() - timedelta(days=7)
     result = await session.execute(
@@ -443,8 +443,8 @@ async def weekly_summary_cron():
 
 
 @feedback_router.post("/cron/summary", tags=["cron"])
-async def cron_feedback_summary(authorization: str = None):
-    """Vercel Cron endpoint — sends weekly digest emails."""
+async def cron_feedback_summary(authorization: str | None = Header(default=None)):
+    """cron-job.org endpoint — sends weekly digest emails."""
     expected = os.getenv("CRON_SECRET")
     if expected and authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -616,7 +616,7 @@ Responde SOLO con el texto de la respuesta, sin saludos genericos ni firmas."""
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
-    return _serialize_entry(entry)
+    return _serialize(entry)
 
 
 app = create_app(

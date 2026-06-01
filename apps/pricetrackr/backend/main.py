@@ -1,7 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
@@ -11,9 +11,11 @@ from datetime import datetime, timezone
 import asyncio, logging, io, json
 import pandas as pd
 
-from backend_core import create_app, get_current_user, get_session, User, scraper, require_user_access, get_settings
+from backend_core import create_app, get_current_user, get_session, User, scraper, require_product_access, get_settings
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
+from backend_core.price_alerts import build_price_alerts
+from backend_core.security_utils import is_public_http_url
 from backend_core.worker import register_job_handler
 from backend_core.outbox_models import SystemOutbox
 
@@ -39,6 +41,7 @@ class TrackedUrl(SQLModel, table=True):
     last_checked: Optional[datetime] = None
     next_check_at: Optional[datetime] = None   # when to check next (dynamic frequency)
     check_frequency_hours: int = Field(default=24)  # 1, 6, 12, or 24 hours
+    alert_threshold: Optional[float] = None
     status: str = Field(default="active")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -74,12 +77,12 @@ class TrackerPrefsUpdate(BaseModel):
     frequency: str
 
 
-tracker_router = APIRouter(prefix="/trackers", tags=["trackers"], dependencies=[Depends(require_user_access)])
-settings_router = APIRouter(prefix="/settings", tags=["settings"])
+tracker_router = APIRouter(prefix="/trackers", tags=["trackers"], dependencies=[Depends(require_product_access("pricetrackr"))])
+settings_router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_product_access("pricetrackr"))])
 
 @tracker_router.post("/cron/update", tags=["cron"])
-async def cron_update_prices(authorization: str = None):
-    """Endpoint para Vercel Cron / QStash."""
+async def cron_update_prices(authorization: str | None = Header(default=None)):
+    """Endpoint para cron-job.org."""
     # Simple secret check (optional but recommended)
     expected = os.getenv("CRON_SECRET")
     if expected and authorization != f"Bearer {expected}":
@@ -161,12 +164,14 @@ async def process_price_check(payload: dict):
             new_price = await scraper.fetch_price(t.url)
             new_stock = await scraper.fetch_stock(t.url)
             now = datetime.utcnow()
+            previous_price = t.current_price
+            previous_stock = t.in_stock
 
-            price_changed = new_price is not None and new_price != t.current_price
-            stock_changed = new_stock is not None and new_stock != t.in_stock
+            price_changed = new_price is not None and new_price != previous_price
+            stock_changed = new_stock is not None and new_stock != previous_stock
 
             if price_changed:
-                t.previous_price = t.current_price
+                t.previous_price = previous_price
                 t.current_price = new_price
                 # Track historical minimum
                 if t.min_price is None or new_price < t.min_price:
@@ -196,8 +201,18 @@ async def process_price_check(payload: dict):
             alert_email = user_settings.alert_email if user_settings else ""
 
             if alert_email:
+                alerts = build_price_alerts(
+                    label=t.label,
+                    url=t.url,
+                    previous_price=previous_price,
+                    new_price=new_price,
+                    previous_stock=previous_stock,
+                    new_stock=new_stock,
+                    min_price=t.min_price,
+                    alert_threshold=t.alert_threshold,
+                )
                 # Price drop alert
-                if price_changed and t.previous_price and new_price < t.previous_price:
+                if "price_drop" in alerts:
                     direction = "bajó"
                     send_email(
                         to=alert_email,
@@ -210,8 +225,19 @@ async def process_price_check(payload: dict):
                         )
                     )
 
+                if "target_price" in alerts:
+                    send_email(
+                        to=alert_email,
+                        subject=f"Target price reached: {t.label}",
+                        html_body=(
+                            f"<p><strong>{t.label}</strong> reached your target price.</p>"
+                            f"<p>Precio actual: <strong>${new_price:,.2f}</strong></p>"
+                            f"<p><a href='{t.url}'>Ver producto</a></p>"
+                        )
+                    )
+
                 # Back in stock alert
-                if stock_changed and new_stock is True and t.in_stock is False:
+                if "back_in_stock" in alerts:
                     send_email(
                         to=alert_email,
                         subject=f"✅ Volvió al stock: {t.label}",
@@ -239,6 +265,8 @@ register_job_handler("pricetrackr", "price_check", process_price_check)
 async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     if not user.has_access:
         raise HTTPException(status_code=403, detail="Active subscription or trial required")
+    if not is_public_http_url(body.url):
+        raise HTTPException(status_code=400, detail="Only public http(s) product URLs are allowed")
 
     initial_price = await scraper.fetch_price(body.url)
     initial_stock = await scraper.fetch_stock(body.url)
@@ -367,7 +395,7 @@ async def export_trackers(
         "previous_price": t.previous_price,
         "min_price_ever": t.min_price,
         "in_stock": t.in_stock,
-        "alert_threshold": getattr(t, "alert_threshold", None),
+        "alert_threshold": t.alert_threshold,
         "last_checked": t.last_checked.isoformat() if t.last_checked else None,
         "check_frequency_hours": t.check_frequency_hours,
         "status": t.status,
@@ -423,9 +451,8 @@ async def update_alert_threshold(
             user_settings.alert_email = body.alert_email
         session.add(user_settings)
 
-    # alert_threshold: store in TrackedUrl.min_price as a proxy until dedicated column is added
-    # (min_price already exists and is optional — threshold is a user-set floor price)
-    # NOTE: this is intentionally a separate concept; add alert_threshold column when needed.
+    t.alert_threshold = body.alert_threshold
+    session.add(t)
     await session.commit()
     return {"tracker_id": tracker_id, "alert_threshold": body.alert_threshold, "alert_email": body.alert_email}
 
@@ -470,7 +497,7 @@ app = create_app(
     domain_routers=[tracker_router, settings_router]
 )
 
-# Eliminado local APScheduler para compatibilidad con Serverless (Vercel Crons)
+# Eliminado local APScheduler para compatibilidad con cron-job.org
 
 if __name__ == "__main__":
     import uvicorn

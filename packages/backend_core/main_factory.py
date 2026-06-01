@@ -10,9 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .auth import auth_router
 from .config import get_settings
 from .database import create_db_and_tables
-from .lemonsqueezy_handler import ls_router, webhook_router as ls_webhook_router
 from .polar_handler import polar_router, webhook_router as polar_webhook_router
-from .stripe_handler import stripe_router, webhook_router as stripe_webhook_router
 from .worker import worker_router
 
 
@@ -26,18 +24,12 @@ def create_app(
 ) -> FastAPI:
     settings = get_settings()
 
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    scheduler = AsyncIOScheduler()
-    app_instance = None # Placeholder for closure access
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         logger.info("Starting %s...", title)
         await create_db_and_tables()
-        scheduler.start()
-        logger.info("Database tables created & Scheduler started")
+        logger.info("Database tables created and migrations applied")
         yield
-        scheduler.shutdown()
         logger.info("Shutting down %s...", title)
 
     app = FastAPI(
@@ -47,7 +39,6 @@ def create_app(
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
     )
-    app.state.scheduler = scheduler
 
     # CORS
     origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
@@ -66,13 +57,9 @@ def create_app(
 
     # Core routers
     app.include_router(auth_router)
-    app.include_router(ls_router)
     app.include_router(polar_router)
-    app.include_router(stripe_router)
 
-    app.include_router(ls_webhook_router)
     app.include_router(polar_webhook_router)
-    app.include_router(stripe_webhook_router)
     app.include_router(worker_router)
 
     # Domain-specific routers

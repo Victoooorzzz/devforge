@@ -19,7 +19,7 @@ export default function PrivacyPage() {
 
         <div>
           <h2 className="text-2xl font-semibold mt-6 mb-2 text-white">2. Payment Processing</h2>
-          <p>Your payments are securely processed by Lemon Squeezy. We do not store your credit card information.</p>
+          <p>Your payments are securely processed by Polar. We do not store your credit card information.</p>
         </div>
 
         <div>

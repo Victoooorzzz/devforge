@@ -11,7 +11,7 @@ export default function VerifyPage() {
   const handleVerified = async () => {
     try {
       const { data } = await apiClient.post("/polar/checkout", {
-        product_id: product.pricing.polarProductId
+        app_name: product.name
       }) as { data: { checkout_url: string } };
       window.location.href = data.checkout_url;
     } catch (err) {

@@ -14,7 +14,7 @@ import boto3
 import logging
 
 from fastapi.concurrency import run_in_threadpool
-from backend_core import create_app, get_current_user, get_session, User, require_user_access, get_settings
+from backend_core import create_app, get_current_user, get_session, User, require_product_access, get_settings
 from backend_core.database import get_managed_session
 from backend_core.outbox_models import SystemOutbox
 from backend_core.worker import register_job_handler
@@ -182,7 +182,8 @@ register_job_handler("filecleaner", "process_csv", handle_process_csv)
 
 
 # --- Routers ---
-file_router = APIRouter(prefix="/files", tags=["files"], dependencies=[Depends(require_user_access)])
+file_router = APIRouter(prefix="/files", tags=["files"], dependencies=[Depends(require_product_access("filecleaner"))])
+demo_router = APIRouter(prefix="/files", tags=["demo"])
 settings_router = APIRouter(prefix="/settings", tags=["settings"])
 
 
@@ -246,7 +247,7 @@ async def upload_file(
     return {"id": record.id, "status": "queued", "name": record.original_name}
 
 
-@file_router.post("/demo/upload")
+@demo_router.post("/demo/upload")
 async def demo_upload(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -299,7 +300,7 @@ async def demo_upload(
     return {"id": record.id, "status": "queued", "name": record.original_name}
 
 
-@file_router.get("/demo/{file_id}/status")
+@demo_router.get("/demo/{file_id}/status")
 async def get_demo_file_status(
     file_id: int,
     session: AsyncSession = Depends(get_session),
@@ -329,7 +330,7 @@ async def get_demo_file_status(
     return response
 
 
-@file_router.get("/demo/{file_id}/download")
+@demo_router.get("/demo/{file_id}/download")
 async def download_demo_file(
     file_id: int,
     session: AsyncSession = Depends(get_session),
@@ -772,7 +773,7 @@ async def delete_file(
 app = create_app(
     title="File Cleaner",
     description="Upload, process, and clean your CSV/Excel datasets",
-    domain_routers=[file_router, settings_router]
+    domain_routers=[file_router, demo_router, settings_router]
 )
 
 if __name__ == "__main__":

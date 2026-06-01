@@ -1,8 +1,9 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select, delete
 from typing import Optional, Literal
@@ -10,15 +11,18 @@ from datetime import datetime, timezone, timedelta
 import json, uuid, logging, httpx, io
 import pandas as pd
 
-from backend_core import create_app, get_current_user, get_session, User, require_user_access
+from backend_core import create_app, get_current_user, get_session, User, require_product_access
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.logic_bridge import detect_and_act_on_payment
 from backend_core.outbox_models import SystemOutbox
+from backend_core.security_utils import is_public_http_url
 from backend_core.worker import register_job_handler
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
+MAX_WEBHOOKS_PER_MINUTE = 60
 
 # SQL migrations needed:
 # ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS user_id INTEGER;
@@ -85,8 +89,8 @@ class RetryPayload(BaseModel):
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
-webhook_router = APIRouter(prefix="/webhooks", tags=["webhooks"])
-settings_router = APIRouter(prefix="/settings", tags=["settings"])
+webhook_router = APIRouter(prefix="/webhooks", tags=["webhooks"], dependencies=[Depends(require_product_access("webhookmonitor"))])
+settings_router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_product_access("webhookmonitor"))])
 ingestion_router = APIRouter(tags=["ingestion"])
 
 
@@ -112,13 +116,15 @@ async def get_webhook_prefs(
 @webhook_router.post("/config")
 async def update_config(
     body: WebhookPrefsUpdate,
-    user: User = Depends(require_user_access),
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
     result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == user.id))
     ws = result.scalar_one_or_none()
     if not ws:
         ws = WebhookSettings(user_id=user.id)
+    if body.forward_url and not is_public_http_url(body.forward_url):
+        raise HTTPException(status_code=400, detail="Forward URL must be a public http(s) URL")
     ws.forward_url = body.forward_url
     ws.expected_interval_minutes = body.expected_interval_minutes
     ws.alert_email = body.alert_email
@@ -130,7 +136,7 @@ async def update_config(
 
 @webhook_router.get("/config")
 async def get_config(
-    user: User = Depends(require_user_access),
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
     result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
@@ -145,7 +151,7 @@ async def get_config(
 
 @webhook_router.get("/logs")
 async def list_logs(
-    user: User = Depends(require_user_access),
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
     ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
@@ -177,7 +183,7 @@ async def list_logs(
 
 @webhook_router.delete("/requests")
 async def delete_requests(
-    user: User = Depends(require_user_access),
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
     ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
@@ -193,7 +199,7 @@ async def delete_requests(
 async def retry_request(
     request_id: int,
     body: RetryPayload,
-    user: User = Depends(require_user_access),
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -218,6 +224,8 @@ async def retry_request(
     ws = ws_result.scalar_one_or_none()
     if not ws or not ws.forward_url:
         raise HTTPException(status_code=400, detail="No forward_url configured in settings")
+    if not is_public_http_url(ws.forward_url):
+        raise HTTPException(status_code=400, detail="Forward URL must be a public http(s) URL")
         
     job = SystemOutbox(
         app_name="webhookmonitor",
@@ -321,8 +329,8 @@ async def cleanup_old_logs():
 
 
 @webhook_router.post("/cron/silence", tags=["cron"])
-async def cron_silence_check(authorization: str = None):
-    """Vercel Cron endpoint — detects silent webhooks."""
+async def cron_silence_check(authorization: str | None = Header(default=None)):
+    """cron-job.org endpoint — detects silent webhooks."""
     expected = os.getenv("CRON_SECRET")
     if expected and authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -332,8 +340,8 @@ async def cron_silence_check(authorization: str = None):
 
 
 @webhook_router.post("/cron/cleanup", tags=["cron"])
-async def cron_cleanup_logs(authorization: str = None):
-    """Vercel Cron endpoint — purges webhook logs older than 30 days."""
+async def cron_cleanup_logs(authorization: str | None = Header(default=None)):
+    """cron-job.org endpoint — purges webhook logs older than 30 days."""
     expected = os.getenv("CRON_SECRET")
     if expected and authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -347,7 +355,7 @@ async def cron_cleanup_logs(authorization: str = None):
 @webhook_router.get("/logs/export")
 async def export_logs(
     format: Literal["csv", "xlsx", "json"] = Query(default="csv"),
-    user: User = Depends(require_user_access),
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     """Export all webhook request logs as CSV, XLSX, or JSON."""
@@ -448,6 +456,8 @@ async def process_webhook_forward(payload: dict):
         ws = ws_result.scalar_one_or_none()
         if not ws or not ws.forward_url:
             return {"status": "skipped", "reason": "no forward url"}
+        if not is_public_http_url(ws.forward_url):
+            return {"status": "skipped", "reason": "unsafe forward url"}
             
         headers = json.loads(req.headers_json)
         safe_headers = {
@@ -504,7 +514,30 @@ async def ingest_webhook(
     if not ep:
         raise HTTPException(status_code=404, detail="Endpoint not found")
 
-    body = (await request.body()).decode("utf-8", errors="replace")
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_WEBHOOK_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="Webhook body too large")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid content-length header")
+
+    since = datetime.utcnow() - timedelta(minutes=1)
+    count_result = await session.execute(
+        select(func.count(WebhookRequest.id)).where(
+            WebhookRequest.endpoint_id == ep.id,
+            WebhookRequest.received_at >= since,
+        )
+    )
+    recent_count = count_result.scalar_one()
+    if recent_count >= MAX_WEBHOOKS_PER_MINUTE:
+        raise HTTPException(status_code=429, detail="Webhook rate limit exceeded")
+
+    raw_body = await request.body()
+    if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Webhook body too large")
+
+    body = raw_body.decode("utf-8", errors="replace")
     headers = dict(request.headers)
 
     background_tasks.add_task(
