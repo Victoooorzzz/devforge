@@ -124,11 +124,12 @@ export default function DashboardPage() {
     formData.append("file", file);
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/feedback/bulk-csv`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: formData,
-      });
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/feedback/bulk-csv`, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: formData,
+          credentials: "include",
+        });
       if (!res.ok) throw new Error("CSV upload failed");
       const data = await res.json();
       setBulkResult({ created: data.created });
@@ -145,6 +146,7 @@ export default function DashboardPage() {
     const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/feedback/export?format=${format}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: "include",
     });
     if (!res.ok) { alert("Error al exportar"); return; }
     const blob = await res.blob();

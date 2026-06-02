@@ -89,6 +89,7 @@ export function uploadFile(
     method: "POST",
     headers,
     body: formData,
+    credentials: "include",
   }).then(async (response) => {
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({ detail: "Upload failed" }));

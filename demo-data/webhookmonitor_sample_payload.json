@@ -1,0 +1,19 @@
+{
+  "event": "order.paid",
+  "id": "evt_demo_001",
+  "created_at": "2026-06-01T15:30:00Z",
+  "customer": {
+    "email": "demo.customer@example.com",
+    "name": "Demo Customer"
+  },
+  "order": {
+    "id": "ord_demo_001",
+    "amount": 4900,
+    "currency": "USD",
+    "status": "paid"
+  },
+  "metadata": {
+    "source": "devforge-demo",
+    "product": "WebhookMonitor"
+  }
+}

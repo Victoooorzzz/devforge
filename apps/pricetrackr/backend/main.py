@@ -43,7 +43,7 @@ class TrackedUrl(SQLModel, table=True):
     check_frequency_hours: int = Field(default=24)  # 1, 6, 12, or 24 hours
     alert_threshold: Optional[float] = None
     status: str = Field(default="active")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class PriceHistory(SQLModel, table=True):
@@ -52,7 +52,7 @@ class PriceHistory(SQLModel, table=True):
     tracker_id: int = Field(index=True)
     price: Optional[float] = None
     in_stock: Optional[bool] = None
-    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    recorded_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class TrackerSettings(SQLModel, table=True):

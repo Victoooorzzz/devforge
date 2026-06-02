@@ -119,6 +119,7 @@ export default function DashboardPage() {
     const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/webhooks/logs/export?format=${format}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: "include",
     });
     if (!res.ok) { alert("Error al exportar"); return; }
     const blob = await res.blob();

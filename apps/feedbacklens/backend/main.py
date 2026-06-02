@@ -36,7 +36,7 @@ class FeedbackEntry(SQLModel, table=True):
     is_urgent: bool = Field(default=False)
     draft_reply: Optional[str] = None
     analysis_engine: Optional[str] = None  # "gemini" | "vader" | "keyword"
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class FeedbackSettings(SQLModel, table=True):

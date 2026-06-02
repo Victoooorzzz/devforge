@@ -1,0 +1,11 @@
+customer_id,name,email,phone,city,plan,signup_date,monthly_spend,notes
+1001,  Ana Torres  , ANA.TORRES@EXAMPLE.COM , +1 (555) 010-1100 , Miami , Pro , 2026/05/01 , $49.00 , " duplicated whitespace "
+1002,Carlos Vega,carlos.vega@example.com,555-010-2200,Lima,Basic,05-03-2026,$19.00,
+1003,Lucia Ramos,lucia.ramos@example.com,5550103300,Bogota,Pro,2026-05-04,$49.00,VIP
+1004, Mateo Silva , mateo.silva@example.com , 555.010.4400 , Santiago , Enterprise , May 5 2026 , $149.00 , Needs invoice
+1005,Sofia Chen,sofia.chen@example.com,555-010-5500,New York,Basic,2026-05-05,$19.00,
+1005,Sofia Chen,sofia.chen@example.com,555-010-5500,New York,Basic,2026-05-05,$19.00,
+1006,Diego Luna,diego.luna@example.com,555-010-6600,Mexico City,Pro,2026-05-07,$49.00,late payment risk
+,,,,,,,,
+1007,  Valeria Ruiz,valeria.ruiz@example.com,555-010-7700, Madrid ,Enterprise,2026-05-08,$149.00,
+1008,Noah Kim,noah.kim@example.com,555-010-8800,Los Angeles,Basic,2026-05-09,$19.00,extra spaces   

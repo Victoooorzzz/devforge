@@ -40,7 +40,7 @@ class Invoice(SQLModel, table=True):
     promise_token: Optional[str] = Field(default=None, index=True)
     payment_promise_date: Optional[date] = None
     cron_paused: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class InvoiceSettings(SQLModel, table=True):

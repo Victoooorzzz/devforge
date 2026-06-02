@@ -80,7 +80,7 @@ class ProcessedFile(SQLModel, table=True):
     empty_removed: int = Field(default=0)
     whitespace_fixed: int = Field(default=0)
     error_message: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 def _get_s3_client():

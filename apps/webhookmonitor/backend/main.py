@@ -54,7 +54,7 @@ class WebhookRequest(SQLModel, table=True):
     path: str
     headers_json: str = "{}"
     body: str = ""
-    received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    received_at: datetime = Field(default_factory=datetime.utcnow)
     # Exponential backoff retry tracking
     retry_count: int = Field(default=0)
     next_retry_at: Optional[datetime] = None

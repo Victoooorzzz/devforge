@@ -143,11 +143,12 @@ export default function DashboardPage() {
         const formData = new FormData();
         formData.append("file", file);
         const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/upload`, {
-          method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: formData,
-        });
+          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/upload`, {
+            method: "POST",
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            body: formData,
+            credentials: "include",
+          });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.detail || "Upload failed");
@@ -169,6 +170,7 @@ export default function DashboardPage() {
     const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/export?format=${format}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: "include",
     });
     if (!res.ok) { alert("Error al exportar"); return; }
     const blob = await res.blob();
@@ -187,11 +189,12 @@ export default function DashboardPage() {
       const formData = new FormData();
       formData.append("file", fileInput);
       const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/ai-analyze`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: formData,
-      });
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/ai-analyze`, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: formData,
+          credentials: "include",
+        });
       if (!res.ok) throw new Error("AI analyze failed");
       const data: AIAnalysis = await res.json();
       setAiPanel(data);
