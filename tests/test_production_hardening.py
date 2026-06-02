@@ -117,6 +117,11 @@ class ScraperPriceExtractionTests(unittest.TestCase):
         self.assertEqual(_extract_price_from_text("$1,299.99"), 1299.99)
         self.assertEqual(_extract_price_from_text("EUR 1.299,99"), 1299.99)
 
+    def test_price_scraper_does_not_advertise_brotli_without_decoder(self):
+        source = (ROOT / "packages" / "backend_core" / "scraper.py").read_text()
+        self.assertIn('"Accept-Encoding": "gzip, deflate"', source)
+        self.assertNotIn('"Accept-Encoding": "gzip, deflate, br"', source)
+
 
 class MigrationStatementTests(unittest.TestCase):
     def test_feedback_entries_gets_urgent_column(self):
