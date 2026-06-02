@@ -63,6 +63,7 @@ _GENERIC_SELECTORS = [
     "[data-price]",
     "[itemprop='price']",
     "meta[property='product:price:amount']",
+    ".price_color",
     ".price",
     "#price",
     ".product-price",
@@ -76,7 +77,8 @@ _GENERIC_SELECTORS = [
 
 # --- Robust price regex ---
 _PRICE_REGEX = re.compile(
-    r"[\$€£S/\.]?\s?(\d{1,3}(?:[,.\s]\d{3})*(?:[.,]\d{1,2})?)"
+    r"(?:[$\u20ac\u00a3\u00a5]|USD|EUR|GBP|S/\.?)?\s*"
+    r"(\d+(?:[,.\s]\d{3})*(?:[.,]\d{1,2})?)"
 )
 
 
@@ -94,7 +96,17 @@ def _extract_price_from_text(text: str) -> float | None:
     cleaned = text.strip().replace("\xa0", " ")
     match = _PRICE_REGEX.search(cleaned)
     if match:
-        num_str = match.group(1).replace(",", "").replace(" ", "")
+        num_str = match.group(1).replace(" ", "")
+        if "," in num_str and "." in num_str:
+            if num_str.rfind(",") > num_str.rfind("."):
+                num_str = num_str.replace(".", "").replace(",", ".")
+            else:
+                num_str = num_str.replace(",", "")
+        elif "," in num_str:
+            if re.search(r",\d{1,2}$", num_str):
+                num_str = num_str.replace(",", ".")
+            else:
+                num_str = num_str.replace(",", "")
         try:
             value = float(num_str)
             if 0.01 <= value <= 999_999:  # sanity bounds

@@ -195,6 +195,7 @@ Feedback: "{text}"
 
 
 def _serialize(entry: FeedbackEntry) -> dict:
+    analyzed_at = entry.created_at.isoformat() if entry.sentiment else None
     return {
         "id": entry.id,
         "text": entry.text,
@@ -204,6 +205,7 @@ def _serialize(entry: FeedbackEntry) -> dict:
         "is_urgent": entry.is_urgent,
         "draft_reply": entry.draft_reply,
         "analysis_engine": entry.analysis_engine,
+        "analyzed_at": analyzed_at,
         "created_at": entry.created_at.isoformat(),
     }
 
@@ -269,7 +271,7 @@ async def list_feedback(user: User = Depends(get_current_user), session: AsyncSe
 @feedback_router.post("/{entry_id}/analyze")
 async def analyze_feedback(entry_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     """
-    Enqueues feedback analysis using Gemini / VADER fallback.
+    Runs feedback analysis using Gemini / VADER fallback.
     Users never need to provide an API key.
     """
     result = await session.execute(
@@ -279,17 +281,23 @@ async def analyze_feedback(entry_id: int, user: User = Depends(get_current_user)
     if not entry:
         raise HTTPException(status_code=404, detail="Not found")
 
-    job = SystemOutbox(
-        app_name="feedbacklens",
-        job_type="analyze_feedback",
-        payload={"entry_id": entry.id, "user_id": user.id},
-        status="pending",
-        max_attempts=3
-    )
-    session.add(job)
+    prefs_result = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == user.id))
+    prefs = prefs_result.scalar_one_or_none()
+    analysis = await _analyze_with_gemini(entry.text, prefs.custom_prompt if prefs else "")
+    if analysis is None:
+        analysis = _analyze_with_vader(entry.text)
+
+    entry.sentiment = analysis["sentiment"]
+    entry.confidence = analysis["confidence"]
+    entry.themes_json = json.dumps(analysis["themes"])
+    entry.is_urgent = analysis["is_urgent"]
+    entry.draft_reply = analysis.get("draft_reply")
+    entry.analysis_engine = analysis["engine"]
+    session.add(entry)
     await session.commit()
-    
-    return {"status": "queued", "message": "Analysis queued in system_outbox"}
+    await session.refresh(entry)
+
+    return _serialize(entry)
 
 
 async def process_feedback_analysis(payload: dict):

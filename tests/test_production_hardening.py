@@ -1,11 +1,21 @@
 import unittest
 from pathlib import Path
 import sys
+import types
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "backend_core"))
 
+sys.modules.setdefault(
+    "httpx",
+    types.SimpleNamespace(AsyncClient=object, HTTPStatusError=Exception),
+)
+bs4_stub = types.ModuleType("bs4")
+bs4_stub.BeautifulSoup = object
+sys.modules.setdefault("bs4", bs4_stub)
+
 from polar_utils import get_polar_event_product_id
+from scraper import _extract_price_from_text
 from product_catalog import (
     APP_SLUGS,
     app_slug_from_url,
@@ -99,6 +109,19 @@ class PriceAlertTests(unittest.TestCase):
         )
 
         self.assertIn("target_price", alerts)
+
+
+class ScraperPriceExtractionTests(unittest.TestCase):
+    def test_extracts_common_currency_formats(self):
+        self.assertEqual(_extract_price_from_text("\u00a351.77"), 51.77)
+        self.assertEqual(_extract_price_from_text("$1,299.99"), 1299.99)
+        self.assertEqual(_extract_price_from_text("EUR 1.299,99"), 1299.99)
+
+
+class MigrationStatementTests(unittest.TestCase):
+    def test_feedback_entries_gets_urgent_column(self):
+        statements = (ROOT / "packages" / "backend_core" / "db_migrations.py").read_text()
+        self.assertIn("feedback_entries ADD COLUMN IF NOT EXISTS is_urgent", statements)
 
 
 if __name__ == "__main__":
