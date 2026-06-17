@@ -1,7 +1,8 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-import json, logging, io
+import json, logging, io, re, unicodedata
+from difflib import SequenceMatcher
 from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,40 @@ from backend_core.worker import register_job_handler
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+DEDUPE_LOOKBACK_LIMIT = 500
+SEMANTIC_DUPLICATE_THRESHOLD = 0.75
+FEEDBACK_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "but",
+    "by",
+    "for",
+    "from",
+    "i",
+    "in",
+    "is",
+    "it",
+    "my",
+    "of",
+    "on",
+    "or",
+    "our",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "we",
+    "when",
+    "with",
+    "you",
+    "your",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +245,85 @@ def _serialize(entry: FeedbackEntry) -> dict:
     }
 
 
+def _normalize_feedback_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", ascii_text)).strip()
+
+
+def _stem_feedback_token(token: str) -> str:
+    if len(token) > 5 and token.endswith("ices"):
+        return token[:-1]
+    if len(token) > 4 and token.endswith("ies"):
+        return token[:-3] + "y"
+    for suffix in ("ing", "ed", "es", "s"):
+        if len(token) > len(suffix) + 3 and token.endswith(suffix):
+            return token[: -len(suffix)]
+    return token
+
+
+def _feedback_tokens(text: str) -> set[str]:
+    normalized = _normalize_feedback_text(text)
+    return {
+        _stem_feedback_token(token)
+        for token in normalized.split()
+        if len(token) > 2 and token not in FEEDBACK_STOPWORDS
+    }
+
+
+def _semantic_similarity(left: str, right: str) -> float:
+    left_normalized = _normalize_feedback_text(left)
+    right_normalized = _normalize_feedback_text(right)
+    if not left_normalized or not right_normalized:
+        return 0.0
+    if left_normalized == right_normalized:
+        return 1.0
+
+    left_tokens = _feedback_tokens(left)
+    right_tokens = _feedback_tokens(right)
+    sequence_ratio = SequenceMatcher(None, left_normalized, right_normalized).ratio()
+    if len(left_tokens) < 3 or len(right_tokens) < 3:
+        return sequence_ratio
+
+    intersection = left_tokens & right_tokens
+    union = left_tokens | right_tokens
+    jaccard = len(intersection) / len(union) if union else 0.0
+    overlap = len(intersection) / min(len(left_tokens), len(right_tokens))
+    length_ratio = min(len(left_tokens), len(right_tokens)) / max(len(left_tokens), len(right_tokens))
+    weighted_overlap = overlap if length_ratio >= 0.65 else overlap * length_ratio
+    return max(sequence_ratio, jaccard, weighted_overlap)
+
+
+def _find_semantic_duplicate(text: str, candidates: list[FeedbackEntry]) -> FeedbackEntry | None:
+    best_match = None
+    best_score = 0.0
+    for candidate in candidates:
+        score = _semantic_similarity(text, candidate.text)
+        if score > best_score:
+            best_score = score
+            best_match = candidate
+    if best_match and best_score >= SEMANTIC_DUPLICATE_THRESHOLD:
+        return best_match
+    return None
+
+
+def _serialize_duplicate(entry: FeedbackEntry) -> dict:
+    payload = _serialize(entry)
+    payload["deduped"] = True
+    payload["duplicate_of_id"] = entry.id
+    return payload
+
+
+async def _load_dedupe_candidates(user_id: int, session: AsyncSession) -> list[FeedbackEntry]:
+    result = await session.execute(
+        select(FeedbackEntry)
+        .where(FeedbackEntry.user_id == user_id)
+        .order_by(FeedbackEntry.created_at.desc())
+        .limit(DEDUPE_LOOKBACK_LIMIT)
+    )
+    return list(result.scalars().all())
+
+
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
@@ -251,7 +365,16 @@ async def update_feedback_prefs(body: FeedbackPrefsUpdate, user: User = Depends(
 
 @feedback_router.post("")
 async def create_feedback(body: FeedbackCreate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    entry = FeedbackEntry(user_id=user.id, text=body.text)
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Feedback text is required")
+
+    candidates = await _load_dedupe_candidates(user.id, session)
+    duplicate = _find_semantic_duplicate(text, candidates)
+    if duplicate:
+        return _serialize_duplicate(duplicate)
+
+    entry = FeedbackEntry(user_id=user.id, text=text)
     session.add(entry)
     await session.flush()
     await session.refresh(entry)
@@ -552,16 +675,23 @@ async def bulk_import_feedback(
     if len(body.texts) > 500:
         raise HTTPException(status_code=400, detail="Max 500 items per bulk import")
     created_ids = []
+    duplicates_skipped = 0
+    candidates = await _load_dedupe_candidates(user.id, session)
     for text in body.texts:
         text = text.strip()
         if not text:
+            continue
+        duplicate = _find_semantic_duplicate(text, candidates)
+        if duplicate:
+            duplicates_skipped += 1
             continue
         entry = FeedbackEntry(user_id=user.id, text=text)
         session.add(entry)
         await session.flush()  # get id
         created_ids.append(entry.id)
+        candidates.append(entry)
     await session.commit()
-    return {"created": len(created_ids), "ids": created_ids}
+    return {"created": len(created_ids), "ids": created_ids, "duplicates_skipped": duplicates_skipped}
 
 
 @feedback_router.post("/bulk-csv")
@@ -584,16 +714,28 @@ async def bulk_import_csv(
 
     texts = df[column].dropna().astype(str).tolist()
     created_ids = []
+    duplicates_skipped = 0
+    candidates = await _load_dedupe_candidates(user.id, session)
     for text in texts[:500]:
         text = text.strip()
         if not text:
+            continue
+        duplicate = _find_semantic_duplicate(text, candidates)
+        if duplicate:
+            duplicates_skipped += 1
             continue
         entry = FeedbackEntry(user_id=user.id, text=text)
         session.add(entry)
         await session.flush()
         created_ids.append(entry.id)
+        candidates.append(entry)
     await session.commit()
-    return {"created": len(created_ids), "ids": created_ids, "total_rows": len(df)}
+    return {
+        "created": len(created_ids),
+        "ids": created_ids,
+        "duplicates_skipped": duplicates_skipped,
+        "total_rows": len(df),
+    }
 
 
 # ---------------------------------------------------------------------------
