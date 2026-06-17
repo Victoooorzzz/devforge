@@ -1,6 +1,15 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { apiClient, downloadFile, trackEvent } from "@devforge/core";
+import {
+  ActionToast,
+  DashboardEmptyState,
+  DashboardSkeleton,
+  InlineErrorState,
+  InlineSpinner,
+  WelcomeSteps,
+  type DashboardToast,
+} from "@devforge/ui";
 import { Download, ChevronDown, Bell, BellOff, Send, Loader2, X, Check } from "lucide-react";
 
 interface TrackedUrl {
@@ -62,13 +71,38 @@ export default function DashboardPage() {
   const [alertConfigs, setAlertConfigs] = useState<Record<number, AlertConfig>>({});
   const [summary, setSummary] = useState<TrackerSummary | null>(null);
   const [health, setHealth] = useState<TrackerHealth[]>([]);
+  const [savingTracker, setSavingTracker] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [toast, setToast] = useState<DashboardToast | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    apiClient.get<TrackedUrl[]>("/trackers/list").then(({ data }) => setTrackers(data)).catch(() => {});
-    apiClient.get<TrackerSummary>("/trackers/summary").then(({ data }) => setSummary(data)).catch(() => {});
-    apiClient.get<TrackerHealth[]>("/trackers/health").then(({ data }) => setHealth(data)).catch(() => {});
+  const showToast = useCallback((nextToast: DashboardToast) => {
+    setToast(nextToast);
+    window.setTimeout(() => setToast(null), 4500);
   }, []);
+
+  const refreshTrackers = useCallback(async () => {
+    setLoading(true);
+    setLoadError(false);
+    const [trackerResult, summaryResult, healthResult] = await Promise.allSettled([
+      apiClient.get<TrackedUrl[]>("/trackers/list"),
+      apiClient.get<TrackerSummary>("/trackers/summary"),
+      apiClient.get<TrackerHealth[]>("/trackers/health"),
+    ]);
+
+    if (trackerResult.status === "fulfilled") setTrackers(trackerResult.value.data);
+    if (summaryResult.status === "fulfilled") setSummary(summaryResult.value.data);
+    if (healthResult.status === "fulfilled") setHealth(healthResult.value.data);
+    if (trackerResult.status === "rejected" && summaryResult.status === "rejected" && healthResult.status === "rejected") {
+      setLoadError(true);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    refreshTrackers();
+  }, [refreshTrackers]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -80,28 +114,43 @@ export default function DashboardPage() {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSavingTracker(true);
     trackEvent("feature_used", { feature_name: "add_tracker" });
-    const { data } = await apiClient.post<TrackedUrl>("/trackers", { url: form.url, label: form.label, check_frequency_hours: form.check_frequency_hours });
-    setTrackers(prev => [data, ...prev]);
-    setForm({ url: "", label: "", check_frequency_hours: 24 });
-    setShowForm(false);
+    try {
+      const { data } = await apiClient.post<TrackedUrl>("/trackers", { url: form.url, label: form.label, check_frequency_hours: form.check_frequency_hours });
+      setTrackers(prev => [data, ...prev]);
+      setForm({ url: "", label: "", check_frequency_hours: 24 });
+      setShowForm(false);
+      showToast({ tone: "success", message: `${data.label} is now being watched for price drops.` });
+      refreshTrackers();
+    } catch {
+      showToast({ tone: "error", message: "We could not watch that product. Check the URL and try again." });
+    } finally {
+      setSavingTracker(false);
+    }
   };
 
   const handleUpdateFrequency = async (id: number, hours: number) => {
     try {
       await apiClient.patch(`/trackers/${id}/frequency`, { hours });
       setTrackers(prev => prev.map(t => t.id === id ? { ...t, check_frequency_hours: hours } : t));
-    } catch { alert("Error al actualizar frecuencia"); }
+      showToast({ tone: "success", message: `We will check this product every ${hours}h.` });
+    } catch {
+      showToast({ tone: "error", message: "We could not update the check frequency. Retry from the product row." });
+    }
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm("Dejar de rastrear este producto?")) return;
+    if (!window.confirm("Stop watching this product?")) return;
     setDeleting(prev => new Set(prev).add(id));
     try {
       await apiClient.delete(`/trackers/${id}`);
       setTrackers(prev => prev.filter(t => t.id !== id));
       if (selected?.id === id) setSelected(null);
-    } catch { alert("Error al eliminar"); }
+      showToast({ tone: "success", message: "This product is no longer being watched." });
+    } catch {
+      showToast({ tone: "error", message: "We could not stop watching this product. Retry from the product row." });
+    }
     finally { setDeleting(prev => { const s = new Set(prev); s.delete(id); return s; }); }
   };
 
@@ -112,7 +161,10 @@ export default function DashboardPage() {
     try {
       const { data } = await apiClient.get<PricePoint[]>(`/trackers/${t.id}/history`);
       setHistory(data);
-    } catch { setHistory([]); }
+    } catch {
+      setHistory([]);
+      showToast({ tone: "error", message: "We could not load this price history. Select the product again to retry." });
+    }
     finally { setLoadingHistory(false); }
   };
 
@@ -122,8 +174,9 @@ export default function DashboardPage() {
     trackEvent("feature_used", { feature_name: "export_trackers", format });
     try {
       await downloadFile(`/trackers/export?format=${format}`, `pricetrackr_export.${format}`);
+      showToast({ tone: "success", message: `Your watched products export started as ${format.toUpperCase()}.` });
     } catch {
-      alert("Error al exportar");
+      showToast({ tone: "error", message: "We could not export your watched products. Retry from the export menu." });
     }
   };
 
@@ -147,10 +200,11 @@ export default function DashboardPage() {
         alert_threshold: parseFloat(cfg.threshold)
       });
       setAlertConfigs(prev => ({ ...prev, [id]: { ...prev[id], saving: false, saved: true, open: false } }));
+      showToast({ tone: "success", message: "Price alert saved. We will email you when the price drops." });
       setTimeout(() => setAlertConfigs(prev => ({ ...prev, [id]: { ...prev[id], saved: false } })), 3000);
     } catch {
       setAlertConfigs(prev => ({ ...prev, [id]: { ...prev[id], saving: false } }));
-      alert("Error al guardar alerta");
+      showToast({ tone: "error", message: "We could not save this price alert. Check the amount and retry." });
     }
   };
 
@@ -159,8 +213,10 @@ export default function DashboardPage() {
     trackEvent("feature_used", { feature_name: "test_price_alert" });
     try {
       await apiClient.post(`/trackers/${id}/test-alert`, {});
-      alert("📧 Email de prueba enviado exitosamente!");
-    } catch { alert("Error al enviar test alert"); }
+      showToast({ tone: "success", message: "Test price alert email sent." });
+    } catch {
+      showToast({ tone: "error", message: "We could not send the test alert. Check your alert email in settings." });
+    }
     finally { setAlertConfigs(prev => ({ ...prev, [id]: { ...prev[id], testing: false } })); }
   };
 
@@ -174,7 +230,7 @@ export default function DashboardPage() {
 
   const Sparkline = ({ points }: { points: PricePoint[] }) => {
     const prices = points.map(p => p.price).filter(Boolean) as number[];
-    if (prices.length < 2) return <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Sin datos</span>;
+    if (prices.length < 2) return <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>No price history yet</span>;
     const min = Math.min(...prices);
     const max = Math.max(...prices);
     const range = max - min || 1;
@@ -189,11 +245,12 @@ export default function DashboardPage() {
 
   return (
     <div className="flex gap-6">
+      <ActionToast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>Price Tracker</h1>
-            <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>{trackers.length} productos rastreados</p>
+            <h1 className="text-2xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>Products you watch</h1>
+            <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>{trackers.length} products watched for price drops</p>
           </div>
           <div className="flex items-center gap-2">
             {/* Export dropdown */}
@@ -202,7 +259,7 @@ export default function DashboardPage() {
                 className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all"
                 style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}>
                 <Download size={14} />
-                <span>Export</span>
+                <span>Export watched products</span>
                 <ChevronDown size={12} className={`transition-transform ${exportOpen ? "rotate-180" : ""}`} />
               </button>
               {exportOpen && (
@@ -212,21 +269,49 @@ export default function DashboardPage() {
                     <button key={f} onClick={() => handleExport(f)}
                       className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5 transition-colors"
                       style={{ color: "var(--color-text)" }}>
-                      {f.toUpperCase()} — {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON"}
+                    {f.toUpperCase()} - {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON"}
                     </button>
                   ))}
                 </div>
               )}
             </div>
-            <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Agregar URL</button>
+            <button onClick={() => setShowForm(!showForm)} className="btn-primary">Watch product</button>
           </div>
         </div>
 
+        {loadError && (
+          <div className="mb-6">
+            <InlineErrorState
+              title="We could not load your watched products"
+              description="Your product list did not load. Retry now, and contact support if it keeps happening."
+              onRetry={refreshTrackers}
+            />
+          </div>
+        )}
+
+        {loading && trackers.length === 0 && <DashboardSkeleton rows={4} />}
+
+        {!loading && !loadError && trackers.length === 0 && (
+          <WelcomeSteps
+            title="Watch your first product"
+            description="Track price drops, back-in-stock changes, and potential savings from one product URL."
+            steps={[
+              "Paste a product URL and give it a clear name.",
+              "Choose how often we should check for price changes.",
+              "Add an alert so you hear when the price drops.",
+            ]}
+            actionLabel="Watch your first product"
+            onAction={() => setShowForm(true)}
+          />
+        )}
+
+        {!loading && (
+        <>
         {summary && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
             {[
-              { label: "Active", value: summary.active_trackers.toLocaleString(), color: "var(--color-accent)" },
-              { label: "Price drops", value: summary.price_drop_count.toLocaleString(), color: "#10B981" },
+              { label: "Products watched", value: summary.active_trackers.toLocaleString(), color: "var(--color-accent)" },
+              { label: "Dropped in price", value: summary.price_drop_count.toLocaleString(), color: "#10B981" },
               { label: "Out of stock", value: summary.out_of_stock_count.toLocaleString(), color: summary.out_of_stock_count ? "#EF4444" : "#10B981" },
               { label: "Potential savings", value: `$${summary.potential_savings.toFixed(2)}`, color: "#F59E0B" },
             ].map(stat => (
@@ -242,8 +327,8 @@ export default function DashboardPage() {
           <div className="mb-6 p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
             <div className="flex items-center justify-between gap-4 mb-3">
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider opacity-50">Scraper health</p>
-                <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>Trackers needing attention are listed first.</p>
+                <p className="text-xs font-bold uppercase tracking-wider opacity-50">Price check health</p>
+                <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>Products needing attention are listed first.</p>
               </div>
               <span className="text-xs font-mono" style={{ color: "var(--color-text-secondary)" }}>
                 {health.filter(item => item.severity !== "ok").length} issues
@@ -273,35 +358,40 @@ export default function DashboardPage() {
           <form onSubmit={handleAdd} className="p-6 rounded-lg mb-6 grid grid-cols-1 md:grid-cols-3 gap-4 items-end"
             style={{ backgroundColor: "var(--color-surface)" }}>
             <div className="md:col-span-1">
-              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Nombre del producto</label>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Product name</label>
               <input value={form.label} onChange={e => setForm({ ...form, label: e.target.value })} className="input-field" placeholder="Ej: iPhone 15 Pro" required />
             </div>
             <div className="md:col-span-1">
-              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>URL del producto</label>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Product URL</label>
               <input type="url" value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} className="input-field" placeholder="https://..." required />
             </div>
             <div className="md:col-span-1 flex items-end gap-3">
               <div className="flex-1">
-                <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Frecuencia</label>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Check every</label>
                 <select value={form.check_frequency_hours} onChange={e => setForm({ ...form, check_frequency_hours: parseInt(e.target.value) })} className="input-field cursor-pointer px-3">
-                  <option value={1}>Cada 1h</option>
-                  <option value={6}>Cada 6h</option>
-                  <option value={12}>Cada 12h</option>
-                  <option value={24}>Cada 24h</option>
+                  <option value={1}>Every 1h</option>
+                  <option value={6}>Every 6h</option>
+                  <option value={12}>Every 12h</option>
+                  <option value={24}>Every 24h</option>
                 </select>
               </div>
-              <button type="submit" className="btn-primary flex-1">Guardar</button>
+              <button type="submit" disabled={savingTracker} className="btn-primary flex-1">
+                {savingTracker ? <InlineSpinner /> : null}
+                {savingTracker ? "Watching product" : "Watch product"}
+              </button>
             </div>
           </form>
         )}
 
         <div className="space-y-3">
           {trackers.length === 0 && (
-            <div className="p-12 text-center rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
-              <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>
-                Aun no rastreas ningun producto. Agrega una URL para empezar.
-              </p>
-            </div>
+            <DashboardEmptyState
+              icon={<Bell size={24} />}
+              title="Watch your first product"
+              description="Add a product URL to see when it drops in price, comes back in stock, or reaches a new low."
+              actionLabel="Watch a product"
+              onAction={() => setShowForm(true)}
+            />
           )}
           {trackers.map(t => {
             const diff = priceDiff(t);
@@ -315,17 +405,17 @@ export default function DashboardPage() {
                       <p className="text-sm font-semibold truncate" style={{ color: "var(--color-text)" }}>{t.label}</p>
                       {isMin && (
                         <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: "rgba(16,185,129,0.15)", color: "#10B981" }}>MINIMO</span>
+                          style={{ backgroundColor: "rgba(16,185,129,0.15)", color: "#10B981" }}>NEW LOW</span>
                       )}
                       {t.in_stock === false && (
                         <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: "rgba(239,68,68,0.15)", color: "#EF4444" }}>SIN STOCK</span>
+                          style={{ backgroundColor: "rgba(239,68,68,0.15)", color: "#EF4444" }}>OUT OF STOCK</span>
                       )}
                       {/* Alert configured badge */}
                       {alertCfg?.saved && (
                         <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0 animate-in fade-in"
                           style={{ backgroundColor: "rgba(99,102,241,0.15)", color: "#6366F1" }}>
-                          <Bell size={10} className="inline mr-1" />ALERTA ACTIVA
+                          <Bell size={10} className="inline mr-1" />ALERT SAVED
                         </span>
                       )}
                     </div>
@@ -338,7 +428,7 @@ export default function DashboardPage() {
                           ${t.current_price.toFixed(2)}
                         </p>
                       ) : (
-                        <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>Sin precio</p>
+                        <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>No price yet</p>
                       )}
                       {diff !== null && (
                         <p className="text-xs font-mono" style={{ color: diff < 0 ? "#10B981" : "#EF4444" }}>
@@ -353,7 +443,7 @@ export default function DashboardPage() {
                       onClick={e => e.stopPropagation()}
                       className="text-xs px-2 py-1.5 rounded border-0 outline-none cursor-pointer transition-colors"
                       style={{ backgroundColor: "var(--color-surface-high)", color: "var(--color-text-secondary)" }}
-                      title="Frecuencia de escaneo"
+                      title="How often we check this product"
                     >
                       <option value={1}>1h</option>
                       <option value={6}>6h</option>
@@ -369,7 +459,7 @@ export default function DashboardPage() {
                         backgroundColor: alertCfg?.open ? "rgba(99,102,241,0.1)" : "var(--color-surface-high)",
                         color: alertCfg?.open ? "#6366F1" : "var(--color-text-secondary)"
                       }}
-                      title="Configurar alerta de precio"
+                      title="Save a price drop alert"
                     >
                       {alertCfg?.saved ? <Bell size={16} /> : <BellOff size={16} />}
                     </button>
@@ -377,7 +467,7 @@ export default function DashboardPage() {
                       disabled={deleting.has(t.id)}
                       className="text-xs px-2 py-1 rounded transition-colors"
                       style={{ backgroundColor: "var(--color-surface-high)", color: "var(--color-text-secondary)" }}>
-                      {deleting.has(t.id) ? "..." : "Eliminar"}
+                      {deleting.has(t.id) ? "Removing" : "Stop watching"}
                     </button>
                   </div>
                 </div>
@@ -387,7 +477,7 @@ export default function DashboardPage() {
                   <div className="px-4 pb-4 border-t border-[var(--color-border)] pt-3 animate-in fade-in slide-in-from-top-2 duration-200">
                     <p className="text-xs font-medium mb-2 flex items-center gap-1.5"
                       style={{ color: "var(--color-text-secondary)" }}>
-                      <Bell size={12} /> Alerta cuando el precio baje de:
+                      <Bell size={12} /> Alert me when the price drops below:
                     </p>
                     <div className="flex items-center gap-2">
                       <div className="relative flex-1">
@@ -406,7 +496,7 @@ export default function DashboardPage() {
                         className="px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5"
                         style={{ backgroundColor: "var(--color-primary)", color: "#000", opacity: alertCfg.saving || !alertCfg.threshold ? 0.6 : 1 }}>
                         {alertCfg.saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                        Guardar
+                        Save alert
                       </button>
                       <button onClick={() => handleTestAlert(t.id)}
                         disabled={alertCfg.testing}
@@ -422,7 +512,7 @@ export default function DashboardPage() {
                       </button>
                     </div>
                     <p className="text-[10px] mt-2" style={{ color: "var(--color-text-secondary)" }}>
-                      Se enviará un email a tu cuenta cuando el precio detectado sea menor al umbral configurado.
+                      We will email you when the detected price is below your saved amount.
                     </p>
                   </div>
                 )}
@@ -430,6 +520,8 @@ export default function DashboardPage() {
             );
           })}
         </div>
+        </>
+        )}
       </div>
 
       {/* History sidebar */}
@@ -437,22 +529,22 @@ export default function DashboardPage() {
         <div className="w-80 flex-shrink-0 rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)" }}>
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm font-semibold truncate" style={{ color: "var(--color-text)" }}>{selected.label}</p>
-            <button onClick={() => setSelected(null)} className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Cerrar</button>
+            <button onClick={() => setSelected(null)} className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Close</button>
           </div>
           {loadingHistory ? (
-            <p className="text-xs text-center py-8" style={{ color: "var(--color-text-secondary)" }}>Cargando historial...</p>
+            <p className="text-xs text-center py-8" style={{ color: "var(--color-text-secondary)" }}>Loading price history...</p>
           ) : history.length === 0 ? (
-            <p className="text-xs text-center py-8" style={{ color: "var(--color-text-secondary)" }}>Sin historial aun. El primer check se realiza en las proximas horas.</p>
+            <p className="text-xs text-center py-8" style={{ color: "var(--color-text-secondary)" }}>No price history yet. The first check runs in the next few hours.</p>
           ) : (
             <div className="space-y-4">
               <div>
-                <p className="text-xs font-medium mb-2 uppercase tracking-wide" style={{ color: "var(--color-text-secondary)" }}>Fluctuacion de precio</p>
+                <p className="text-xs font-medium mb-2 uppercase tracking-wide" style={{ color: "var(--color-text-secondary)" }}>Price movement</p>
                 <Sparkline points={history} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { label: "Precio min", value: selected.min_price ? `$${selected.min_price.toFixed(2)}` : "—", color: "#10B981" },
-                  { label: "Precio actual", value: selected.current_price ? `$${selected.current_price.toFixed(2)}` : "—", color: "var(--color-accent)" },
+                  { label: "Lowest price", value: selected.min_price ? `$${selected.min_price.toFixed(2)}` : "—", color: "#10B981" },
+                  { label: "Current price", value: selected.current_price ? `$${selected.current_price.toFixed(2)}` : "—", color: "var(--color-accent)" },
                 ].map(s => (
                   <div key={s.label} className="p-3 rounded-lg" style={{ backgroundColor: "var(--color-surface-raised)" }}>
                     <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>{s.label}</p>
@@ -461,13 +553,13 @@ export default function DashboardPage() {
                 ))}
               </div>
               <div>
-                <p className="text-xs font-medium mb-2 uppercase tracking-wide" style={{ color: "var(--color-text-secondary)" }}>Ultimos registros</p>
+                <p className="text-xs font-medium mb-2 uppercase tracking-wide" style={{ color: "var(--color-text-secondary)" }}>Latest checks</p>
                 <div className="space-y-1 max-h-48 overflow-auto">
                   {history.slice(0, 20).map((p, i) => (
                     <div key={i} className="flex justify-between text-xs py-1" style={{ borderBottom: "1px solid rgba(38,38,38,0.3)" }}>
                       <span style={{ color: "var(--color-text-secondary)" }}>{new Date(p.recorded_at).toLocaleDateString("es-PE")}</span>
                       <span className="font-mono" style={{ color: "var(--color-text)" }}>{p.price ? `$${p.price.toFixed(2)}` : "—"}</span>
-                      <span style={{ color: p.in_stock ? "#10B981" : "#EF4444" }}>{p.in_stock === null ? "—" : p.in_stock ? "Stock" : "Agotado"}</span>
+                      <span style={{ color: p.in_stock ? "#10B981" : "#EF4444" }}>{p.in_stock === null ? "—" : p.in_stock ? "In stock" : "Out"}</span>
                     </div>
                   ))}
                 </div>

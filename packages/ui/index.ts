@@ -11,3 +11,12 @@ export { ProductCard } from "./components/ProductCard";
 export type { ProductInfo } from "./components/ProductCard";
 export { ProductGrid } from "./components/ProductGrid";
 export { VerifyEmail } from "./components/VerifyEmail";
+export {
+  ActionToast,
+  DashboardEmptyState,
+  DashboardSkeleton,
+  InlineErrorState,
+  InlineSpinner,
+  WelcomeSteps,
+} from "./components/DashboardUX";
+export type { DashboardToast } from "./components/DashboardUX";

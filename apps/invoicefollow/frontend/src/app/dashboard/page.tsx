@@ -1,6 +1,15 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { apiClient, downloadFile, trackEvent, uploadFile } from "@devforge/core";
+import {
+  ActionToast,
+  DashboardEmptyState,
+  DashboardSkeleton,
+  InlineErrorState,
+  InlineSpinner,
+  WelcomeSteps,
+  type DashboardToast,
+} from "@devforge/ui";
 import { Download, ChevronDown, Sparkles, Loader2, Copy, Check, X, Upload } from "lucide-react";
 
 interface Invoice {
@@ -43,9 +52,9 @@ function getRisk(invoices: Invoice[]): DebtorRisk {
 }
 
 const riskConfig = {
-  green:  { label: "Paga a tiempo",     bg: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.3)", text: "#10B981", dot: "#10B981" },
-  yellow: { label: "Suele tardar",      bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.3)", text: "#F59E0B", dot: "#F59E0B" },
-  red:    { label: "Riesgo de no pago", bg: "rgba(239,68,68,0.12)",  border: "rgba(239,68,68,0.3)",  text: "#EF4444", dot: "#EF4444" },
+  green:  { label: "Pays on time",     bg: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.3)", text: "#10B981", dot: "#10B981" },
+  yellow: { label: "Often pays late",  bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.3)", text: "#F59E0B", dot: "#F59E0B" },
+  red:    { label: "At risk",          bg: "rgba(239,68,68,0.12)",  border: "rgba(239,68,68,0.3)",  text: "#EF4444", dot: "#EF4444" },
 };
 
 const statusColors: Record<string, { backgroundColor: string; color: string }> = {
@@ -67,17 +76,38 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState<InvoiceSummary | null>(null);
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [savingInvoice, setSavingInvoice] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [toast, setToast] = useState<DashboardToast | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
 
-  const refreshInvoices = () => {
-    apiClient.get<Invoice[]>("/invoices/list").then(({ data }) => setInvoices(data)).catch(() => {});
-    apiClient.get<any[]>("/invoices/client-scores").then(({ data }) => setScores(data)).catch(() => {});
-    apiClient.get<InvoiceSummary>("/invoices/summary").then(({ data }) => setSummary(data)).catch(() => {});
-  };
+  const showToast = useCallback((nextToast: DashboardToast) => {
+    setToast(nextToast);
+    window.setTimeout(() => setToast(null), 4500);
+  }, []);
+
+  const refreshInvoices = useCallback(async () => {
+    setLoading(true);
+    setLoadError(false);
+    const [invoiceResult, scoreResult, summaryResult] = await Promise.allSettled([
+      apiClient.get<Invoice[]>("/invoices/list"),
+      apiClient.get<any[]>("/invoices/client-scores"),
+      apiClient.get<InvoiceSummary>("/invoices/summary"),
+    ]);
+
+    if (invoiceResult.status === "fulfilled") setInvoices(invoiceResult.value.data);
+    if (scoreResult.status === "fulfilled") setScores(scoreResult.value.data);
+    if (summaryResult.status === "fulfilled") setSummary(summaryResult.value.data);
+    if (invoiceResult.status === "rejected" && scoreResult.status === "rejected" && summaryResult.status === "rejected") {
+      setLoadError(true);
+    }
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     refreshInvoices();
-  }, []);
+  }, [refreshInvoices]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -89,6 +119,7 @@ export default function DashboardPage() {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSavingInvoice(true);
     trackEvent("feature_used", { feature_name: "add_invoice" });
     try {
       const { data } = await apiClient.post<Invoice>("/invoices", {
@@ -98,9 +129,12 @@ export default function DashboardPage() {
       setInvoices(prev => [data, ...prev]);
       setForm({ client_name: "", client_email: "", amount: "", due_date: "" });
       setShowForm(false);
+      showToast({ tone: "success", message: `${data.client_name}'s invoice was saved.` });
       refreshInvoices();
     } catch (e: any) {
-      alert(e.detail || "Error al guardar factura");
+      showToast({ tone: "error", message: e.detail || "We could not save this invoice. Check the email, amount, and due date." });
+    } finally {
+      setSavingInvoice(false);
     }
   };
 
@@ -114,9 +148,10 @@ export default function DashboardPage() {
       const { data } = await uploadFile<{ created: number; invoices: Invoice[] }>("/invoices/import-csv", formData);
       setInvoices(prev => [...data.invoices, ...prev]);
       setImportMessage(`${data.created} invoices imported`);
+      showToast({ tone: "success", message: `${data.created} invoices imported.` });
       refreshInvoices();
     } catch (e: any) {
-      alert(e.detail || "Error al importar facturas");
+      showToast({ tone: "error", message: e.detail || "We could not import your invoices. Check that the file is CSV or XLSX." });
     } finally {
       setImporting(false);
     }
@@ -139,7 +174,10 @@ export default function DashboardPage() {
     try {
       const { data } = await apiClient.put<{ payment_promise_date: string }>(`/invoices/${id}/pause-reminders`);
       setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, cron_paused: true, payment_promise_date: data.payment_promise_date } : inv));
-    } catch { alert("Error al pausar recordatorios"); }
+      showToast({ tone: "success", message: "Promise to pay saved. Reminders are paused for this invoice." });
+    } catch {
+      showToast({ tone: "error", message: "We could not save the promise to pay. Retry from the invoice row." });
+    }
     finally { setLoadingIds(prev => { const s = new Set(prev); s.delete(id); return s; }); }
   };
 
@@ -149,7 +187,10 @@ export default function DashboardPage() {
     try {
       await apiClient.put(`/invoices/${id}/mark-paid`);
       setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, status: "paid" } : inv));
-    } catch { alert("Error al marcar como pagada"); }
+      showToast({ tone: "success", message: "Invoice marked as paid." });
+    } catch {
+      showToast({ tone: "error", message: "We could not mark this invoice as paid. Retry from the invoice row." });
+    }
     finally { setLoadingIds(prev => { const s = new Set(prev); s.delete(id); return s; }); }
   };
 
@@ -158,8 +199,9 @@ export default function DashboardPage() {
     trackEvent("feature_used", { feature_name: "export_invoices", format });
     try {
       await downloadFile(`/invoices/export?format=${format}`, `invoicefollow_export.${format}`);
+      showToast({ tone: "success", message: `Your invoices export started as ${format.toUpperCase()}.` });
     } catch {
-      alert("Error al exportar");
+      showToast({ tone: "error", message: "We could not export your invoices. Retry from the export menu." });
     }
   };
 
@@ -169,9 +211,10 @@ export default function DashboardPage() {
     try {
       const { data } = await apiClient.post(`/invoices/${inv.id}/ai-tone`, {});
       setAiTonePanel({ invoiceId: inv.id, loading: false, result: data });
+      showToast({ tone: "success", message: `A follow-up message for ${inv.client_name} is ready.` });
     } catch {
       setAiTonePanel(null);
-      alert("Error al generar tono con IA");
+      showToast({ tone: "error", message: "We could not write that follow-up. Retry from the invoice row." });
     }
   };
 
@@ -208,12 +251,13 @@ export default function DashboardPage() {
 
   return (
     <>
+      <ActionToast toast={toast} onDismiss={() => setToast(null)} />
       <div>
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>Invoices</h1>
+            <h1 className="text-2xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>Money owed to you</h1>
             <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>
-              {invoices.length} facturas &middot; <span className="font-mono font-semibold" style={{ color: "var(--color-accent)" }}>${totalPending.toFixed(2)}</span> pendiente
+              {invoices.length} invoices &middot; <span className="font-mono font-semibold" style={{ color: "var(--color-accent)" }}>${totalPending.toFixed(2)}</span> still owed
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -221,7 +265,7 @@ export default function DashboardPage() {
               <button onClick={() => setExportOpen(!exportOpen)}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all"
                 style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}>
-                <Download size={14} /><span>Export</span>
+                <Download size={14} /><span>Export invoices</span>
                 <ChevronDown size={12} className={`transition-transform ${exportOpen ? "rotate-180" : ""}`} />
               </button>
               {exportOpen && (
@@ -231,7 +275,7 @@ export default function DashboardPage() {
                     <button key={f} onClick={() => handleExport(f)}
                       className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5 transition-colors"
                       style={{ color: "var(--color-text)" }}>
-                      {f.toUpperCase()} — {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON"}
+                      {f.toUpperCase()} - {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON"}
                     </button>
                   ))}
                 </div>
@@ -241,9 +285,9 @@ export default function DashboardPage() {
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all"
               style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)", opacity: importing ? 0.7 : 1 }}>
               {importing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-              <span>Import</span>
+              <span>{importing ? "Importing invoices" : "Import invoices"}</span>
             </button>
-            <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Nueva factura</button>
+            <button onClick={() => setShowForm(!showForm)} className="btn-primary">Add invoice</button>
           </div>
         </div>
 
@@ -254,14 +298,43 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {loadError && (
+          <div className="mb-6">
+            <InlineErrorState
+              title="We could not load your invoices"
+              description="Your invoice dashboard did not load. Retry now, and contact support if it keeps happening."
+              onRetry={refreshInvoices}
+            />
+          </div>
+        )}
+
+        {loading && invoices.length === 0 && <DashboardSkeleton rows={4} metrics={3} />}
+
+        {!loading && !loadError && invoices.length === 0 && (
+          <WelcomeSteps
+            title="Add your first invoice"
+            description="Track what clients owe you, see invoices due today, and pause reminders when someone promises to pay."
+            steps={[
+              "Add one invoice manually or import CSV/XLSX.",
+              "Review what is owed, overdue today, and cash at risk.",
+              "Mark invoices paid or save a promise to pay when a client replies.",
+            ]}
+            actionLabel="Add your first invoice"
+            onAction={() => setShowForm(true)}
+          />
+        )}
+
+        {!loading && (
+        <>
+
 
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
-            <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>Total pendiente</p>
+            <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>Still owed</p>
             <p className="text-xl font-bold font-mono" style={{ color: "var(--color-accent)" }}>${(summary?.pending_amount ?? totalPending).toFixed(2)}</p>
           </div>
           <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
-            <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>Vencidas</p>
+            <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>Due today or late</p>
             <p className="text-xl font-bold font-mono" style={{ color: "#EF4444" }}>{summary?.overdue_count ?? overdueCnt}</p>
           </div>
           <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
@@ -274,8 +347,8 @@ export default function DashboardPage() {
           <div className="p-4 rounded-lg mb-6 flex items-center justify-between gap-4"
             style={{ backgroundColor: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)" }}>
             <div>
-              <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Promesas de pago registradas</p>
-              <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Monto pausado por clientes que prometieron pagar.</p>
+              <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Promises to pay saved</p>
+              <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Amount paused because clients promised to pay.</p>
             </div>
             <p className="text-lg font-mono font-bold text-indigo-400">${summary.promised_amount.toFixed(2)}</p>
           </div>
@@ -284,42 +357,49 @@ export default function DashboardPage() {
         {showForm && (
           <form onSubmit={handleAdd} className="p-6 rounded-lg mb-6 grid grid-cols-1 md:grid-cols-5 gap-4 items-end" style={{ backgroundColor: "var(--color-surface)" }}>
             <div>
-              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Cliente</label>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Client</label>
               <input type="text" value={form.client_name} onChange={e => setForm({ ...form, client_name: e.target.value })} className="input-field" required />
             </div>
             <div>
-              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Email cliente</label>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Client email</label>
               <input type="email" value={form.client_email} onChange={e => setForm({ ...form, client_email: e.target.value })} className="input-field" required />
             </div>
             <div>
-              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Monto ($)</label>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Amount owed ($)</label>
               <input type="number" step="0.01" min="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} className="input-field" required />
             </div>
             <div>
-              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Vencimiento</label>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Due date</label>
               <input type="date" value={form.due_date} onChange={e => setForm({ ...form, due_date: e.target.value })} className="input-field" required />
             </div>
-            <button type="submit" className="btn-primary">Guardar</button>
+            <button type="submit" disabled={savingInvoice} className="btn-primary">
+              {savingInvoice ? <InlineSpinner /> : null}
+              {savingInvoice ? "Saving invoice" : "Save invoice"}
+            </button>
           </form>
         )}
 
         <div className="flex gap-2 mb-6">
           <button onClick={() => setView("semaforo")} className="text-xs font-medium px-4 py-2 rounded-md transition-colors"
             style={{ backgroundColor: view === "semaforo" ? "var(--color-accent-dim)" : "var(--color-surface)", color: view === "semaforo" ? "var(--color-accent)" : "var(--color-text-secondary)" }}>
-            Semaforo de deudores
+            Clients by payment risk
           </button>
           <button onClick={() => setView("lista")} className="text-xs font-medium px-4 py-2 rounded-md transition-colors"
             style={{ backgroundColor: view === "lista" ? "var(--color-accent-dim)" : "var(--color-surface)", color: view === "lista" ? "var(--color-accent)" : "var(--color-text-secondary)" }}>
-            Lista de facturas
+            Invoice list
           </button>
         </div>
 
         {view === "semaforo" && (
           <div className="space-y-4">
             {debtors.length === 0 && (
-              <div className="p-12 text-center rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
-                <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>Aun no hay clientes. Agrega tu primera factura.</p>
-              </div>
+              <DashboardEmptyState
+                icon={<Sparkles size={24} />}
+                title="Add your first client"
+                description="Create one invoice to see what they owe you and whether reminders need attention."
+                actionLabel="Add an invoice"
+                onAction={() => setShowForm(true)}
+              />
             )}
             {(["red", "yellow", "green"] as DebtorRisk[]).map(risk => {
               const group = debtors.filter(d => d.risk === risk);
@@ -337,11 +417,11 @@ export default function DashboardPage() {
                         style={{ backgroundColor: cfg.bg, border: `1px solid ${cfg.border}` }}>
                         <div>
                           <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>{debtor.client_name}</p>
-                          <p className="text-xs mt-0.5" style={{ color: "var(--color-text-secondary)" }}>{debtor.client_email} &middot; {debtor.invoices.length} factura(s)</p>
+                          <p className="text-xs mt-0.5" style={{ color: "var(--color-text-secondary)" }}>{debtor.client_email} &middot; {debtor.invoices.length} invoice(s)</p>
                         </div>
                         <div className="text-right">
                           <p className="text-sm font-bold font-mono" style={{ color: cfg.text }}>${debtor.totalOwed.toFixed(2)}</p>
-                          <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>pendiente</p>
+                          <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>still owed</p>
                         </div>
                       </div>
                     ))}
@@ -356,13 +436,19 @@ export default function DashboardPage() {
           <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "var(--color-surface)" }}>
             {invoices.length === 0 ? (
               <div className="p-12 text-center">
-                <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>No hay facturas. Crea la primera arriba.</p>
+                <DashboardEmptyState
+                  icon={<Upload size={24} />}
+                  title="Add your first invoice"
+                  description="Once you add invoices, this list shows who owes you money, due dates, and promises to pay."
+                  actionLabel="Add an invoice"
+                  onAction={() => setShowForm(true)}
+                />
               </div>
             ) : (
               <table className="w-full">
                 <thead>
                   <tr style={{ borderBottom: "1px solid var(--color-border)" }}>
-                    {["Cliente", "Monto", "Vencimiento", "Estado", "Recordatorios", ""].map((h, i) => (
+                    {["Client", "Amount owed", "Due date", "State", "Reminders", ""].map((h, i) => (
                       <th key={i} className="text-left text-xs font-medium uppercase tracking-wide px-4 py-3" style={{ color: "var(--color-text-secondary)" }}>{h}</th>
                     ))}
                   </tr>
@@ -380,7 +466,7 @@ export default function DashboardPage() {
                         <span className="text-xs font-medium px-2.5 py-1 rounded-full" style={statusColors[inv.status]}>{inv.status}</span>
                         {inv.cron_paused && (
                           <span className="text-[10px] font-bold px-1.5 py-0.5 ml-2 rounded bg-indigo-500/10 text-indigo-500 uppercase tracking-wider">
-                            PAUSADO
+                            PROMISED
                           </span>
                         )}
                       </td>
@@ -395,7 +481,7 @@ export default function DashboardPage() {
                               {aiTonePanel?.invoiceId === inv.id && aiTonePanel.loading
                                 ? <Loader2 size={12} className="animate-spin" />
                                 : <Sparkles size={12} />}
-                              AI Tone
+                              Write follow-up
                             </button>
                           )}
                           {(inv.status === "pending" || inv.status === "overdue") && !inv.cron_paused && (
@@ -403,14 +489,14 @@ export default function DashboardPage() {
                               className="text-xs font-medium px-3 py-1.5 rounded transition-colors"
                               title="Pause reminders (promise to pay)"
                               style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text-secondary)", opacity: loadingIds.has(inv.id) ? 0.5 : 1 }}>
-                              Pausar
+                              Save promise
                             </button>
                           )}
                           {(inv.status === "pending" || inv.status === "overdue") && (
                             <button onClick={() => handleMarkPaid(inv.id)} disabled={loadingIds.has(inv.id)}
                               className="text-xs font-medium px-3 py-1.5 rounded transition-colors"
                               style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text)", opacity: loadingIds.has(inv.id) ? 0.5 : 1 }}>
-                              {loadingIds.has(inv.id) ? "Procesando..." : "Marcar pagada"}
+                              {loadingIds.has(inv.id) ? "Updating" : "Mark paid"}
                             </button>
                           )}
                         </div>
@@ -421,6 +507,8 @@ export default function DashboardPage() {
               </table>
             )}
           </div>
+        )}
+        </>
         )}
       </div>
 
@@ -442,7 +530,7 @@ export default function DashboardPage() {
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
                 <Loader2 size={32} className="animate-spin text-indigo-400 mx-auto mb-3" />
-                <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>Gemini está analizando la factura...</p>
+                <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>Writing a follow-up for this invoice...</p>
               </div>
             </div>
           ) : aiTonePanel.result && (
@@ -450,6 +538,9 @@ export default function DashboardPage() {
               {(() => {
                 const toneColors: Record<string, string> = {
                   cordial: "#10B981", amable: "#6366F1", urgente: "#F59E0B", formal: "#EF4444", template: "#A3A3A3"
+                };
+                const toneLabels: Record<string, string> = {
+                  cordial: "Friendly", amable: "Warm", urgente: "Urgent", formal: "Formal", template: "Template"
                 };
                 const color = toneColors[aiTonePanel.result.tone_label] || "#A3A3A3";
                 return (
@@ -460,21 +551,21 @@ export default function DashboardPage() {
                     </span>
                     <span className="text-[10px] px-2 py-0.5 rounded"
                       style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text-secondary)" }}>
-                      {aiTonePanel.result.engine === "gemini" ? "✨ Gemini" : "📝 Template"}
+                      {aiTonePanel.result.engine === "gemini" ? "Gemini" : "Template"}
                     </span>
                   </div>
                 );
               })()}
 
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Asunto</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Subject</p>
                 <p className="text-sm font-medium p-3 rounded-lg" style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text)" }}>
                   {aiTonePanel.result.subject}
                 </p>
               </div>
 
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Mensaje</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Message</p>
                 <div className="p-4 rounded-lg space-y-3" style={{ backgroundColor: "var(--color-surface-raised)" }}>
                   <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>{aiTonePanel.result.greeting}</p>
                   <p className="text-sm whitespace-pre-wrap" style={{ color: "var(--color-text)" }}>{aiTonePanel.result.body}</p>
@@ -490,7 +581,7 @@ export default function DashboardPage() {
                 className="w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all"
                 style={{ backgroundColor: "var(--color-primary)", color: "#000" }}>
                 {copiedTone ? <Check size={16} /> : <Copy size={16} />}
-                {copiedTone ? "¡Copiado al portapapeles!" : "Copiar mensaje completo"}
+                {copiedTone ? "Copied to clipboard" : "Copy full message"}
               </button>
             </div>
           )}

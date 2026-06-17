@@ -2,6 +2,15 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { trackEvent, apiClient, downloadFile, getApiUrl, uploadAndDownloadFile, uploadFile } from "@devforge/core";
 import {
+  ActionToast,
+  DashboardEmptyState,
+  DashboardSkeleton,
+  InlineErrorState,
+  InlineSpinner,
+  WelcomeSteps,
+  type DashboardToast,
+} from "@devforge/ui";
+import {
   FileText, Download, Trash2, CheckCircle, Clock, AlertCircle, Info,
   ChevronDown, ChevronUp, Sparkles, RefreshCw, TrendingDown, Zap, Brain, X, Copy, Check, Image as ImageIcon,
 } from "lucide-react";
@@ -70,6 +79,9 @@ export default function DashboardPage() {
   const [aiLoading, setAiLoading]     = useState(false);
   const [aiCopied, setAiCopied]       = useState(false);
   const [summary, setSummary]         = useState<FileSummary | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [loadError, setLoadError]     = useState(false);
+  const [toast, setToast]             = useState<DashboardToast | null>(null);
   const [utilityFormat, setUtilityFormat] = useState<"original" | "png" | "jpg" | "webp">("original");
   const [utilityQuality, setUtilityQuality] = useState(82);
   const [utilityLoading, setUtilityLoading] = useState(false);
@@ -77,10 +89,21 @@ export default function DashboardPage() {
   const pollingIds = useRef<Set<string>>(new Set());
   const exportRef  = useRef<HTMLDivElement>(null);
 
-  // Load existing files from API on mount
-  useEffect(() => {
-    apiClient.get<any[]>("/files/list").then(({ data }) => {
-      setFiles(data.map((f: any) => ({
+  const showToast = useCallback((nextToast: DashboardToast) => {
+    setToast(nextToast);
+    window.setTimeout(() => setToast(null), 4500);
+  }, []);
+
+  const refreshDashboard = useCallback(async () => {
+    setLoading(true);
+    setLoadError(false);
+    const [filesResult, summaryResult] = await Promise.allSettled([
+      apiClient.get<any[]>("/files/list"),
+      apiClient.get<FileSummary>("/files/summary"),
+    ]);
+
+    if (filesResult.status === "fulfilled") {
+      setFiles(filesResult.value.data.map((f: any) => ({
         id: f.id.toString(),
         name: f.name,
         size: f.size,
@@ -88,9 +111,19 @@ export default function DashboardPage() {
         downloadUrl: f.download_url,
         report: f.report ?? undefined,
       })));
-    }).catch(() => {});
-    apiClient.get<FileSummary>("/files/summary").then(({ data }) => setSummary(data)).catch(() => {});
+    }
+    if (summaryResult.status === "fulfilled") {
+      setSummary(summaryResult.value.data);
+    }
+    if (filesResult.status === "rejected" && summaryResult.status === "rejected") {
+      setLoadError(true);
+    }
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    refreshDashboard();
+  }, [refreshDashboard]);
 
   // Auto-poll files that are in queued/processing state
   useEffect(() => {
@@ -125,12 +158,15 @@ export default function DashboardPage() {
   }, []);
 
   const handleDelete = async (fileId: string) => {
-    if (!window.confirm("¿Eliminar este archivo?")) return;
+    if (!window.confirm("Delete this file from your dashboard?")) return;
     trackEvent("feature_used", { feature_name: "delete_file" });
     try {
       await apiClient.delete(`/files/${fileId}`);
       setFiles(prev => prev.filter(f => f.id !== fileId));
-    } catch { alert("Error al eliminar archivo"); }
+      showToast({ tone: "success", message: "Your file was deleted." });
+    } catch {
+      showToast({ tone: "error", message: "We could not delete your file. Retry in a moment." });
+    }
   };
 
   const formatSize = (bytes: number) => {
@@ -160,11 +196,13 @@ export default function DashboardPage() {
         setFiles(prev => prev.map(f => f.id === tempId ? {
           ...f, id: data.id.toString(), status: data.status, localOnly: false,
         } : f));
+        showToast({ tone: "success", message: `${file.name} is queued for cleanup.` });
       } catch (e: any) {
         setFiles(prev => prev.map(f => f.id === tempId ? { ...f, status: "error", error: e.message } : f));
+        showToast({ tone: "error", message: `We could not read ${file.name}. Check that it is CSV, JSON, XLSX, or XLS.` });
       }
     }
-  }, []);
+  }, [showToast]);
 
   // Export GET /files/export?format=csv|xlsx|json
   const handleExport = async (format: ExportFormat) => {
@@ -172,8 +210,9 @@ export default function DashboardPage() {
     trackEvent("feature_used", { feature_name: "export_files", format });
     try {
       await downloadFile(`/files/export?format=${format}`, `filecleaner_export.${format}`);
+      showToast({ tone: "success", message: `Your file history export started as ${format.toUpperCase()}.` });
     } catch {
-      alert("Error al exportar");
+      showToast({ tone: "error", message: "We could not export your file history. Retry from the export menu." });
     }
   };
 
@@ -187,8 +226,9 @@ export default function DashboardPage() {
       formData.append("file", fileInput);
       const { data } = await uploadFile<AIAnalysis>("/files/ai-analyze", formData);
       setAiPanel(data);
+      showToast({ tone: "success", message: `We checked ${fileInput.name} for cleanup opportunities.` });
     } catch (e: any) {
-      alert(e.message || "AI analysis error");
+      showToast({ tone: "error", message: e.message || "We could not check this file. Retry with CSV, JSON, XLSX, or XLS." });
     } finally {
       setAiLoading(false);
     }
@@ -215,9 +255,10 @@ export default function DashboardPage() {
       const params = new URLSearchParams({ quality: String(utilityQuality) });
       if (utilityFormat !== "original") params.set("output_format", utilityFormat);
       const { filename } = await uploadAndDownloadFile(`/files/utility?${params.toString()}`, formData, `cleaned-${fileInput.name}`);
-      setUtilityMessage(`Processed and downloaded ${filename}`);
+      setUtilityMessage(`Cleaned and downloaded ${filename}`);
+      showToast({ tone: "success", message: `Your file was cleaned and downloaded as ${filename}.` });
     } catch (e: any) {
-      alert(e.detail || e.message || "File utility processing failed");
+      showToast({ tone: "error", message: e.detail || e.message || "We could not clean this file. Retry with PNG, JPG, WEBP, HEIC, SVG, or PDF." });
     } finally {
       setUtilityLoading(false);
     }
@@ -242,11 +283,12 @@ export default function DashboardPage() {
   };
 
   const statusLabel: Record<string, string> = {
-    queued: "En cola", processing: "Procesando...", complete: "Completo", error: "Error",
+    queued: "Queued", processing: "Cleaning...", complete: "Ready", error: "Needs attention",
   };
 
   return (
     <div className="max-w-5xl mx-auto py-10 px-4">
+      <ActionToast toast={toast} onDismiss={() => setToast(null)} />
       {/* Header */}
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
         <div>
@@ -270,8 +312,8 @@ export default function DashboardPage() {
               opacity: aiLoading ? 0.7 : 1
             }}
           >
-            {aiLoading ? <RefreshCw size={14} className="animate-spin" /> : <Brain size={14} />}
-            <span>AI Analyze</span>
+            {aiLoading ? <InlineSpinner /> : <Brain size={14} />}
+            <span>{aiLoading ? "Checking file" : "Check file quality"}</span>
           </button>
 
           <button
@@ -281,8 +323,8 @@ export default function DashboardPage() {
             style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)", border: "1px solid var(--color-border)", opacity: utilityLoading ? 0.7 : 1 }}
             title="Strip metadata, compress images, or convert supported files"
           >
-            {utilityLoading ? <RefreshCw size={14} className="animate-spin" /> : <ImageIcon size={14} />}
-            <span>File Utility</span>
+            {utilityLoading ? <InlineSpinner /> : <ImageIcon size={14} />}
+            <span>{utilityLoading ? "Cleaning file" : "Clean image or PDF"}</span>
           </button>
 
           {/* Export Dropdown */}
@@ -293,7 +335,7 @@ export default function DashboardPage() {
               style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)", border: "1px solid var(--color-border)" }}
             >
               <Download size={14} />
-              <span>Export</span>
+              <span>Export history</span>
               <ChevronDown size={12} className={`transition-transform ${exportOpen ? "rotate-180" : ""}`} />
             </button>
             {exportOpen && (
@@ -303,7 +345,7 @@ export default function DashboardPage() {
                   <button key={f} onClick={() => handleExport(f)}
                     className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5 transition-colors"
                     style={{ color: "var(--color-text)" }}>
-                    {f.toUpperCase()} — {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON API"}
+                    {f.toUpperCase()} - {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON API"}
                   </button>
                 ))}
               </div>
@@ -312,13 +354,41 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {loadError && (
+        <div className="mb-8">
+          <InlineErrorState
+            title="We could not load your files"
+            description="Your dashboard data did not load. Retry now, and contact support if it keeps happening."
+            onRetry={refreshDashboard}
+          />
+        </div>
+      )}
+
+      {loading && files.length === 0 && <DashboardSkeleton rows={3} />}
+
+      {!loading && !loadError && files.length === 0 && (
+        <WelcomeSteps
+          title="Clean your first file"
+          description="Start with one dataset and see clean rows, duplicates removed, and empty rows found before you export."
+          steps={[
+            "Upload a CSV, JSON, XLSX, or XLS file.",
+            "Review clean rows, duplicates removed, and empty rows found.",
+            "Download the cleaned file or export your cleanup history.",
+          ]}
+          actionLabel="Upload your first file"
+          onAction={() => document.getElementById("filecleaner-dropzone")?.click()}
+        />
+      )}
+
+      {!loading && (
+      <>
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
           {[
-            { label: "Processed", value: summary.completed_files.toLocaleString(), tone: "text-emerald-500" },
-            { label: "Rows saved", value: summary.rows_saved.toLocaleString(), tone: "text-[var(--color-primary)]" },
-            { label: "Quality actions", value: summary.quality_actions.toLocaleString(), tone: "text-sky-400" },
-            { label: "Errors", value: summary.error_files.toLocaleString(), tone: summary.error_files ? "text-red-500" : "text-emerald-500" },
+            { label: "Files ready", value: summary.completed_files.toLocaleString(), tone: "text-emerald-500" },
+            { label: "Rows cleaned", value: summary.rows_saved.toLocaleString(), tone: "text-[var(--color-primary)]" },
+            { label: "Cleanup actions", value: summary.quality_actions.toLocaleString(), tone: "text-sky-400" },
+            { label: "Files needing review", value: summary.error_files.toLocaleString(), tone: summary.error_files ? "text-red-500" : "text-emerald-500" },
           ].map(stat => (
             <div key={stat.label} className="p-4 rounded-xl" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
               <p className="text-[10px] uppercase font-bold tracking-wider opacity-50 mb-1">{stat.label}</p>
@@ -331,8 +401,8 @@ export default function DashboardPage() {
       <div className="mb-8 p-4 rounded-xl flex flex-col md:flex-row md:items-end gap-4"
         style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
         <div className="flex-1">
-          <p className="text-xs font-bold uppercase tracking-wider opacity-50 mb-1">Metadata, compression and conversion</p>
-          <p className="text-sm opacity-70">PNG, JPG, WEBP, HEIC, SVG and PDF. Metadata is stripped on output.</p>
+          <p className="text-xs font-bold uppercase tracking-wider opacity-50 mb-1">Your file utility</p>
+          <p className="text-sm opacity-70">Strip metadata, compress images, or convert PNG, JPG, WEBP, HEIC, SVG, and PDF files.</p>
           {utilityMessage && <p className="text-xs text-emerald-500 mt-2">{utilityMessage}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -352,8 +422,8 @@ export default function DashboardPage() {
               className="input-field px-3 py-2" />
           </label>
           <button onClick={openFileUtility} disabled={utilityLoading} className="btn-primary flex items-center gap-2">
-            {utilityLoading ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
-            Process
+            {utilityLoading ? <InlineSpinner /> : <Download size={14} />}
+            {utilityLoading ? "Cleaning file" : "Clean selected file"}
           </button>
         </div>
       </div>
@@ -397,7 +467,7 @@ export default function DashboardPage() {
             {aiPanel.suggestions.length === 0 ? (
               <div className="text-center py-6 text-sm opacity-40">
                 <CheckCircle size={24} className="mx-auto mb-2 text-emerald-500 opacity-100" />
-                No issues detected — the data appears clean.
+                No cleanup issues found in your file.
               </div>
             ) : (
               aiPanel.suggestions.map((s, i) => (
@@ -409,7 +479,7 @@ export default function DashboardPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-bold mb-0.5 truncate">{s.column}</p>
                     <p className="text-xs opacity-60">{s.issue}</p>
-                    <p className="text-xs text-[var(--color-primary)] mt-1">→ {s.fix}</p>
+                    <p className="text-xs text-[var(--color-primary)] mt-1">Suggested fix: {s.fix}</p>
                   </div>
                 </div>
               ))
@@ -420,6 +490,7 @@ export default function DashboardPage() {
 
       {/* Drop Zone */}
       <div
+        id="filecleaner-dropzone"
         className="relative rounded-2xl p-16 text-center cursor-pointer transition-all duration-300 mb-10 group"
         style={{
           backgroundColor: dragging ? "rgba(var(--color-primary-rgb), 0.05)" : "var(--color-surface)",
@@ -441,10 +512,10 @@ export default function DashboardPage() {
           <FileText size={32} className="text-[var(--color-primary)]" />
         </div>
         <p className="text-lg font-semibold mb-2" style={{ color: "var(--color-text)" }}>
-          Drop files here or click to upload
+          Drop your file here or click to upload
         </p>
         <p className="text-xs opacity-50" style={{ color: "var(--color-text)" }}>
-          CSV, JSON, XLSX, XLS — up to 200MB — processed asynchronously
+          CSV, JSON, XLSX, or XLS up to 200MB. We clean it in the background.
         </p>
       </div>
 
@@ -523,25 +594,25 @@ export default function DashboardPage() {
                     <div>
                       <p className="text-sm font-bold text-[var(--color-primary)]">
                         {file.report.reduction_pct > 0
-                          ? `${file.report.reduction_pct}% size reduction — ${file.report.rows_saved.toLocaleString()} rows cleaned`
-                          : "File is already clean!"}
+                          ? `${file.report.reduction_pct}% smaller file with ${file.report.rows_saved.toLocaleString()} rows cleaned`
+                          : "Your file was already clean."}
                       </p>
-                      <p className="text-xs opacity-60">Processed successfully</p>
+                      <p className="text-xs opacity-60">Your cleaned file is ready to download.</p>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2 mb-4 text-[var(--color-primary)]">
                     <Info size={16} />
-                    <h4 className="text-xs font-bold uppercase tracking-wider">Cleaning Intelligence Report</h4>
+                    <h4 className="text-xs font-bold uppercase tracking-wider">Your cleanup report</h4>
                   </div>
 
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                     {[
-                      { label: "Total Rows",   value: file.report.rows_original.toLocaleString(),    color: "text-[var(--color-text)]" },
-                      { label: "Clean Rows",   value: file.report.rows_clean.toLocaleString(),        color: "text-emerald-500" },
+                      { label: "Rows found",   value: file.report.rows_original.toLocaleString(),    color: "text-[var(--color-text)]" },
+                      { label: "Clean rows",   value: file.report.rows_clean.toLocaleString(),        color: "text-emerald-500" },
                       { label: "Duplicates",   value: file.report.duplicates_removed.toLocaleString(), color: "text-indigo-400" },
-                      { label: "Empty Rows",   value: file.report.empty_removed.toLocaleString(),     color: "text-amber-500" },
-                      { label: "Text Fixes",   value: file.report.whitespace_fixed.toLocaleString(),  color: "text-sky-400" },
+                      { label: "Empty rows",   value: file.report.empty_removed.toLocaleString(),     color: "text-amber-500" },
+                      { label: "Text fixes",   value: file.report.whitespace_fixed.toLocaleString(),  color: "text-sky-400" },
                     ].map(stat => (
                       <div key={stat.label} className="p-3 rounded-lg bg-white/5 border border-white/5">
                         <p className="text-[10px] uppercase font-bold opacity-40 mb-1">{stat.label}</p>
@@ -570,12 +641,17 @@ export default function DashboardPage() {
         })}
 
         {files.length === 0 && (
-          <div className="text-center py-20 opacity-20 border-2 border-dashed border-[var(--color-border)] rounded-2xl">
-            <Sparkles size={48} className="mx-auto mb-4" />
-            <p className="text-sm font-medium">Ready to clean your first dataset.</p>
-          </div>
+          <DashboardEmptyState
+            icon={<Sparkles size={24} />}
+            title="Upload your first file"
+            description="Clean one file to see rows cleaned, duplicates removed, and empty rows found."
+            actionLabel="Upload a file"
+            onAction={() => document.getElementById("filecleaner-dropzone")?.click()}
+          />
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }

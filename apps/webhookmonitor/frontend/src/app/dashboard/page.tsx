@@ -1,6 +1,15 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { apiClient, downloadFile, trackEvent } from "@devforge/core";
+import {
+  ActionToast,
+  DashboardEmptyState,
+  DashboardSkeleton,
+  InlineErrorState,
+  InlineSpinner,
+  WelcomeSteps,
+  type DashboardToast,
+} from "@devforge/ui";
 import { 
   Activity, Trash2, RefreshCcw, Copy, Check, Search, Code,
   Database, X, ChevronRight, Send, AlertCircle, Download, ChevronDown
@@ -45,28 +54,40 @@ export default function DashboardPage() {
   const [exportOpen, setExportOpen]   = useState(false);
   const [summary, setSummary]         = useState<WebhookSummary | null>(null);
   const [logStatus, setLogStatus]     = useState<LogStatusFilter>("all");
+  const [loading, setLoading]         = useState(true);
+  const [loadError, setLoadError]     = useState(false);
+  const [toast, setToast]             = useState<DashboardToast | null>(null);
   const intervalRef                   = useRef<NodeJS.Timeout | null>(null);
   const exportRef                     = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    // GET /webhooks/config returns { endpoint_url }
-    apiClient.get<{ endpoint_url: string }>("/webhooks/config")
-      .then(({ data }) => setEndpointUrl(data.endpoint_url)).catch(() => {});
-    apiClient.get<WebhookSummary>("/webhooks/summary")
-      .then(({ data }) => setSummary(data)).catch(() => {});
+  const showToast = useCallback((nextToast: DashboardToast) => {
+    setToast(nextToast);
+    window.setTimeout(() => setToast(null), 4500);
+  }, []);
 
-    const fetchRequests = async () => {
-      try {
-        // GET /webhooks/logs returns the list
-        const { data } = await apiClient.get<WebhookRequest[]>(`/webhooks/logs?status=${logStatus}`);
-        setRequests(data);
-      } catch {}
-    };
+  const refreshWebhooks = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
+    setLoadError(false);
+    const [configResult, summaryResult, logsResult] = await Promise.allSettled([
+      apiClient.get<{ endpoint_url: string }>("/webhooks/config"),
+      apiClient.get<WebhookSummary>("/webhooks/summary"),
+      apiClient.get<WebhookRequest[]>(`/webhooks/logs?status=${logStatus}`),
+    ]);
 
-    fetchRequests();
-    intervalRef.current = setInterval(fetchRequests, 5000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    if (configResult.status === "fulfilled") setEndpointUrl(configResult.value.data.endpoint_url);
+    if (summaryResult.status === "fulfilled") setSummary(summaryResult.value.data);
+    if (logsResult.status === "fulfilled") setRequests(logsResult.value.data);
+    if (configResult.status === "rejected" && summaryResult.status === "rejected" && logsResult.status === "rejected") {
+      setLoadError(true);
+    }
+    if (showLoading) setLoading(false);
   }, [logStatus]);
+
+  useEffect(() => {
+    refreshWebhooks();
+    intervalRef.current = setInterval(() => refreshWebhooks(false), 5000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [refreshWebhooks]);
 
   // Close export dropdown on outside click
   useEffect(() => {
@@ -85,19 +106,23 @@ export default function DashboardPage() {
   }, [selected]);
 
   const handleClearHistory = async () => {
-    if (!window.confirm("¿Seguro que quieres limpiar el historial?")) return;
+    if (!window.confirm("Clear your connection history? This cannot be undone.")) return;
     trackEvent("feature_used", { feature_name: "clear_webhook_history" });
     try {
       // DELETE /webhooks/requests
       await apiClient.delete("/webhooks/requests");
       setRequests([]);
       setSelected(null);
-    } catch { alert("Error al limpiar historial"); }
+      showToast({ tone: "success", message: "Your connection history was cleared." });
+    } catch {
+      showToast({ tone: "error", message: "We could not clear your history. Retry in a moment." });
+    }
   };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(endpointUrl);
     setCopied(true);
+    showToast({ tone: "success", message: "Your connection URL was copied." });
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -112,9 +137,9 @@ export default function DashboardPage() {
         payload_override: payload,
         schedule_auto_retry: false,
       });
-      alert("✅ Webhook encolado para reenvío");
+      showToast({ tone: "success", message: "Retry queued. We are sending this connection again." });
     } catch (err: any) {
-      alert(err.response?.data?.detail || "Error al reenviar webhook");
+      showToast({ tone: "error", message: err.response?.data?.detail || "We could not retry this delivery. Check the payload and try again." });
     } finally {
       setIsRetrying(false);
     }
@@ -126,8 +151,9 @@ export default function DashboardPage() {
     trackEvent("feature_used", { feature_name: "export_webhook_logs", format });
     try {
       await downloadFile(`/webhooks/logs/export?format=${format}`, `webhookmonitor_export.${format}`);
+      showToast({ tone: "success", message: `Your connection logs export started as ${format.toUpperCase()}.` });
     } catch {
-      alert("Error al exportar");
+      showToast({ tone: "error", message: "We could not export your connection logs. Retry from the export menu." });
     }
   };
 
@@ -148,13 +174,14 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col h-full max-w-[1600px] mx-auto overflow-hidden">
+      <ActionToast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 px-4 pt-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>Webhook Monitor</h1>
+          <h1 className="text-3xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>Your connection</h1>
           <div className="flex items-center gap-2">
             <Activity size={14} className="text-emerald-500 animate-pulse" />
             <p className="text-xs opacity-60" style={{ color: "var(--color-text)" }}>
-              Live ingestion • {requests.length} requests en historial
+              Live delivery checks - {requests.length} deliveries in history
             </p>
           </div>
         </div>
@@ -167,7 +194,7 @@ export default function DashboardPage() {
               style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
             >
               <Download size={14} />
-              <span>Export</span>
+              <span>Export logs</span>
               <ChevronDown size={12} className={`transition-transform ${exportOpen ? "rotate-180" : ""}`} />
             </button>
             {exportOpen && (
@@ -177,7 +204,7 @@ export default function DashboardPage() {
                   <button key={f} onClick={() => handleExport(f)}
                     className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5 transition-colors"
                     style={{ color: "var(--color-text)" }}>
-                    {f.toUpperCase()} — {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON API"}
+                    {f.toUpperCase()} - {f === "csv" ? "Spreadsheet" : f === "xlsx" ? "Excel" : "JSON API"}
                   </button>
                 ))}
               </div>
@@ -188,11 +215,41 @@ export default function DashboardPage() {
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all"
           >
             <Trash2 size={16} />
-            <span>Clear History</span>
+            <span>Clear history</span>
           </button>
         </div>
       </div>
 
+      {loadError && (
+        <div className="mb-6 px-4">
+          <InlineErrorState
+            title="We could not load your connection"
+            description="Your webhook logs did not load. Retry now, and contact support if it keeps happening."
+            onRetry={() => refreshWebhooks()}
+          />
+        </div>
+      )}
+
+      {loading && requests.length === 0 && <div className="px-4"><DashboardSkeleton rows={5} /></div>}
+
+      {!loading && !loadError && requests.length === 0 && (
+        <div className="px-4">
+          <WelcomeSteps
+            title="Send your first webhook"
+            description="Use your connection URL to see delivered events, failed deliveries, and retries in one place."
+            steps={[
+              "Copy your connection URL.",
+              "Send a test webhook from your app or provider.",
+              "Inspect the delivery and retry it if your endpoint fails.",
+            ]}
+            actionLabel="Copy connection URL"
+            onAction={handleCopy}
+          />
+        </div>
+      )}
+
+      {!loading && (
+      <>
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 px-4">
           {[
@@ -237,7 +294,7 @@ export default function DashboardPage() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="input-field pl-10"
-              placeholder="Buscar en body, path o método..."
+              placeholder="Search body, path, or method..."
             />
           </div>
 
@@ -266,14 +323,14 @@ export default function DashboardPage() {
               <div className="h-full flex flex-col items-center justify-center opacity-20 py-20">
                 <Activity size={48} className="mb-4" />
                 <p className="text-sm font-medium">
-                  {search ? "No se encontraron resultados" : "Esperando webhooks entrantes..."}
+                  {search ? "No deliveries match your search" : "Waiting for your first webhook..."}
                 </p>
               </div>
             ) : (
               <table className="w-full border-collapse">
                 <thead className="sticky top-0 bg-[var(--color-surface)] z-10">
                   <tr className="border-b border-[var(--color-border)]">
-                    {["Recibido", "Método", "Path", "Reintentos", ""].map((h, i) => (
+                    {["Delivered", "Method", "Path", "Retries", ""].map((h, i) => (
                       <th key={i} className="text-left text-[10px] font-bold uppercase tracking-widest px-4 py-4 opacity-50"
                         style={{ color: "var(--color-text)" }}>{h}</th>
                     ))}
@@ -365,7 +422,7 @@ export default function DashboardPage() {
                     onClick={() => setIsEditingPayload(!isEditingPayload)}
                     className={`text-[10px] font-bold uppercase px-2 py-1 rounded transition-colors ${isEditingPayload ? "bg-amber-500/10 text-amber-500" : "bg-black/10 hover:bg-black/20"}`}
                   >
-                    {isEditingPayload ? "Cancelar edición" : "Editar & Replay"}
+                    {isEditingPayload ? "Cancel edit" : "Edit and retry"}
                   </button>
                 </div>
 
@@ -378,7 +435,7 @@ export default function DashboardPage() {
                     />
                     <div className="flex items-center gap-2 text-[10px] text-amber-500/70 p-2">
                       <AlertCircle size={12} />
-                      <span>Estás a punto de reproducir este webhook con payload modificado.</span>
+                      <span>You are about to retry this delivery with an edited payload.</span>
                     </div>
                   </div>
                 ) : (
@@ -396,8 +453,8 @@ export default function DashboardPage() {
                 className={`w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg ${isEditingPayload ? "bg-amber-500 hover:bg-amber-600 shadow-amber-500/20" : "bg-[var(--color-primary)] hover:opacity-90 shadow-[var(--color-primary)]/20"}`}
                 style={{ color: "#000", opacity: isRetrying ? 0.7 : 1 }}
               >
-                {isRetrying ? <RefreshCcw size={18} className="animate-spin" /> : <Send size={18} />}
-                <span>{isEditingPayload ? "Replay con payload modificado" : "Replay webhook original"}</span>
+                {isRetrying ? <InlineSpinner /> : <Send size={18} />}
+                <span>{isEditingPayload ? "Retry with edited payload" : "Retry original delivery"}</span>
               </button>
             </div>
           </div>
@@ -405,11 +462,13 @@ export default function DashboardPage() {
           <div className="hidden lg:flex w-[450px] items-center justify-center rounded-xl opacity-10 border border-dashed border-[var(--color-text)]">
             <div className="text-center">
               <Code size={64} className="mx-auto mb-4" />
-              <p className="font-bold">Selecciona un request para inspeccionar</p>
+              <p className="font-bold">Select a delivery to inspect</p>
             </div>
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }
