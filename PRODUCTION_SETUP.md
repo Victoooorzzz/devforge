@@ -63,6 +63,27 @@ The backend runs lightweight startup migrations in `packages/backend_core/db_mig
 
 For future risky schema changes, add intentional migration statements there or move to a full migration tool before deployment.
 
+## Product Insight Endpoints
+
+Each paid product now exposes a protected summary endpoint for dashboard decision panels:
+
+| Product | Endpoint | Purpose |
+|---|---|---|
+| FileCleaner | `/files/summary` | Processed files, errors, rows saved, quality actions. |
+| InvoiceFollow | `/invoices/summary` | Pending amount, overdue amount, promised amount, cash at risk. |
+| PriceTrackr | `/trackers/summary` | Active trackers, price drops, stock issues, potential savings. |
+| WebhookMonitor | `/webhooks/summary` | 24h volume, retry pressure, failed forwards, auto retry usage. |
+| FeedbackLens | `/feedback/summary/weekly` | Weekly feedback digest already exposed and now shown in the dashboard. |
+
+All product summary endpoints are mounted on routers that already enforce `require_product_access(...)`.
+
+## Security And Operational Guards
+
+- WebhookMonitor masks sensitive headers such as authorization, cookies, signatures, tokens, secrets, API keys, and passwords before returning logs or export previews.
+- FileCleaner limits fuzzy duplicate checks to 5000 rows to prevent accidental O(n2) work from large datasets.
+- `*.tsbuildinfo` files are ignored and removed from tracking so local TypeScript verification does not dirty the repo.
+- Frontend uploads and exports use shared `@devforge/core` helpers for API URL, auth headers, cookies, and downloads.
+
 ## Product Dependencies
 
 Render installs from the root `requirements.txt`. Keep production-only packages there, including:
@@ -85,4 +106,15 @@ curl -X POST https://devforge-universal-backend.onrender.com/worker/process \
 
 curl https://devforge-universal-backend.onrender.com/admin/stats \
   -H "X-Admin-Key: your-admin-secret"
+```
+
+## Local Verification Commands
+
+Run before production deploys:
+
+```bash
+python -m unittest discover -s tests
+pnpm run typecheck
+pnpm run lint
+python -c "import sys; sys.path.insert(0, 'packages'); import backend_core.universal_main; print('universal_main import ok')"
 ```

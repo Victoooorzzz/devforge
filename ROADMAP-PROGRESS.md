@@ -67,4 +67,16 @@
 - Commit: `iter-4: optimize-security-and-performance`.
 
 ## Iteracion 5 - Polish
-- Estado: pendiente.
+- Estado: completada.
+- Cambios:
+  - Actualizado `PRODUCTION_SETUP.md` con endpoints de insights, guards y comandos locales.
+  - Creado `FINAL-REPORT.md` con resumen, metricas, deuda residual y recomendaciones.
+  - Confirmado que no fue necesario crear `BLOCKERS.md`; no hubo bloqueantes irresolubles.
+  - Documentado estado pendiente de cambios Polar/env preexistentes sin mezclarlos en este commit.
+- Verificacion:
+  - `python -m unittest discover -s tests` -> 25 tests OK.
+  - `python -c "import sys; sys.path.insert(0, 'packages'); import backend_core.universal_main; print('universal_main import ok')"` -> OK.
+  - `pnpm run typecheck` -> 8 tasks OK.
+  - `pnpm run lint` -> 9 tasks OK, warnings existentes.
+  - `git diff --check -- PRODUCTION_SETUP.md FINAL-REPORT.md ROADMAP-PROGRESS.md` -> OK, solo warnings CRLF esperados en Windows.
+- Commit: `iter-5: polish-docs-final-report`.
