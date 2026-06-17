@@ -18,6 +18,7 @@ from backend_core.logic_bridge import detect_and_act_on_payment
 from backend_core.outbox_models import SystemOutbox
 from backend_core.product_insights import summarize_webhooks
 from backend_core.security_utils import is_public_http_url
+from backend_core.sensitive_data import mask_sensitive_mapping, mask_sensitive_text
 from backend_core.worker import register_job_handler
 from pydantic import BaseModel
 
@@ -170,7 +171,7 @@ async def list_logs(
             "id": r.id,
             "method": r.method,
             "path": r.path,
-            "headers": json.loads(r.headers_json),
+            "headers": mask_sensitive_mapping(json.loads(r.headers_json)),
             "body": r.body,
             "received_at": r.received_at.isoformat(),
             "retry_count": r.retry_count,
@@ -395,7 +396,8 @@ async def export_logs(
             "id": r.id,
             "method": r.method,
             "path": r.path,
-            "body_preview": r.body[:200] if r.body else "",
+            "headers_preview": json.dumps(mask_sensitive_mapping(json.loads(r.headers_json))),
+            "body_preview": mask_sensitive_text(r.body[:200] if r.body else ""),
             "received_at": r.received_at.isoformat(),
             "retry_count": r.retry_count,
             "last_retry_status": r.last_retry_status,

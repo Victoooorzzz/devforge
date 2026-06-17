@@ -16,6 +16,7 @@ import logging
 from fastapi.concurrency import run_in_threadpool
 from backend_core import create_app, get_current_user, get_session, User, require_product_access, get_settings
 from backend_core.database import get_managed_session
+from backend_core.data_limits import DEFAULT_MAX_FUZZY_ROWS, is_fuzzy_row_count_allowed
 from backend_core.outbox_models import SystemOutbox
 from backend_core.product_insights import summarize_files
 from backend_core.worker import register_job_handler
@@ -453,6 +454,13 @@ async def fuzzy_check(
         df = _load_df(file_content, fname)
         str_rows = df.astype(str).apply(lambda r: " | ".join(r.values), axis=1).tolist()
         n = len(str_rows)
+        if not is_fuzzy_row_count_allowed(n):
+            return {
+                "error": f"Fuzzy check limited to {DEFAULT_MAX_FUZZY_ROWS} rows",
+                "code": "too_many_rows",
+                "total_rows": n,
+                "groups": [],
+            }
         visited = set()
         groups = []
 
@@ -479,7 +487,10 @@ async def fuzzy_check(
             "groups": groups[:50],
         }
 
-    return await run_in_threadpool(run_fuzzy, content, file.filename or "file.csv", threshold)
+    result = await run_in_threadpool(run_fuzzy, content, file.filename or "file.csv", threshold)
+    if result.get("code") == "too_many_rows":
+        raise HTTPException(status_code=413, detail=result["error"])
+    return result
 
 
 @file_router.post("/magic-clean")

@@ -51,7 +51,20 @@
 - Commit: `iter-3: value-feature-insight-panels`.
 
 ## Iteracion 4 - Optimizacion
-- Estado: pendiente.
+- Estado: completada.
+- Cambios:
+  - Agregado `packages/backend_core/sensitive_data.py` para masking de headers/campos sensibles.
+  - Agregado `packages/backend_core/data_limits.py` para limites compartidos.
+  - WebhookMonitor ahora redacted headers en list y agrega `headers_preview`/body preview seguro en export.
+  - FileCleaner corta `fuzzy-check` con 413 sobre 5000 filas para evitar O(n2) excesivo.
+- Verificacion:
+  - RED: `python -m unittest tests.test_security_helpers -v` -> fallo esperado por `ModuleNotFoundError: data_limits`.
+  - GREEN focalizado: `python -m unittest tests.test_security_helpers -v` -> 3 tests OK.
+  - Suite: `python -m unittest discover -s tests` -> 25 tests OK.
+  - `python -c "import sys; sys.path.insert(0, 'packages'); import backend_core.universal_main; print('universal_main import ok')"` -> OK.
+  - `pnpm run typecheck` -> 8 tasks OK.
+  - `pnpm run lint` -> 9 tasks OK, warnings existentes.
+- Commit: `iter-4: optimize-security-and-performance`.
 
 ## Iteracion 5 - Polish
 - Estado: pendiente.
