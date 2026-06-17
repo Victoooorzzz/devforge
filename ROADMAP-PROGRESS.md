@@ -34,7 +34,21 @@
 - Commit: `iter-2: shared-product-insights`.
 
 ## Iteracion 3 - VALUE FEATURES
-- Estado: pendiente.
+- Estado: completada.
+- Cambios:
+  - FileCleaner: endpoint `/files/summary` y cards de processed/rows saved/quality actions/errors.
+  - InvoiceFollow: endpoint `/invoices/summary`, cash-at-risk visible y bloque de promesas de pago.
+  - PriceTrackr: endpoint `/trackers/summary` y cards de drops, stock y savings.
+  - WebhookMonitor: endpoint `/webhooks/summary` y cards de volumen 24h, retries y failed forwards.
+  - FeedbackLens: consumo de `/feedback/summary/weekly` en dashboard.
+  - Incluido fix de producto ya presente en workspace para usar `settings.s3_bucket_name` en cleanup/delete de FileCleaner.
+- Verificacion:
+  - `python -m unittest discover -s tests` -> 22 tests OK.
+  - `pnpm run typecheck` -> 8 tasks OK.
+  - `pnpm run lint` -> 9 tasks OK, warnings existentes.
+  - `python -c "import sys; sys.path.insert(0, 'packages'); import backend_core.universal_main; print('universal_main import ok')"` -> OK.
+  - `rg '/(files|invoices|trackers|webhooks)/summary|summary/weekly' apps packages -n` -> endpoints/consumos encontrados.
+- Commit: `iter-3: value-feature-insight-panels`.
 
 ## Iteracion 4 - Optimizacion
 - Estado: pendiente.

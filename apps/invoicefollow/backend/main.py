@@ -15,6 +15,7 @@ from backend_core import create_app, get_current_user, get_session, User, requir
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.outbox_models import SystemOutbox, InvoiceMagicLink
+from backend_core.product_insights import summarize_invoices
 from backend_core.worker import register_job_handler
 
 logger = logging.getLogger(__name__)
@@ -263,6 +264,12 @@ async def create_invoice(body: InvoiceCreate, user: User = Depends(get_current_u
 async def list_invoices(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(Invoice).where(Invoice.user_id == user.id).order_by(Invoice.due_date))
     return result.scalars().all()
+
+
+@invoice_router.get("/summary")
+async def invoice_summary(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(Invoice).where(Invoice.user_id == user.id))
+    return summarize_invoices(result.scalars().all())
 
 
 @invoice_router.put("/{invoice_id}/mark-paid")

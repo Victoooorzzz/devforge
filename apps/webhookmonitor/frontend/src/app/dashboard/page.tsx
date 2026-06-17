@@ -24,6 +24,14 @@ const methodColors: Record<string, string> = {
 
 type ExportFormat = "csv" | "xlsx" | "json";
 
+interface WebhookSummary {
+  total_requests: number;
+  recent_24h: number;
+  retry_pressure: number;
+  failed_forwards: number;
+  auto_retry_enabled: number;
+}
+
 export default function DashboardPage() {
   const [requests, setRequests]       = useState<WebhookRequest[]>([]);
   const [selected, setSelected]       = useState<WebhookRequest | null>(null);
@@ -34,6 +42,7 @@ export default function DashboardPage() {
   const [isEditingPayload, setIsEditingPayload] = useState(false);
   const [isRetrying, setIsRetrying]   = useState(false);
   const [exportOpen, setExportOpen]   = useState(false);
+  const [summary, setSummary]         = useState<WebhookSummary | null>(null);
   const intervalRef                   = useRef<NodeJS.Timeout | null>(null);
   const exportRef                     = useRef<HTMLDivElement>(null);
 
@@ -41,6 +50,8 @@ export default function DashboardPage() {
     // GET /webhooks/config returns { endpoint_url }
     apiClient.get<{ endpoint_url: string }>("/webhooks/config")
       .then(({ data }) => setEndpointUrl(data.endpoint_url)).catch(() => {});
+    apiClient.get<WebhookSummary>("/webhooks/summary")
+      .then(({ data }) => setSummary(data)).catch(() => {});
 
     const fetchRequests = async () => {
       try {
@@ -184,6 +195,22 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {summary && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 px-4">
+          {[
+            { label: "24h volume", value: summary.recent_24h.toLocaleString(), color: "var(--color-primary)" },
+            { label: "Retries", value: summary.retry_pressure.toLocaleString(), color: summary.retry_pressure ? "#F59E0B" : "#10B981" },
+            { label: "Failed forwards", value: summary.failed_forwards.toLocaleString(), color: summary.failed_forwards ? "#EF4444" : "#10B981" },
+            { label: "Auto retry", value: summary.auto_retry_enabled.toLocaleString(), color: "#6366F1" },
+          ].map(stat => (
+            <div key={stat.label} className="p-4 rounded-xl" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+              <p className="text-[10px] uppercase font-bold tracking-wider opacity-50 mb-1">{stat.label}</p>
+              <p className="text-xl font-mono font-bold" style={{ color: stat.color }}>{stat.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="flex flex-col lg:flex-row gap-6 flex-1 overflow-hidden px-4 pb-4">
         {/* Main List */}

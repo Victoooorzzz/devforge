@@ -25,6 +25,14 @@ interface DebtorProfile {
   invoices: Invoice[];
 }
 
+interface InvoiceSummary {
+  pending_amount: number;
+  overdue_amount: number;
+  promised_amount: number;
+  cash_at_risk: number;
+  overdue_count: number;
+}
+
 function getRisk(invoices: Invoice[]): DebtorRisk {
   const overdue = invoices.filter(i => i.status === "overdue").length;
   const total = invoices.length;
@@ -56,11 +64,13 @@ export default function DashboardPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [aiTonePanel, setAiTonePanel] = useState<null | { invoiceId: number; loading: boolean; result: any }>(null);
   const [copiedTone, setCopiedTone] = useState(false);
+  const [summary, setSummary] = useState<InvoiceSummary | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     apiClient.get<Invoice[]>("/invoices/list").then(({ data }) => setInvoices(data)).catch(() => {});
     apiClient.get<any[]>("/invoices/client-scores").then(({ data }) => setScores(data)).catch(() => {});
+    apiClient.get<InvoiceSummary>("/invoices/summary").then(({ data }) => setSummary(data)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -195,17 +205,28 @@ export default function DashboardPage() {
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
             <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>Total pendiente</p>
-            <p className="text-xl font-bold font-mono" style={{ color: "var(--color-accent)" }}>${totalPending.toFixed(2)}</p>
+            <p className="text-xl font-bold font-mono" style={{ color: "var(--color-accent)" }}>${(summary?.pending_amount ?? totalPending).toFixed(2)}</p>
           </div>
           <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
             <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>Vencidas</p>
-            <p className="text-xl font-bold font-mono" style={{ color: "#EF4444" }}>{overdueCnt}</p>
+            <p className="text-xl font-bold font-mono" style={{ color: "#EF4444" }}>{summary?.overdue_count ?? overdueCnt}</p>
           </div>
           <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
-            <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>Clientes en riesgo</p>
-            <p className="text-xl font-bold font-mono" style={{ color: "#EF4444" }}>{redDebtors}</p>
+            <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>Cash at risk</p>
+            <p className="text-xl font-bold font-mono" style={{ color: "#EF4444" }}>${(summary?.cash_at_risk ?? 0).toFixed(2)}</p>
           </div>
         </div>
+
+        {summary && summary.promised_amount > 0 && (
+          <div className="p-4 rounded-lg mb-6 flex items-center justify-between gap-4"
+            style={{ backgroundColor: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)" }}>
+            <div>
+              <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Promesas de pago registradas</p>
+              <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Monto pausado por clientes que prometieron pagar.</p>
+            </div>
+            <p className="text-lg font-mono font-bold text-indigo-400">${summary.promised_amount.toFixed(2)}</p>
+          </div>
+        )}
 
         {showForm && (
           <form onSubmit={handleAdd} className="p-6 rounded-lg mb-6 grid grid-cols-1 md:grid-cols-5 gap-4 items-end" style={{ backgroundColor: "var(--color-surface)" }}>

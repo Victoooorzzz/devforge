@@ -28,6 +28,14 @@ const sentimentConfig = {
 type Tab = "single" | "bulk";
 type ExportFormat = "csv" | "xlsx" | "json";
 
+interface WeeklySummary {
+  summary_text: string;
+  total: number;
+  urgent_count: number;
+  sentiment_stats: Record<"positive" | "negative" | "neutral", number>;
+  top_themes: string[];
+}
+
 export default function DashboardPage() {
   const [entries, setEntries]         = useState<FeedbackEntry[]>([]);
   const [text, setText]               = useState("");
@@ -42,10 +50,12 @@ export default function DashboardPage() {
   const [bulkResult, setBulkResult]   = useState<{created: number} | null>(null);
   const [exportOpen, setExportOpen]   = useState(false);
   const [copiedReply, setCopiedReply] = useState<number | null>(null);
+  const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     apiClient.get<FeedbackEntry[]>("/feedback/list").then(({ data }) => setEntries(data)).catch(() => {});
+    apiClient.get<WeeklySummary>("/feedback/summary/weekly").then(({ data }) => setWeeklySummary(data)).catch(() => {});
   }, []);
 
   // Close export dropdown on outside click
@@ -198,6 +208,30 @@ export default function DashboardPage() {
               <p className="text-xs mt-0.5" style={{ color: "var(--color-text-secondary)" }}>
                 Estos mensajes requieren atencion inmediata — posibles errores criticos o quejas graves.
               </p>
+            </div>
+          </div>
+        )}
+
+        {weeklySummary && (
+          <div className="p-4 rounded-lg mb-6" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "var(--color-text-secondary)" }}>Weekly insight</p>
+                <p className="text-sm" style={{ color: "var(--color-text)" }}>{weeklySummary.summary_text}</p>
+                {weeklySummary.top_themes.length > 0 && (
+                  <div className="flex gap-1 mt-3 flex-wrap">
+                    {weeklySummary.top_themes.map(theme => (
+                      <span key={theme} className="text-xs px-2 py-0.5 rounded" style={{ backgroundColor: "var(--color-surface-high)", color: "var(--color-text-secondary)" }}>
+                        {theme}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="text-xl font-mono font-bold text-[var(--color-accent)]">{weeklySummary.total}</p>
+                <p className="text-[10px] uppercase opacity-50">this week</p>
+              </div>
             </div>
           </div>
         )}

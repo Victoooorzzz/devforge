@@ -32,6 +32,14 @@ interface AlertConfig {
   saved: boolean;
 }
 
+interface TrackerSummary {
+  total_trackers: number;
+  active_trackers: number;
+  price_drop_count: number;
+  out_of_stock_count: number;
+  potential_savings: number;
+}
+
 export default function DashboardPage() {
   const [trackers, setTrackers]   = useState<TrackedUrl[]>([]);
   const [showForm, setShowForm]   = useState(false);
@@ -42,10 +50,12 @@ export default function DashboardPage() {
   const [form, setForm]           = useState({ url: "", label: "", check_frequency_hours: 24 });
   const [exportOpen, setExportOpen] = useState(false);
   const [alertConfigs, setAlertConfigs] = useState<Record<number, AlertConfig>>({});
+  const [summary, setSummary] = useState<TrackerSummary | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     apiClient.get<TrackedUrl[]>("/trackers/list").then(({ data }) => setTrackers(data)).catch(() => {});
+    apiClient.get<TrackerSummary>("/trackers/summary").then(({ data }) => setSummary(data)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -199,6 +209,22 @@ export default function DashboardPage() {
             <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Agregar URL</button>
           </div>
         </div>
+
+        {summary && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            {[
+              { label: "Active", value: summary.active_trackers.toLocaleString(), color: "var(--color-accent)" },
+              { label: "Price drops", value: summary.price_drop_count.toLocaleString(), color: "#10B981" },
+              { label: "Out of stock", value: summary.out_of_stock_count.toLocaleString(), color: summary.out_of_stock_count ? "#EF4444" : "#10B981" },
+              { label: "Potential savings", value: `$${summary.potential_savings.toFixed(2)}`, color: "#F59E0B" },
+            ].map(stat => (
+              <div key={stat.label} className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
+                <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>{stat.label}</p>
+                <p className="text-xl font-bold font-mono" style={{ color: stat.color }}>{stat.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
 
         {showForm && (
           <form onSubmit={handleAdd} className="p-6 rounded-lg mb-6 grid grid-cols-1 md:grid-cols-3 gap-4 items-end"

@@ -43,6 +43,14 @@ interface AIAnalysis {
   engine: "gemini" | "heuristic";
 }
 
+interface FileSummary {
+  total_files: number;
+  completed_files: number;
+  error_files: number;
+  rows_saved: number;
+  quality_actions: number;
+}
+
 type ExportFormat = "csv" | "xlsx" | "json";
 
 const POLL_INTERVAL_MS = 2500;
@@ -61,6 +69,7 @@ export default function DashboardPage() {
   const [aiPanel, setAiPanel]         = useState<AIAnalysis | null>(null);
   const [aiLoading, setAiLoading]     = useState(false);
   const [aiCopied, setAiCopied]       = useState(false);
+  const [summary, setSummary]         = useState<FileSummary | null>(null);
   const pollingIds = useRef<Set<string>>(new Set());
   const exportRef  = useRef<HTMLDivElement>(null);
 
@@ -76,6 +85,7 @@ export default function DashboardPage() {
         report: f.report ?? undefined,
       })));
     }).catch(() => {});
+    apiClient.get<FileSummary>("/files/summary").then(({ data }) => setSummary(data)).catch(() => {});
   }, []);
 
   // Auto-poll files that are in queued/processing state
@@ -257,6 +267,22 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {summary && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+          {[
+            { label: "Processed", value: summary.completed_files.toLocaleString(), tone: "text-emerald-500" },
+            { label: "Rows saved", value: summary.rows_saved.toLocaleString(), tone: "text-[var(--color-primary)]" },
+            { label: "Quality actions", value: summary.quality_actions.toLocaleString(), tone: "text-sky-400" },
+            { label: "Errors", value: summary.error_files.toLocaleString(), tone: summary.error_files ? "text-red-500" : "text-emerald-500" },
+          ].map(stat => (
+            <div key={stat.label} className="p-4 rounded-xl" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+              <p className="text-[10px] uppercase font-bold tracking-wider opacity-50 mb-1">{stat.label}</p>
+              <p className={`text-xl font-mono font-bold ${stat.tone}`}>{stat.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* AI Analysis Panel */}
       {aiPanel && (

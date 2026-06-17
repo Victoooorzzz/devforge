@@ -15,6 +15,7 @@ from backend_core import create_app, get_current_user, get_session, User, scrape
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.price_alerts import build_price_alerts
+from backend_core.product_insights import summarize_trackers
 from backend_core.security_utils import is_public_http_url
 from backend_core.worker import register_job_handler
 from backend_core.outbox_models import SystemOutbox
@@ -301,6 +302,12 @@ async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_u
 async def list_trackers(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(TrackedUrl).where(TrackedUrl.user_id == user.id).order_by(TrackedUrl.created_at.desc()))
     return result.scalars().all()
+
+
+@tracker_router.get("/summary")
+async def tracker_summary(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(TrackedUrl).where(TrackedUrl.user_id == user.id))
+    return summarize_trackers(result.scalars().all())
 
 
 @tracker_router.get("/{tracker_id}/history")

@@ -17,6 +17,7 @@ from fastapi.concurrency import run_in_threadpool
 from backend_core import create_app, get_current_user, get_session, User, require_product_access, get_settings
 from backend_core.database import get_managed_session
 from backend_core.outbox_models import SystemOutbox
+from backend_core.product_insights import summarize_files
 from backend_core.worker import register_job_handler
 
 settings = get_settings()
@@ -415,6 +416,20 @@ async def list_files(
     ]
 
 
+@file_router.get("/summary")
+async def get_file_summary(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        select(ProcessedFile)
+        .where(ProcessedFile.user_id == user.id)
+        .order_by(ProcessedFile.created_at.desc())
+        .limit(500)
+    )
+    return summarize_files(result.scalars().all())
+
+
 @file_router.post("/fuzzy-check")
 async def fuzzy_check(
     file: UploadFile = File(...),
@@ -755,7 +770,7 @@ async def delete_file(
     if not record or record.user_id != user.id:
         raise HTTPException(status_code=404, detail="File not found")
 
-    bucket_name = os.getenv("R2_BUCKET_NAME")
+    bucket_name = settings.s3_bucket_name
     if bucket_name:
         s3 = _get_s3_client()
         for prefix in ["cleaned", "magic-clean"]:

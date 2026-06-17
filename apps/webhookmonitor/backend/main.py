@@ -16,6 +16,7 @@ from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.logic_bridge import detect_and_act_on_payment
 from backend_core.outbox_models import SystemOutbox
+from backend_core.product_insights import summarize_webhooks
 from backend_core.security_utils import is_public_http_url
 from backend_core.worker import register_job_handler
 from pydantic import BaseModel
@@ -179,6 +180,25 @@ async def list_logs(
         }
         for r in result.scalars().all()
     ]
+
+
+@webhook_router.get("/summary")
+async def webhook_summary(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
+    ep = ep_result.scalar_one_or_none()
+    if not ep:
+        return summarize_webhooks([])
+
+    result = await session.execute(
+        select(WebhookRequest)
+        .where(WebhookRequest.endpoint_id == ep.id)
+        .order_by(WebhookRequest.received_at.desc())
+        .limit(1000)
+    )
+    return summarize_webhooks(result.scalars().all())
 
 
 @webhook_router.delete("/requests")
