@@ -1,11 +1,11 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, EmailStr, ValidationError, field_validator
 from typing import Optional, Literal
 from datetime import datetime, date, timezone
 import uuid, logging, json, io
@@ -51,10 +51,82 @@ class InvoiceSettings(SQLModel, table=True):
 
 
 class InvoiceCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     client_name: str
-    client_email: str
+    client_email: EmailStr
     amount: float
     due_date: date
+
+    @field_validator("client_name")
+    @classmethod
+    def client_name_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("client_name is required")
+        return value.strip()
+
+    @field_validator("amount")
+    @classmethod
+    def amount_must_be_positive(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("amount must be greater than 0")
+        return value
+
+
+def _clean_import_value(value):
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def _clean_import_amount(value) -> str:
+    return _clean_import_value(value).replace("$", "").replace(",", "")
+
+
+def _parse_invoice_import(content: bytes, filename: str) -> list[InvoiceCreate]:
+    if not content:
+        raise ValueError("Import file is empty")
+
+    normalized = filename.lower()
+    try:
+        if normalized.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(content))
+        elif normalized.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(content))
+        else:
+            raise ValueError("Unsupported import file. Use CSV or Excel.")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"Could not read invoice import: {exc}") from exc
+
+    required = ["client_name", "client_email", "amount", "due_date"]
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {', '.join(missing)}")
+
+    df = df.dropna(how="all")
+    if df.empty:
+        raise ValueError("Import file has no invoice rows")
+
+    invoices: list[InvoiceCreate] = []
+    errors: list[str] = []
+    for index, row in df.iterrows():
+        try:
+            invoices.append(InvoiceCreate(
+                client_name=_clean_import_value(row["client_name"]),
+                client_email=_clean_import_value(row["client_email"]),
+                amount=_clean_import_amount(row["amount"]),
+                due_date=_clean_import_value(row["due_date"]),
+            ))
+        except ValidationError as exc:
+            fields = ", ".join(str(error["loc"][0]) for error in exc.errors())
+            errors.append(f"Row {int(index) + 2}: {fields}")
+
+    if errors:
+        raise ValueError("; ".join(errors))
+
+    return invoices
 
 
 class InvoiceTemplateUpdate(BaseModel):
@@ -258,6 +330,47 @@ async def create_invoice(body: InvoiceCreate, user: User = Depends(get_current_u
     await session.flush()
     await session.refresh(inv)
     return inv
+
+
+@invoice_router.post("/import-csv")
+async def import_invoices(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    file_size = file.size or 0
+    if file_size > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Invoice import is limited to 5MB")
+
+    filename = file.filename or "invoices.csv"
+    ext = filename.rsplit(".", 1)[-1].lower()
+    if ext not in {"csv", "xlsx", "xls"}:
+        raise HTTPException(status_code=400, detail="Use CSV or Excel for invoice import")
+
+    try:
+        payloads = _parse_invoice_import(await file.read(), filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    invoices = [
+        Invoice(
+            user_id=user.id,
+            client_name=payload.client_name,
+            client_email=str(payload.client_email),
+            amount=payload.amount,
+            due_date=payload.due_date,
+            promise_token=uuid.uuid4().hex,
+        )
+        for payload in payloads
+    ]
+
+    for invoice in invoices:
+        session.add(invoice)
+    await session.flush()
+    for invoice in invoices:
+        await session.refresh(invoice)
+
+    return {"created": len(invoices), "invoices": invoices}
 
 
 @invoice_router.get("/list")

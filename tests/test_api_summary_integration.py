@@ -38,11 +38,24 @@ class _FakeExecuteResult:
 class _FakeSession:
     def __init__(self, responses):
         self.responses = list(responses)
+        self.added = []
 
     async def execute(self, _query):
         if not self.responses:
             raise AssertionError("Unexpected query in summary endpoint")
         return _FakeExecuteResult(self.responses.pop(0))
+
+    def add(self, item):
+        self.added.append(item)
+
+    async def flush(self):
+        for index, item in enumerate(self.added, start=1):
+            if getattr(item, "id", None) is None:
+                item.id = index
+
+    async def refresh(self, item):
+        if getattr(item, "id", None) is None:
+            item.id = len(self.added)
 
 
 def _trial_user():
@@ -158,6 +171,25 @@ class SummaryEndpointIntegrationTests(unittest.TestCase):
         self.assertIn("logo.cleaned.webp", response.headers["content-disposition"])
         converted = Image.open(io.BytesIO(response.content))
         self.assertEqual(converted.format, "WEBP")
+
+    def test_invoicefollow_import_csv_creates_validated_invoices(self):
+        content = (
+            "client_name,client_email,amount,due_date\n"
+            "Acme,billing@example.com,120.50,2026-07-01\n"
+            "Globex,ap@globex.com,90,2026-07-15\n"
+        ).encode("utf-8")
+
+        response = _post_file(
+            invoice_app,
+            "/invoices/import-csv",
+            filename="invoices.csv",
+            content=content,
+            media_type="text/csv",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 2)
+        self.assertEqual(response.json()["invoices"][0]["client_email"], "billing@example.com")
 
 
 if __name__ == "__main__":

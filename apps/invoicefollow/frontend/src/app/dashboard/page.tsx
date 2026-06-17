@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { apiClient, downloadFile, trackEvent } from "@devforge/core";
-import { Download, ChevronDown, Sparkles, Loader2, Copy, Check, X } from "lucide-react";
+import { apiClient, downloadFile, trackEvent, uploadFile } from "@devforge/core";
+import { Download, ChevronDown, Sparkles, Loader2, Copy, Check, X, Upload } from "lucide-react";
 
 interface Invoice {
   id: number;
@@ -65,12 +65,18 @@ export default function DashboardPage() {
   const [aiTonePanel, setAiTonePanel] = useState<null | { invoiceId: number; loading: boolean; result: any }>(null);
   const [copiedTone, setCopiedTone] = useState(false);
   const [summary, setSummary] = useState<InvoiceSummary | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const refreshInvoices = () => {
     apiClient.get<Invoice[]>("/invoices/list").then(({ data }) => setInvoices(data)).catch(() => {});
     apiClient.get<any[]>("/invoices/client-scores").then(({ data }) => setScores(data)).catch(() => {});
     apiClient.get<InvoiceSummary>("/invoices/summary").then(({ data }) => setSummary(data)).catch(() => {});
+  };
+
+  useEffect(() => {
+    refreshInvoices();
   }, []);
 
   useEffect(() => {
@@ -84,13 +90,47 @@ export default function DashboardPage() {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     trackEvent("feature_used", { feature_name: "add_invoice" });
-    const { data } = await apiClient.post<Invoice>("/invoices", {
-      client_name: form.client_name, client_email: form.client_email,
-      amount: parseFloat(form.amount), due_date: form.due_date,
-    });
-    setInvoices(prev => [data, ...prev]);
-    setForm({ client_name: "", client_email: "", amount: "", due_date: "" });
-    setShowForm(false);
+    try {
+      const { data } = await apiClient.post<Invoice>("/invoices", {
+        client_name: form.client_name, client_email: form.client_email,
+        amount: parseFloat(form.amount), due_date: form.due_date,
+      });
+      setInvoices(prev => [data, ...prev]);
+      setForm({ client_name: "", client_email: "", amount: "", due_date: "" });
+      setShowForm(false);
+      refreshInvoices();
+    } catch (e: any) {
+      alert(e.detail || "Error al guardar factura");
+    }
+  };
+
+  const handleImportFile = async (fileInput: File) => {
+    setImporting(true);
+    setImportMessage(null);
+    trackEvent("feature_used", { feature_name: "import_invoices", format: fileInput.name.split(".").pop() });
+    try {
+      const formData = new FormData();
+      formData.append("file", fileInput);
+      const { data } = await uploadFile<{ created: number; invoices: Invoice[] }>("/invoices/import-csv", formData);
+      setInvoices(prev => [...data.invoices, ...prev]);
+      setImportMessage(`${data.created} invoices imported`);
+      refreshInvoices();
+    } catch (e: any) {
+      alert(e.detail || "Error al importar facturas");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const openImport = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,.xlsx,.xls";
+    input.onchange = e => {
+      const f = (e.target as HTMLInputElement).files?.[0];
+      if (f) handleImportFile(f);
+    };
+    input.click();
   };
 
   const handlePauseReminders = async (id: number) => {
@@ -197,9 +237,22 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
+            <button onClick={openImport} disabled={importing}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all"
+              style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)", opacity: importing ? 0.7 : 1 }}>
+              {importing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+              <span>Import</span>
+            </button>
             <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Nueva factura</button>
           </div>
         </div>
+
+        {importMessage && (
+          <div className="p-3 rounded-lg mb-6 text-sm text-emerald-500"
+            style={{ backgroundColor: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.25)" }}>
+            {importMessage}
+          </div>
+        )}
 
 
         <div className="grid grid-cols-3 gap-4 mb-6">
@@ -240,7 +293,7 @@ export default function DashboardPage() {
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Monto ($)</label>
-              <input type="number" step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} className="input-field" required />
+              <input type="number" step="0.01" min="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} className="input-field" required />
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Vencimiento</label>
