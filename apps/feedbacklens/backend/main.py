@@ -215,6 +215,7 @@ def _serialize(entry: FeedbackEntry) -> dict:
 # ---------------------------------------------------------------------------
 feedback_router = APIRouter(prefix="/feedback", tags=["feedback"], dependencies=[Depends(require_product_access("feedbacklens"))])
 settings_router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_product_access("feedbacklens"))])
+cron_router = APIRouter(prefix="/feedback", tags=["cron"])
 
 
 @settings_router.get("/feedback-prefs")
@@ -475,7 +476,7 @@ async def weekly_summary_cron():
                 logger.error(f"Failed to send weekly digest to {prefs.alert_email}: {e}")
 
 
-@feedback_router.post("/cron/summary", tags=["cron"])
+@cron_router.post("/cron/summary", tags=["cron"])
 async def cron_feedback_summary(authorization: str | None = Header(default=None)):
     """cron-job.org endpoint — sends weekly digest emails."""
     expected = os.getenv("CRON_SECRET")
@@ -655,7 +656,7 @@ Responde SOLO con el texto de la respuesta, sin saludos genericos ni firmas."""
 app = create_app(
     title="Feedback Lens",
     description="AI-powered sentiment analysis — Gemini + VADER fallback",
-    domain_routers=[feedback_router, settings_router]
+    domain_routers=[feedback_router, settings_router, cron_router]
 )
 
 if __name__ == "__main__":

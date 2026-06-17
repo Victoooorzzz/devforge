@@ -21,6 +21,7 @@ from backend_core.config import get_settings
 from apps.feedbacklens.backend.main import (
     feedback_router,
     settings_router as fl_settings_router,
+    cron_router as fl_cron_router,
     FeedbackEntry,
     FeedbackSettings,
     weekly_summary_cron,
@@ -38,6 +39,7 @@ from apps.invoicefollow.backend.main import (
     invoice_router,
     settings_router as iv_settings_router,
     public_router as iv_public_router,
+    cron_router as iv_cron_router,
     Invoice,
     InvoiceSettings,
     enqueue_overdue_reminders,
@@ -47,6 +49,7 @@ from apps.invoicefollow.backend.main import (
 from apps.pricetrackr.backend.main import (
     tracker_router,
     settings_router as pt_settings_router,
+    cron_router as pt_cron_router,
     TrackedUrl,
     PriceHistory,
     TrackerSettings,
@@ -58,6 +61,7 @@ from apps.webhookmonitor.backend.main import (
     webhook_router as wm_router,
     ingestion_router,
     settings_router as wm_settings_router,
+    cron_router as wm_cron_router,
     WebhookEndpoint,
     WebhookRequest,
     WebhookSettings,
@@ -75,19 +79,23 @@ all_domain_routers = [
     # FeedbackLens
     feedback_router,
     fl_settings_router,
+    fl_cron_router,
     # FileCleaner
     file_router,
     # InvoiceFollow
     invoice_router,
     iv_settings_router,
     iv_public_router,
+    iv_cron_router,
     # PriceTrackr
     tracker_router,
     pt_settings_router,
+    pt_cron_router,
     # WebhookMonitor
     wm_router,
     ingestion_router,
     wm_settings_router,
+    wm_cron_router,
     # Admin
     admin_router,
 ]

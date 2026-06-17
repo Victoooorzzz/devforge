@@ -80,8 +80,9 @@ class TrackerPrefsUpdate(BaseModel):
 
 tracker_router = APIRouter(prefix="/trackers", tags=["trackers"], dependencies=[Depends(require_product_access("pricetrackr"))])
 settings_router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_product_access("pricetrackr"))])
+cron_router = APIRouter(prefix="/trackers", tags=["cron"])
 
-@tracker_router.post("/cron/update", tags=["cron"])
+@cron_router.post("/cron/update", tags=["cron"])
 async def cron_update_prices(authorization: str | None = Header(default=None)):
     """Endpoint para cron-job.org."""
     # Simple secret check (optional but recommended)
@@ -507,7 +508,7 @@ async def test_price_alert(
 app = create_app(
     title="Price Tracker",
     description="Monitor competitor prices and get alerts",
-    domain_routers=[tracker_router, settings_router]
+    domain_routers=[tracker_router, settings_router, cron_router]
 )
 
 # Eliminado local APScheduler para compatibilidad con cron-job.org

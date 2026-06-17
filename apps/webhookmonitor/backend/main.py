@@ -108,6 +108,7 @@ def _matches_log_status(request: WebhookRequest, status: str) -> bool:
 webhook_router = APIRouter(prefix="/webhooks", tags=["webhooks"], dependencies=[Depends(require_product_access("webhookmonitor"))])
 settings_router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_product_access("webhookmonitor"))])
 ingestion_router = APIRouter(tags=["ingestion"])
+cron_router = APIRouter(prefix="/webhooks", tags=["cron"])
 
 
 @settings_router.get("/webhook-prefs")
@@ -369,7 +370,7 @@ async def cleanup_old_logs():
         return deleted
 
 
-@webhook_router.post("/cron/silence", tags=["cron"])
+@cron_router.post("/cron/silence", tags=["cron"])
 async def cron_silence_check(authorization: str | None = Header(default=None)):
     """cron-job.org endpoint — detects silent webhooks."""
     expected = os.getenv("CRON_SECRET")
@@ -380,7 +381,7 @@ async def cron_silence_check(authorization: str | None = Header(default=None)):
 
 
 
-@webhook_router.post("/cron/cleanup", tags=["cron"])
+@cron_router.post("/cron/cleanup", tags=["cron"])
 async def cron_cleanup_logs(authorization: str | None = Header(default=None)):
     """cron-job.org endpoint — purges webhook logs older than 30 days."""
     expected = os.getenv("CRON_SECRET")
@@ -600,7 +601,7 @@ async def ingest_webhook(
 app = create_app(
     title="Webhook Monitor",
     description="Real-time monitoring, alerting, and exponential backoff retries for your webhooks",
-    domain_routers=[ingestion_router, webhook_router, settings_router]
+    domain_routers=[ingestion_router, webhook_router, settings_router, cron_router]
 )
 
 if __name__ == "__main__":

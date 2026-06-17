@@ -136,8 +136,9 @@ class InvoiceTemplateUpdate(BaseModel):
 invoice_router = APIRouter(prefix="/invoices", tags=["invoices"], dependencies=[Depends(require_product_access("invoicefollow"))])
 settings_router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_product_access("invoicefollow"))])
 public_router = APIRouter(prefix="/invoices", tags=["public"])
+cron_router = APIRouter(prefix="/invoices", tags=["cron"])
 
-@invoice_router.post("/cron/reminders/enqueue", tags=["cron"])
+@cron_router.post("/cron/reminders/enqueue", tags=["cron"])
 async def cron_enqueue_reminders(authorization: str | None = Header(default=None)):
     """Endpoint para cron-job.org. Solo encola, no envía correos sincrónicamente."""
     expected = os.getenv("CRON_SECRET")
@@ -662,7 +663,7 @@ async def export_invoices(
 app = create_app(
     title="Invoice Follow-up",
     description="Track invoices and automate payment reminders",
-    domain_routers=[invoice_router, settings_router, public_router]
+    domain_routers=[invoice_router, settings_router, public_router, cron_router]
 )
 
 # APScheduler removido para Vercel Serverless
