@@ -128,6 +128,16 @@ class SummaryEndpointIntegrationTests(unittest.TestCase):
         self.assertEqual(response.json()["price_drop_count"], 1)
         self.assertEqual(response.json()["out_of_stock_count"], 1)
 
+    def test_pricetrackr_health_returns_issue_first_statuses(self):
+        response = _get_json(tracker_app, "/trackers/health", [[
+            SimpleNamespace(id=1, label="Healthy", last_checked=datetime.utcnow(), check_frequency_hours=24, current_price=10, in_stock=True),
+            SimpleNamespace(id=2, label="Missing", last_checked=datetime.utcnow(), check_frequency_hours=24, current_price=None, in_stock=True),
+        ]])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["health"], "price_missing")
+        self.assertEqual(response.json()[0]["severity"], "critical")
+
     def test_webhookmonitor_summary_returns_reliability_metrics(self):
         now = datetime.utcnow()
         response = _get_json(webhook_app, "/webhooks/summary", [

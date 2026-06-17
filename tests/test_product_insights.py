@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "backend_core"))
 
 from product_insights import (
+    build_tracker_health,
     summarize_feedback,
     summarize_files,
     summarize_invoices,
@@ -59,6 +60,19 @@ class ProductInsightsTests(unittest.TestCase):
         self.assertEqual(summary["price_drop_count"], 1)
         self.assertEqual(summary["out_of_stock_count"], 1)
         self.assertEqual(summary["potential_savings"], 50.0)
+
+    def test_builds_tracker_health_from_existing_tracker_state(self):
+        now = datetime(2026, 6, 17, 12, 0, 0)
+        health = build_tracker_health([
+            {"id": 1, "label": "Fresh", "last_checked": now - timedelta(hours=2), "check_frequency_hours": 6, "current_price": 99, "in_stock": True},
+            {"id": 2, "label": "Stale", "last_checked": now - timedelta(days=3), "check_frequency_hours": 24, "current_price": 40, "in_stock": True},
+            {"id": 3, "label": "Missing", "last_checked": now - timedelta(hours=1), "check_frequency_hours": 24, "current_price": None, "in_stock": True},
+            {"id": 4, "label": "No Stock", "last_checked": now - timedelta(hours=1), "check_frequency_hours": 24, "current_price": 20, "in_stock": False},
+        ], now=now)
+
+        self.assertEqual([item["health"] for item in health], ["price_missing", "out_of_stock", "stale", "healthy"])
+        self.assertEqual(health[0]["severity"], "critical")
+        self.assertEqual(health[1]["severity"], "warning")
 
     def test_summarizes_webhook_reliability(self):
         now = datetime(2026, 6, 17, 12, 0, 0)

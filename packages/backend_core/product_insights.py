@@ -125,6 +125,54 @@ def summarize_trackers(trackers: Iterable[Any]) -> dict[str, Any]:
     }
 
 
+def build_tracker_health(trackers: Iterable[Any], *, now: datetime | None = None) -> list[dict[str, Any]]:
+    current_time = now or datetime.utcnow()
+    results: list[dict[str, Any]] = []
+
+    for item in trackers:
+        tracker_id = _get(item, "id")
+        label = _get(item, "label") or _get(item, "url") or f"Tracker {tracker_id}"
+        last_checked = _datetime(_get(item, "last_checked"))
+        frequency_hours = int(_number(_get(item, "check_frequency_hours", 24)) or 24)
+        stale_after_hours = max(frequency_hours * 2, 24)
+        current_price = _get(item, "current_price")
+        in_stock = _get(item, "in_stock")
+
+        health = "healthy"
+        severity = "ok"
+        detail = "Tracker is checking successfully."
+
+        if last_checked is None:
+            health = "never_checked"
+            severity = "critical"
+            detail = "Tracker has not completed an initial scrape."
+        elif current_time - last_checked > timedelta(hours=stale_after_hours):
+            health = "stale"
+            severity = "warning"
+            detail = f"No successful check in more than {stale_after_hours} hours."
+        elif current_price is None:
+            health = "price_missing"
+            severity = "critical"
+            detail = "Last scrape did not return a usable price."
+        elif in_stock is False:
+            health = "out_of_stock"
+            severity = "warning"
+            detail = "Product is currently reported out of stock."
+
+        results.append({
+            "id": tracker_id,
+            "label": label,
+            "health": health,
+            "severity": severity,
+            "detail": detail,
+            "last_checked": last_checked.isoformat() if last_checked else None,
+            "check_frequency_hours": frequency_hours,
+        })
+
+    severity_order = {"critical": 0, "warning": 1, "ok": 2}
+    return sorted(results, key=lambda row: (severity_order.get(row["severity"], 3), str(row["label"]).lower()))
+
+
 def summarize_webhooks(requests: Iterable[Any], *, now: datetime | None = None) -> dict[str, Any]:
     items = list(requests)
     current_time = now or datetime.utcnow()

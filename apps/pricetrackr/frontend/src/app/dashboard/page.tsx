@@ -40,6 +40,16 @@ interface TrackerSummary {
   potential_savings: number;
 }
 
+interface TrackerHealth {
+  id: number;
+  label: string;
+  health: "healthy" | "stale" | "never_checked" | "price_missing" | "out_of_stock";
+  severity: "ok" | "warning" | "critical";
+  detail: string;
+  last_checked: string | null;
+  check_frequency_hours: number;
+}
+
 export default function DashboardPage() {
   const [trackers, setTrackers]   = useState<TrackedUrl[]>([]);
   const [showForm, setShowForm]   = useState(false);
@@ -51,11 +61,13 @@ export default function DashboardPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [alertConfigs, setAlertConfigs] = useState<Record<number, AlertConfig>>({});
   const [summary, setSummary] = useState<TrackerSummary | null>(null);
+  const [health, setHealth] = useState<TrackerHealth[]>([]);
   const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     apiClient.get<TrackedUrl[]>("/trackers/list").then(({ data }) => setTrackers(data)).catch(() => {});
     apiClient.get<TrackerSummary>("/trackers/summary").then(({ data }) => setSummary(data)).catch(() => {});
+    apiClient.get<TrackerHealth[]>("/trackers/health").then(({ data }) => setHealth(data)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -223,6 +235,37 @@ export default function DashboardPage() {
                 <p className="text-xl font-bold font-mono" style={{ color: stat.color }}>{stat.value}</p>
               </div>
             ))}
+          </div>
+        )}
+
+        {health.length > 0 && (
+          <div className="mb-6 p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <div className="flex items-center justify-between gap-4 mb-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider opacity-50">Scraper health</p>
+                <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>Trackers needing attention are listed first.</p>
+              </div>
+              <span className="text-xs font-mono" style={{ color: "var(--color-text-secondary)" }}>
+                {health.filter(item => item.severity !== "ok").length} issues
+              </span>
+            </div>
+            <div className="space-y-2">
+              {health.slice(0, 4).map(item => (
+                <div key={item.id} className="flex items-start justify-between gap-3 p-3 rounded-md" style={{ backgroundColor: "rgba(0,0,0,0.04)" }}>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate" style={{ color: "var(--color-text)" }}>{item.label}</p>
+                    <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>{item.detail}</p>
+                  </div>
+                  <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded ${
+                    item.severity === "critical" ? "bg-red-500/10 text-red-500" :
+                    item.severity === "warning" ? "bg-amber-500/10 text-amber-500" :
+                    "bg-emerald-500/10 text-emerald-500"
+                  }`}>
+                    {item.health.replace("_", " ")}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
