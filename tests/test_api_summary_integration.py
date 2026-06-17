@@ -166,15 +166,23 @@ class SummaryEndpointIntegrationTests(unittest.TestCase):
         self.assertEqual([item["path"] for item in response.json()], ["/failed"])
 
     def test_feedbacklens_weekly_summary_is_served_by_backend(self):
-        response = _get_json(feedback_app, "/feedback/summary/weekly", [[
-            SimpleNamespace(sentiment="positive", themes_json='["ux"]', is_urgent=False, created_at=datetime.utcnow()),
-            SimpleNamespace(sentiment="negative", themes_json='["billing"]', is_urgent=True, created_at=datetime.utcnow()),
-        ]])
+        response = _get_json(feedback_app, "/feedback/summary/weekly", [
+            [
+                SimpleNamespace(sentiment="positive", themes_json='["ux"]', is_urgent=False, created_at=datetime.utcnow()),
+                SimpleNamespace(sentiment="negative", themes_json='["billing"]', is_urgent=True, created_at=datetime.utcnow()),
+            ],
+            [
+                SimpleNamespace(sentiment="negative", themes_json='["billing"]', is_urgent=False, created_at=datetime.utcnow() - timedelta(days=10)),
+            ],
+        ])
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["total"], 2)
         self.assertEqual(response.json()["urgent_count"], 1)
         self.assertIn("billing", response.json()["top_themes"])
+        self.assertEqual(response.json()["trend"]["previous_total"], 1)
+        self.assertEqual(response.json()["trend"]["total_delta"], 1)
+        self.assertEqual(response.json()["trend"]["urgent_delta"], 1)
 
     def test_filecleaner_utility_endpoint_returns_processed_download(self):
         source = Image.new("RGB", (80, 80), color=(130, 19, 70))

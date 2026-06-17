@@ -34,6 +34,14 @@ interface WeeklySummary {
   urgent_count: number;
   sentiment_stats: Record<"positive" | "negative" | "neutral", number>;
   top_themes: string[];
+  trend: {
+    previous_total: number;
+    total_delta: number;
+    previous_negative: number;
+    negative_delta: number;
+    previous_urgent: number;
+    urgent_delta: number;
+  };
 }
 
 export default function DashboardPage() {
@@ -227,6 +235,20 @@ export default function DashboardPage() {
                     ))}
                   </div>
                 )}
+                <div className="grid grid-cols-3 gap-2 mt-4">
+                  {[
+                    { label: "Volume", value: weeklySummary.trend.total_delta },
+                    { label: "Negative", value: weeklySummary.trend.negative_delta },
+                    { label: "Urgent", value: weeklySummary.trend.urgent_delta },
+                  ].map(item => (
+                    <div key={item.label} className="px-2 py-1 rounded" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                      <p className="text-[10px] uppercase opacity-50">{item.label}</p>
+                      <p className={`text-xs font-mono font-bold ${item.value > 0 ? "text-amber-500" : item.value < 0 ? "text-emerald-500" : "opacity-60"}`}>
+                        {item.value > 0 ? "+" : ""}{item.value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="text-right flex-shrink-0">
                 <p className="text-xl font-mono font-bold text-[var(--color-accent)]">{weeklySummary.total}</p>

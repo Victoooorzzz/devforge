@@ -344,7 +344,9 @@ register_job_handler("feedbacklens", "analyze_feedback", process_feedback_analys
 @feedback_router.get("/summary/weekly")
 async def get_weekly_summary(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     """Returns a structured weekly digest for the dashboard."""
-    one_week_ago = datetime.utcnow() - timedelta(days=7)
+    now = datetime.utcnow()
+    one_week_ago = now - timedelta(days=7)
+    two_weeks_ago = now - timedelta(days=14)
     result = await session.execute(
         select(FeedbackEntry).where(
             FeedbackEntry.user_id == user.id,
@@ -352,6 +354,27 @@ async def get_weekly_summary(user: User = Depends(get_current_user), session: As
         )
     )
     entries = result.scalars().all()
+    previous_result = await session.execute(
+        select(FeedbackEntry).where(
+            FeedbackEntry.user_id == user.id,
+            FeedbackEntry.created_at >= two_weeks_ago,
+            FeedbackEntry.created_at < one_week_ago,
+        )
+    )
+    previous_entries = previous_result.scalars().all()
+
+    previous_negative = sum(1 for e in previous_entries if e.sentiment == "negative")
+    previous_urgent = sum(1 for e in previous_entries if e.is_urgent)
+
+    def trend_payload(current_negative: int, current_urgent: int) -> dict:
+        return {
+            "previous_total": len(previous_entries),
+            "total_delta": len(entries) - len(previous_entries),
+            "previous_negative": previous_negative,
+            "negative_delta": current_negative - previous_negative,
+            "previous_urgent": previous_urgent,
+            "urgent_delta": current_urgent - previous_urgent,
+        }
 
     if not entries:
         return {
@@ -361,6 +384,7 @@ async def get_weekly_summary(user: User = Depends(get_current_user), session: As
             "sentiment_stats": {"positive": 0, "negative": 0, "neutral": 0},
             "top_themes": [],
             "urgent_count": 0,
+            "trend": trend_payload(0, 0),
         }
 
     all_themes: list[str] = []
@@ -396,6 +420,7 @@ async def get_weekly_summary(user: User = Depends(get_current_user), session: As
         "sentiment_stats": sentiments,
         "top_themes": top_themes,
         "urgent_count": urgent_count,
+        "trend": trend_payload(sentiments["negative"], urgent_count),
     }
 
 
