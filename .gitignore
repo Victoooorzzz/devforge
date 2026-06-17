@@ -5,6 +5,7 @@ build/
 .next/
 out/
 .turbo/
+*.tsbuildinfo
 
 # Python
 __pycache__/

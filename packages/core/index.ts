@@ -1,5 +1,5 @@
 export { setToken, getToken, removeToken, isAuthenticated, fetchWithAuth, login, register, verify } from "./lib/auth";
-export { apiClient, uploadFile } from "./lib/api";
+export { apiClient, downloadFile, getApiBaseUrl, getApiUrl, uploadFile } from "./lib/api";
 export { createCheckoutSession, redirectToCheckout } from "./lib/payments";
 
 export { trackEvent, PlausibleScript } from "./lib/analytics";

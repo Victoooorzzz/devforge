@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { apiClient, trackEvent } from "@devforge/core";
+import { apiClient, downloadFile, trackEvent } from "@devforge/core";
 import { 
   Activity, Trash2, RefreshCcw, Copy, Check, Search, Code,
   Database, X, ChevronRight, Send, AlertCircle, Download, ChevronDown
@@ -116,17 +116,11 @@ export default function DashboardPage() {
   const handleExport = async (format: ExportFormat) => {
     setExportOpen(false);
     trackEvent("feature_used", { feature_name: "export_webhook_logs", format });
-    const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/webhooks/logs/export?format=${format}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      credentials: "include",
-    });
-    if (!res.ok) { alert("Error al exportar"); return; }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `webhookmonitor_export.${format}`; a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await downloadFile(`/webhooks/logs/export?format=${format}`, `webhookmonitor_export.${format}`);
+    } catch {
+      alert("Error al exportar");
+    }
   };
 
   const filtered = requests.filter(r => {

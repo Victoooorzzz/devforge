@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { apiClient, trackEvent } from "@devforge/core";
+import { apiClient, downloadFile, trackEvent, uploadFile } from "@devforge/core";
 import { 
   Sparkles, MessageSquare, Download, Upload, ChevronDown,
   Copy, Check, X, FileText, AlertCircle, Loader2
@@ -123,15 +123,7 @@ export default function DashboardPage() {
     const formData = new FormData();
     formData.append("file", file);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/feedback/bulk-csv`, {
-          method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: formData,
-          credentials: "include",
-        });
-      if (!res.ok) throw new Error("CSV upload failed");
-      const data = await res.json();
+      const { data } = await uploadFile<{ created: number }>("/feedback/bulk-csv", formData);
       setBulkResult({ created: data.created });
       const { data: newEntries } = await apiClient.get<FeedbackEntry[]>("/feedback/list");
       setEntries(newEntries);
@@ -143,17 +135,11 @@ export default function DashboardPage() {
   const handleExport = async (format: ExportFormat) => {
     setExportOpen(false);
     trackEvent("feature_used", { feature_name: "export_feedback", format });
-    const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/feedback/export?format=${format}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      credentials: "include",
-    });
-    if (!res.ok) { alert("Error al exportar"); return; }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `feedbacklens_export.${format}`; a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await downloadFile(`/feedback/export?format=${format}`, `feedbacklens_export.${format}`);
+    } catch {
+      alert("Error al exportar");
+    }
   };
 
   const urgent   = entries.filter(e => e.is_urgent);

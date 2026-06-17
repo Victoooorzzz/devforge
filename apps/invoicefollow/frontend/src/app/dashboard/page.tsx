@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { apiClient, trackEvent } from "@devforge/core";
+import { apiClient, downloadFile, trackEvent } from "@devforge/core";
 import { Download, ChevronDown, Sparkles, Loader2, Copy, Check, X } from "lucide-react";
 
 interface Invoice {
@@ -106,17 +106,11 @@ export default function DashboardPage() {
   const handleExport = async (format: "csv" | "xlsx" | "json") => {
     setExportOpen(false);
     trackEvent("feature_used", { feature_name: "export_invoices", format });
-    const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/invoices/export?format=${format}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      credentials: "include",
-    });
-    if (!res.ok) { alert("Error al exportar"); return; }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `invoicefollow_export.${format}`; a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await downloadFile(`/invoices/export?format=${format}`, `invoicefollow_export.${format}`);
+    } catch {
+      alert("Error al exportar");
+    }
   };
 
   const handleAiTone = async (inv: Invoice) => {

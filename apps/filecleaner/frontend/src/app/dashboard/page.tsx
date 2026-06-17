@@ -1,6 +1,6 @@
 "use client";
 import { useState, useCallback, useEffect, useRef } from "react";
-import { trackEvent, apiClient } from "@devforge/core";
+import { trackEvent, apiClient, downloadFile, getApiUrl, uploadFile } from "@devforge/core";
 import {
   FileText, Download, Trash2, CheckCircle, Clock, AlertCircle, Info,
   ChevronDown, ChevronUp, Sparkles, RefreshCw, TrendingDown, Zap, Brain, X, Copy, Check,
@@ -142,18 +142,7 @@ export default function DashboardPage() {
       try {
         const formData = new FormData();
         formData.append("file", file);
-        const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/upload`, {
-            method: "POST",
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-            body: formData,
-            credentials: "include",
-          });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || "Upload failed");
-        }
-        const data = await res.json();
+        const { data } = await uploadFile<{ id: number; status: FileItem["status"] }>("/files/upload", formData);
         setFiles(prev => prev.map(f => f.id === tempId ? {
           ...f, id: data.id.toString(), status: data.status, localOnly: false,
         } : f));
@@ -167,17 +156,11 @@ export default function DashboardPage() {
   const handleExport = async (format: ExportFormat) => {
     setExportOpen(false);
     trackEvent("feature_used", { feature_name: "export_files", format });
-    const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/export?format=${format}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      credentials: "include",
-    });
-    if (!res.ok) { alert("Error al exportar"); return; }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `filecleaner_export.${format}`; a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await downloadFile(`/files/export?format=${format}`, `filecleaner_export.${format}`);
+    } catch {
+      alert("Error al exportar");
+    }
   };
 
   // AI Analyze — POST /files/ai-analyze with a file
@@ -188,15 +171,7 @@ export default function DashboardPage() {
     try {
       const formData = new FormData();
       formData.append("file", fileInput);
-      const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/files/ai-analyze`, {
-          method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: formData,
-          credentials: "include",
-        });
-      if (!res.ok) throw new Error("AI analyze failed");
-      const data: AIAnalysis = await res.json();
+      const { data } = await uploadFile<AIAnalysis>("/files/ai-analyze", formData);
       setAiPanel(data);
     } catch (e: any) {
       alert(e.message || "AI analysis error");
@@ -420,7 +395,7 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-2">
                     {file.downloadUrl && (
                       <a
-                        href={`${process.env.NEXT_PUBLIC_API_URL || ""}${file.downloadUrl}`}
+                        href={getApiUrl(file.downloadUrl)}
                         className="p-2 rounded-lg hover:bg-[var(--color-primary)]/10 text-[var(--color-primary)] transition-colors"
                         title="Download Cleaned File"
                         onClick={e => e.stopPropagation()}

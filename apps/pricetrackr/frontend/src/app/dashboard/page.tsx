@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { apiClient, trackEvent } from "@devforge/core";
+import { apiClient, downloadFile, trackEvent } from "@devforge/core";
 import { Download, ChevronDown, Bell, BellOff, Send, Loader2, X, Check } from "lucide-react";
 
 interface TrackedUrl {
@@ -98,17 +98,11 @@ export default function DashboardPage() {
   const handleExport = async (format: ExportFormat) => {
     setExportOpen(false);
     trackEvent("feature_used", { feature_name: "export_trackers", format });
-    const token = typeof window !== "undefined" ? localStorage.getItem("devforge_token") : null;
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/trackers/export?format=${format}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      credentials: "include",
-    });
-    if (!res.ok) { alert("Error al exportar"); return; }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `pricetrackr_export.${format}`; a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await downloadFile(`/trackers/export?format=${format}`, `pricetrackr_export.${format}`);
+    } catch {
+      alert("Error al exportar");
+    }
   };
 
   // Alert threshold config — Skill: backend-architect
