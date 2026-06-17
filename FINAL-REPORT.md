@@ -11,51 +11,57 @@ El roadmap solicitado quedo ejecutado en `main` sin worktree. Se auditaron los 5
 - Migrados uploads/exports/AI analyze a helpers compartidos de `@devforge/core`.
 - Limitado `fuzzy-check` a 5000 filas para evitar trabajo O(n2) accidental.
 - Incluido fix de bucket para usar `settings.s3_bucket_name`.
+- Agregado soporte real JSON para limpieza tabular.
+- Agregado `/files/utility` para metadata stripping, compresion y conversion de PNG/JPG/WEBP/HEIC/SVG/PDF, con UI de descarga directa.
 
 ### InvoiceFollow
 - Agregado `/invoices/summary` con pending amount, overdue amount, promised amount y cash at risk.
 - Dashboard ahora muestra cash-at-risk y promesas de pago.
 - Export usa helper compartido de descarga.
+- Agregado `/invoices/import-csv` con import CSV/XLSX, validacion de email, columnas requeridas y montos positivos.
+- Dashboard ahora permite importar facturas y bloquea montos no positivos en captura manual.
 
 ### PriceTrackr
 - Agregado `/trackers/summary` con drops, out-of-stock y potential savings.
 - Dashboard ahora muestra oportunidades resumidas.
 - Export usa helper compartido de descarga.
+- Agregado `/trackers/health` para clasificar trackers healthy/stale/never_checked/price_missing/out_of_stock.
+- Dashboard ahora muestra scraper health priorizando issues criticos.
 
 ### WebhookMonitor
 - Agregado `/webhooks/summary` con volumen 24h, retry pressure, failed forwards y auto retry.
 - Logs y exports ahora enmascaran headers/campos sensibles.
 - Export agrega `headers_preview` seguro.
+- Cerrado SSRF por DNS en validacion de URLs publicas compartida.
+- Agregados filtros de logs por failed, 2xx, pending y auto retry en backend y dashboard.
 
 ### FeedbackLens
 - Dashboard ahora consume `/feedback/summary/weekly`.
 - Bulk CSV y export usan helpers compartidos.
 - Summary semanal queda visible como capa de decision.
+- Summary semanal ahora compara contra la semana anterior con deltas de volumen, negativos y urgentes.
 
 ## Metricas
 
 - Productos auditados: 5/5.
 - Artefactos de auditoria: 11 archivos en `audit/`.
-- Commits creados: 6 (`audit` + iteraciones 1 a 5).
-- Tests Python: 17 base -> 25 finales.
-- Typecheck frontend real: 3 tasks base -> 8 tasks finales, incluyendo los 5 frontends de producto.
-- Endpoints nuevos: 4 (`/files/summary`, `/invoices/summary`, `/trackers/summary`, `/webhooks/summary`).
-- Dashboards con paneles nuevos: 5/5; FeedbackLens consume `/feedback/summary/weekly`, que ya existia en backend y no se conto como endpoint nuevo.
-- Helpers compartidos nuevos: `product_insights`, `sensitive_data`, `data_limits`, API upload/download helpers.
+- Commits creados: 12 (`audit`, iteraciones 1 a 5, Polar/env, hardening/features por producto).
+- Tests Python: 17 base -> 48 finales.
+- Typecheck frontend real: core + los 5 frontends de producto.
+- Endpoints nuevos acumulados: `/files/summary`, `/files/utility`, `/invoices/summary`, `/invoices/import-csv`, `/trackers/summary`, `/trackers/health`, `/webhooks/summary`.
+- Dashboards con paneles/controles nuevos: 5/5.
+- Helpers compartidos nuevos: `product_insights`, `sensitive_data`, `data_limits`, `file_utilities`, API upload/download helpers.
 
 ## Deuda tecnica residual
 
-- SSRF por DNS: `is_public_http_url` bloquea IPs privadas literales, pero no resuelve DNS antes de permitir hostnames.
-- Faltan tests de integracion FastAPI para endpoints protegidos, pagos y cron.
-- FileCleaner landing todavia promete metadata stripping/compresion/conversion, mientras el producto real es data cleaning CSV/XLSX.
 - Settings pages siguen repitiendo profile/subscription logic entre productos.
 - Persisten warnings lint existentes de `<img>` y hooks en paginas no tocadas.
-- Quedan cambios Polar/env preexistentes sin commit en el working tree: `.env.example`, `render.yaml`, `packages/backend_core/polar_*`, `config.py`, `tests/test_polar_helpers.py`.
+- Tests de integracion FastAPI cubren summaries, utility/import/health/log filters; pagos y cron aun no tienen integracion aislada dedicada.
 
 ## Recomendaciones siguientes
 
-1. Resolver SSRF por DNS para scraping/forwarding; es el unico riesgo de seguridad activo si WebhookMonitor hace forwarding a URLs externas.
-2. Agregar tests de integracion con `TestClient`/DB aislada para los endpoints `/summary`, para evitar regresiones silenciosas en futuros refactors.
-3. Alinear landing de FileCleaner con el producto real o implementar las features prometidas; hoy promete metadata stripping/compresion/conversion y el producto real hace CSV/XLSX cleaning.
-4. Cerrar los cambios Polar/env pendientes en un commit dedicado o descartarlos si ya no aplican.
-5. Extraer settings/subscription UI compartida cuando toque una iteracion de DX/UX.
+1. Agregar integracion aislada para pagos y cron jobs.
+2. Extraer settings/subscription UI compartida cuando toque una iteracion de DX/UX.
+3. Agregar rate limits por plan en PriceTrackr/WebhookMonitor.
+4. Agregar deduplicacion semantica en FeedbackLens si se prioriza calidad de insights.
+5. Validar visualmente los 5 dashboards en navegador antes de release final.
