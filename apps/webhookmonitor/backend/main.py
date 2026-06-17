@@ -16,6 +16,10 @@ from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.logic_bridge import detect_and_act_on_payment
 from backend_core.outbox_models import SystemOutbox
+from backend_core.plan_limits import (
+    get_webhookmonitor_limits_for_user_id,
+    reject_webhook_rate_if_needed,
+)
 from backend_core.product_insights import summarize_webhooks
 from backend_core.security_utils import is_public_http_url
 from backend_core.sensitive_data import mask_sensitive_mapping, mask_sensitive_text
@@ -24,7 +28,6 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
-MAX_WEBHOOKS_PER_MINUTE = 60
 
 # SQL migrations needed:
 # ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS user_id INTEGER;
@@ -565,6 +568,7 @@ async def ingest_webhook(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid content-length header")
 
+    plan, limits = await get_webhookmonitor_limits_for_user_id(session, ep.user_id)
     since = datetime.utcnow() - timedelta(minutes=1)
     count_result = await session.execute(
         select(func.count(WebhookRequest.id)).where(
@@ -573,8 +577,7 @@ async def ingest_webhook(
         )
     )
     recent_count = count_result.scalar_one()
-    if recent_count >= MAX_WEBHOOKS_PER_MINUTE:
-        raise HTTPException(status_code=429, detail="Webhook rate limit exceeded")
+    reject_webhook_rate_if_needed(plan, limits, recent_count)
 
     raw_body = await request.body()
     if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:

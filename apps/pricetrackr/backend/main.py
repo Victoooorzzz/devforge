@@ -3,6 +3,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "pa
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
 from pydantic import BaseModel
@@ -16,6 +17,11 @@ from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.price_alerts import build_price_alerts
 from backend_core.product_insights import build_tracker_health, summarize_trackers
+from backend_core.plan_limits import (
+    get_pricetrackr_limits,
+    reject_price_frequency_if_needed,
+    reject_tracker_count_if_needed,
+)
 from backend_core.security_utils import is_public_http_url
 from backend_core.worker import register_job_handler
 from backend_core.outbox_models import SystemOutbox
@@ -270,9 +276,20 @@ async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_u
     if not is_public_http_url(body.url):
         raise HTTPException(status_code=400, detail="Only public http(s) product URLs are allowed")
 
+    freq_hours = body.check_frequency_hours if body.check_frequency_hours in (1, 6, 12, 24) else 24
+    plan, limits = await get_pricetrackr_limits(user, session)
+    reject_price_frequency_if_needed(plan, limits, freq_hours)
+
+    count_result = await session.execute(
+        select(func.count(TrackedUrl.id)).where(
+            TrackedUrl.user_id == user.id,
+            TrackedUrl.status == "active",
+        )
+    )
+    reject_tracker_count_if_needed(plan, limits, count_result.scalar_one())
+
     initial_price = await scraper.fetch_price(body.url)
     initial_stock = await scraper.fetch_stock(body.url)
-    freq_hours = body.check_frequency_hours if body.check_frequency_hours in (1, 6, 12, 24) else 24
     from datetime import timedelta
 
     t = TrackedUrl(
@@ -356,6 +373,8 @@ async def update_tracker_frequency(
     """
     if body.hours not in (1, 6, 12, 24):
         raise HTTPException(status_code=400, detail="Frequency must be 1, 6, 12, or 24 hours")
+    plan, limits = await get_pricetrackr_limits(user, session)
+    reject_price_frequency_if_needed(plan, limits, body.hours)
 
     result = await session.execute(
         select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id)
