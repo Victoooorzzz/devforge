@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 import sys
 import types
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "backend_core"))
@@ -78,6 +79,23 @@ class PublicUrlTests(unittest.TestCase):
         self.assertFalse(is_public_http_url("http://127.0.0.1/hook"))
         self.assertFalse(is_public_http_url("http://169.254.169.254/latest/meta-data"))
         self.assertFalse(is_public_http_url("https://10.0.0.1/internal"))
+
+    def test_blocks_hostnames_that_resolve_to_private_ips(self):
+        with patch("socket.getaddrinfo") as getaddrinfo:
+            getaddrinfo.return_value = [
+                (None, None, None, "", ("10.0.0.12", 443)),
+            ]
+
+            self.assertFalse(is_public_http_url("https://internal.example.test/hook"))
+
+    def test_allows_hostnames_that_resolve_only_to_public_ips(self):
+        with patch("socket.getaddrinfo") as getaddrinfo:
+            getaddrinfo.return_value = [
+                (None, None, None, "", ("93.184.216.34", 443)),
+                (None, None, None, "", ("2606:2800:220:1:248:1893:25c8:1946", 443)),
+            ]
+
+            self.assertTrue(is_public_http_url("https://example.com/webhook"))
 
 
 class PriceAlertTests(unittest.TestCase):

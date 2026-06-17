@@ -1,9 +1,9 @@
 "use client";
 import { useState, useCallback, useEffect, useRef } from "react";
-import { trackEvent, apiClient, downloadFile, getApiUrl, uploadFile } from "@devforge/core";
+import { trackEvent, apiClient, downloadFile, getApiUrl, uploadAndDownloadFile, uploadFile } from "@devforge/core";
 import {
   FileText, Download, Trash2, CheckCircle, Clock, AlertCircle, Info,
-  ChevronDown, ChevronUp, Sparkles, RefreshCw, TrendingDown, Zap, Brain, X, Copy, Check,
+  ChevronDown, ChevronUp, Sparkles, RefreshCw, TrendingDown, Zap, Brain, X, Copy, Check, Image as ImageIcon,
 } from "lucide-react";
 
 interface FileReport {
@@ -70,6 +70,10 @@ export default function DashboardPage() {
   const [aiLoading, setAiLoading]     = useState(false);
   const [aiCopied, setAiCopied]       = useState(false);
   const [summary, setSummary]         = useState<FileSummary | null>(null);
+  const [utilityFormat, setUtilityFormat] = useState<"original" | "png" | "jpg" | "webp">("original");
+  const [utilityQuality, setUtilityQuality] = useState(82);
+  const [utilityLoading, setUtilityLoading] = useState(false);
+  const [utilityMessage, setUtilityMessage] = useState<string | null>(null);
   const pollingIds = useRef<Set<string>>(new Set());
   const exportRef  = useRef<HTMLDivElement>(null);
 
@@ -193,10 +197,39 @@ export default function DashboardPage() {
   const openAIAnalyze = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".csv,.xlsx,.xls";
+    input.accept = ".csv,.json,.xlsx,.xls";
     input.onchange = e => {
       const f = (e.target as HTMLInputElement).files?.[0];
       if (f) handleAIAnalyze(f);
+    };
+    input.click();
+  };
+
+  const handleUtilityFile = async (fileInput: File) => {
+    setUtilityLoading(true);
+    setUtilityMessage(null);
+    trackEvent("feature_used", { feature_name: "file_utility_process", format: utilityFormat, quality: utilityQuality });
+    try {
+      const formData = new FormData();
+      formData.append("file", fileInput);
+      const params = new URLSearchParams({ quality: String(utilityQuality) });
+      if (utilityFormat !== "original") params.set("output_format", utilityFormat);
+      const { filename } = await uploadAndDownloadFile(`/files/utility?${params.toString()}`, formData, `cleaned-${fileInput.name}`);
+      setUtilityMessage(`Processed and downloaded ${filename}`);
+    } catch (e: any) {
+      alert(e.detail || e.message || "File utility processing failed");
+    } finally {
+      setUtilityLoading(false);
+    }
+  };
+
+  const openFileUtility = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".png,.jpg,.jpeg,.webp,.heic,.heif,.svg,.pdf";
+    input.onchange = e => {
+      const f = (e.target as HTMLInputElement).files?.[0];
+      if (f) handleUtilityFile(f);
     };
     input.click();
   };
@@ -241,6 +274,17 @@ export default function DashboardPage() {
             <span>AI Analyze</span>
           </button>
 
+          <button
+            onClick={openFileUtility}
+            disabled={utilityLoading}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all"
+            style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)", border: "1px solid var(--color-border)", opacity: utilityLoading ? 0.7 : 1 }}
+            title="Strip metadata, compress images, or convert supported files"
+          >
+            {utilityLoading ? <RefreshCw size={14} className="animate-spin" /> : <ImageIcon size={14} />}
+            <span>File Utility</span>
+          </button>
+
           {/* Export Dropdown */}
           <div className="relative" ref={exportRef}>
             <button
@@ -283,6 +327,36 @@ export default function DashboardPage() {
           ))}
         </div>
       )}
+
+      <div className="mb-8 p-4 rounded-xl flex flex-col md:flex-row md:items-end gap-4"
+        style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+        <div className="flex-1">
+          <p className="text-xs font-bold uppercase tracking-wider opacity-50 mb-1">Metadata, compression and conversion</p>
+          <p className="text-sm opacity-70">PNG, JPG, WEBP, HEIC, SVG and PDF. Metadata is stripped on output.</p>
+          {utilityMessage && <p className="text-xs text-emerald-500 mt-2">{utilityMessage}</p>}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-xs">
+            <span className="block opacity-50 mb-1">Output</span>
+            <select value={utilityFormat} onChange={e => setUtilityFormat(e.target.value as typeof utilityFormat)} className="input-field px-3 py-2">
+              <option value="original">Keep format</option>
+              <option value="png">PNG</option>
+              <option value="jpg">JPG</option>
+              <option value="webp">WEBP</option>
+            </select>
+          </label>
+          <label className="text-xs w-28">
+            <span className="block opacity-50 mb-1">Quality</span>
+            <input type="number" min={1} max={95} value={utilityQuality}
+              onChange={e => setUtilityQuality(Math.max(1, Math.min(95, Number(e.target.value) || 82)))}
+              className="input-field px-3 py-2" />
+          </label>
+          <button onClick={openFileUtility} disabled={utilityLoading} className="btn-primary flex items-center gap-2">
+            {utilityLoading ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
+            Process
+          </button>
+        </div>
+      </div>
 
       {/* AI Analysis Panel */}
       {aiPanel && (
@@ -357,7 +431,7 @@ export default function DashboardPage() {
         onClick={() => {
           const input = document.createElement("input");
           input.type = "file";
-          input.accept = ".csv,.xlsx,.xls";
+          input.accept = ".csv,.json,.xlsx,.xls";
           input.multiple = true;
           input.onchange = e => { const f = (e.target as HTMLInputElement).files; if (f) handleFiles(f); };
           input.click();
@@ -370,7 +444,7 @@ export default function DashboardPage() {
           Drop files here or click to upload
         </p>
         <p className="text-xs opacity-50" style={{ color: "var(--color-text)" }}>
-          CSV, XLSX, XLS — up to 200MB — processed asynchronously
+          CSV, JSON, XLSX, XLS — up to 200MB — processed asynchronously
         </p>
       </div>
 

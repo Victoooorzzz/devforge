@@ -141,3 +141,50 @@ export async function downloadFile(path: string, filename: string): Promise<void
   anchor.click();
   URL.revokeObjectURL(url);
 }
+
+function filenameFromDisposition(disposition: string | null, fallback: string): string {
+  if (!disposition) return fallback;
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1].replace(/"/g, ""));
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return plainMatch?.[1] || fallback;
+}
+
+export async function uploadAndDownloadFile(
+  path: string,
+  formData: FormData,
+  fallbackFilename: string
+): Promise<{ filename: string }> {
+  const response = await fetch(getApiUrl(path), {
+    method: "POST",
+    headers: authHeaders(),
+    body: formData,
+    credentials: "include",
+  });
+
+  if (response.status === 401) {
+    await removeToken();
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+    throw { detail: "Unauthorized", status: 401 } as ApiError;
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({ detail: "File processing failed" }));
+    throw {
+      detail: errorBody.detail || "File processing failed",
+      status: response.status,
+    } as ApiError;
+  }
+
+  const filename = filenameFromDisposition(response.headers.get("Content-Disposition"), fallbackFilename);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  return { filename };
+}

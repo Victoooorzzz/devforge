@@ -17,6 +17,7 @@ from fastapi.concurrency import run_in_threadpool
 from backend_core import create_app, get_current_user, get_session, User, require_product_access, get_settings
 from backend_core.database import get_managed_session
 from backend_core.data_limits import DEFAULT_MAX_FUZZY_ROWS, is_fuzzy_row_count_allowed
+from backend_core.file_utilities import process_image_file
 from backend_core.outbox_models import SystemOutbox
 from backend_core.product_insights import summarize_files
 from backend_core.worker import register_job_handler
@@ -95,14 +96,23 @@ def _get_s3_client():
     )
 
 def _load_df(content: bytes, filename: str) -> pd.DataFrame:
-    if filename.lower().endswith('.csv'):
+    normalized = filename.lower()
+    if normalized.endswith('.csv'):
         return pd.read_csv(io.BytesIO(content))
+    if normalized.endswith('.json'):
+        df = pd.read_json(io.BytesIO(content))
+        if isinstance(df, pd.Series):
+            df = df.to_frame().T
+        return df
     return pd.read_excel(io.BytesIO(content))
 
 def _save_df(df: pd.DataFrame, filename: str) -> io.BytesIO:
     buf = io.BytesIO()
-    if filename.lower().endswith('.csv'):
+    normalized = filename.lower()
+    if normalized.endswith('.csv'):
         df.to_csv(buf, index=False)
+    elif normalized.endswith('.json'):
+        buf.write(df.to_json(orient="records", force_ascii=False, indent=2).encode("utf-8"))
     else:
         df.to_excel(buf, index=False)
     buf.seek(0)
@@ -206,8 +216,8 @@ async def upload_file(
         raise HTTPException(status_code=413, detail="File too large (200MB max)")
 
     ext = (file.filename or "file.csv").rsplit(".", 1)[-1].lower()
-    if ext not in ("csv", "xlsx", "xls"):
-        raise HTTPException(status_code=400, detail="Unsupported file type. Use CSV or Excel.")
+    if ext not in ("csv", "xlsx", "xls", "json"):
+        raise HTTPException(status_code=400, detail="Unsupported file type. Use CSV, JSON, or Excel.")
 
     record = ProcessedFile(
         user_id=user.id,
@@ -249,6 +259,41 @@ async def upload_file(
     return {"id": record.id, "status": "queued", "name": record.original_name}
 
 
+@file_router.post("/utility")
+async def process_file_utility(
+    file: UploadFile = File(...),
+    output_format: Optional[Literal["png", "jpg", "jpeg", "webp"]] = Query(default=None),
+    quality: int = Query(default=82, ge=1, le=95),
+    user: User = Depends(get_current_user),
+):
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Utility processing is limited to 50MB")
+
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if ext not in {"png", "jpg", "jpeg", "webp", "heic", "heif", "svg", "pdf"}:
+        raise HTTPException(status_code=400, detail="Use PNG, JPG, WEBP, HEIC, SVG, or PDF.")
+
+    try:
+        processed = await run_in_threadpool(
+            process_image_file,
+            content,
+            file.filename or "file",
+            output_format=output_format,
+            quality=quality,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{processed.filename}"',
+        "X-DevForge-Metadata-Removed": "true" if processed.metadata_removed else "false",
+        "X-DevForge-Bytes-Saved": str(processed.bytes_saved),
+        "X-DevForge-Output-Count": str(processed.output_count),
+    }
+    return StreamingResponse(io.BytesIO(processed.content), media_type=processed.media_type, headers=headers)
+
+
 @demo_router.post("/demo/upload")
 async def demo_upload(
     background_tasks: BackgroundTasks,
@@ -263,6 +308,10 @@ async def demo_upload(
     file_size = file.size or 0
     if file_size > 5 * 1024 * 1024:  # Limit demo to 5MB
         raise HTTPException(status_code=413, detail="Demo limited to 5MB")
+
+    ext = (file.filename or "demo_file.csv").rsplit(".", 1)[-1].lower()
+    if ext not in ("csv", "xlsx", "xls", "json"):
+        raise HTTPException(status_code=400, detail="Unsupported file type. Use CSV, JSON, or Excel.")
 
     record = ProcessedFile(
         user_id=GUEST_USER_ID,
@@ -701,7 +750,7 @@ async def ai_analyze_file(
     user: User = Depends(get_current_user),
 ):
     """
-    Reads first 20 rows of the CSV/Excel and uses Gemini Flash to suggest
+    Reads first 20 rows of the CSV/JSON/Excel and uses Gemini Flash to suggest
     cleanup rules. Falls back to heuristic analysis if no API key.
     """
     content = await file.read()
