@@ -14,6 +14,7 @@ from .polar_utils import (
     build_polar_checkout_payload,
     get_polar_event_product_id,
     get_polar_event_user_id,
+    resolve_polar_api_url,
     should_activate_for_polar_event,
     should_deactivate_for_polar_event,
     verify_standard_webhook_signature,
@@ -28,8 +29,6 @@ logger = logging.getLogger(__name__)
 polar_router = APIRouter(prefix="/polar", tags=["polar"])
 webhook_router = APIRouter(tags=["webhooks"])
 
-POLAR_API_URL = "https://api.polar.sh/v1"
-
 
 class PolarCheckoutRequest(BaseModel):
     app_name: str | None = None
@@ -42,6 +41,13 @@ class PolarCheckoutResponse(BaseModel):
 
 class PolarPortalResponse(BaseModel):
     portal_url: str
+
+
+def _polar_api_url() -> str:
+    return resolve_polar_api_url(
+        server=settings.polar_server,
+        api_url=settings.polar_api_url,
+    )
 
 
 def _polar_headers() -> dict[str, str]:
@@ -80,7 +86,7 @@ async def create_polar_checkout(
     )
 
     async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(f"{POLAR_API_URL}/checkouts/", json=payload, headers=_polar_headers())
+        response = await client.post(f"{_polar_api_url()}/checkouts/", json=payload, headers=_polar_headers())
         if response.status_code not in (200, 201):
             logger.error("Polar checkout API error: %s", response.text)
             raise HTTPException(status_code=500, detail="Failed to create checkout")
@@ -118,7 +124,7 @@ async def create_checkout(
 async def get_portal(user: User = Depends(get_current_user)):
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
-            f"{POLAR_API_URL}/customer-sessions/",
+            f"{_polar_api_url()}/customer-sessions/",
             json={"external_customer_id": str(user.id)},
             headers=_polar_headers(),
         )

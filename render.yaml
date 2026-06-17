@@ -16,6 +16,10 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      - key: POLAR_SERVER
+        sync: false
+      - key: POLAR_API_URL
+        sync: false
       - key: POLAR_ACCESS_TOKEN
         sync: false
       - key: POLAR_WEBHOOK_SECRET

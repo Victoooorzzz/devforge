@@ -18,6 +18,14 @@ POLAR_DEACTIVATION_EVENTS = {
 }
 
 
+def resolve_polar_api_url(*, server: str = "", api_url: str = "") -> str:
+    if api_url:
+        return api_url.rstrip("/")
+    if server.strip().lower() == "sandbox":
+        return "https://sandbox-api.polar.sh/v1"
+    return "https://api.polar.sh/v1"
+
+
 def build_polar_checkout_payload(
     user_id: int,
     user_email: str,

@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from polar_utils import (
     build_polar_checkout_payload,
     get_polar_event_user_id,
+    resolve_polar_api_url,
     should_activate_for_polar_event,
     should_deactivate_for_polar_event,
 )
@@ -16,6 +17,18 @@ from create_polar_products import build_product_payload
 
 
 class PolarCheckoutPayloadTests(unittest.TestCase):
+    def test_resolves_polar_api_url_for_sandbox(self):
+        self.assertEqual(
+            resolve_polar_api_url(server="sandbox", api_url=""),
+            "https://sandbox-api.polar.sh/v1",
+        )
+
+    def test_explicit_polar_api_url_overrides_server(self):
+        self.assertEqual(
+            resolve_polar_api_url(server="sandbox", api_url="https://polar.example.test/v1/"),
+            "https://polar.example.test/v1",
+        )
+
     def test_checkout_payload_links_polar_customer_to_local_user(self):
         payload = build_polar_checkout_payload(
             user_id=42,

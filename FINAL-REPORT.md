@@ -40,7 +40,7 @@ El roadmap solicitado quedo ejecutado en `main` sin worktree. Se auditaron los 5
 - Tests Python: 17 base -> 25 finales.
 - Typecheck frontend real: 3 tasks base -> 8 tasks finales, incluyendo los 5 frontends de producto.
 - Endpoints nuevos: 4 (`/files/summary`, `/invoices/summary`, `/trackers/summary`, `/webhooks/summary`).
-- Dashboards con paneles nuevos: 5/5.
+- Dashboards con paneles nuevos: 5/5; FeedbackLens consume `/feedback/summary/weekly`, que ya existia en backend y no se conto como endpoint nuevo.
 - Helpers compartidos nuevos: `product_insights`, `sensitive_data`, `data_limits`, API upload/download helpers.
 
 ## Deuda tecnica residual
@@ -54,8 +54,8 @@ El roadmap solicitado quedo ejecutado en `main` sin worktree. Se auditaron los 5
 
 ## Recomendaciones siguientes
 
-1. Cerrar los cambios Polar/env pendientes en un commit dedicado o descartarlos si ya no aplican.
-2. Agregar tests de integracion con `TestClient`/DB aislada para los endpoints `/summary`.
-3. Resolver SSRF por DNS para scraping/forwarding.
-4. Alinear landing de FileCleaner con el producto real o implementar las features prometidas.
+1. Resolver SSRF por DNS para scraping/forwarding; es el unico riesgo de seguridad activo si WebhookMonitor hace forwarding a URLs externas.
+2. Agregar tests de integracion con `TestClient`/DB aislada para los endpoints `/summary`, para evitar regresiones silenciosas en futuros refactors.
+3. Alinear landing de FileCleaner con el producto real o implementar las features prometidas; hoy promete metadata stripping/compresion/conversion y el producto real hace CSV/XLSX cleaning.
+4. Cerrar los cambios Polar/env pendientes en un commit dedicado o descartarlos si ya no aplican.
 5. Extraer settings/subscription UI compartida cuando toque una iteracion de DX/UX.

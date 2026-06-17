@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     next_public_ls_variant_id_feedbacklens: str = ""
 
     # Polar
+    polar_server: str = ""
+    polar_api_url: str = ""
     polar_access_token: str = ""
     polar_webhook_secret: str = ""
     polar_product_id_filecleaner: str = ""
