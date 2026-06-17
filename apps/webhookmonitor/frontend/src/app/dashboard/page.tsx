@@ -23,6 +23,7 @@ const methodColors: Record<string, string> = {
 };
 
 type ExportFormat = "csv" | "xlsx" | "json";
+type LogStatusFilter = "all" | "failed" | "successful" | "pending" | "auto_retry";
 
 interface WebhookSummary {
   total_requests: number;
@@ -43,6 +44,7 @@ export default function DashboardPage() {
   const [isRetrying, setIsRetrying]   = useState(false);
   const [exportOpen, setExportOpen]   = useState(false);
   const [summary, setSummary]         = useState<WebhookSummary | null>(null);
+  const [logStatus, setLogStatus]     = useState<LogStatusFilter>("all");
   const intervalRef                   = useRef<NodeJS.Timeout | null>(null);
   const exportRef                     = useRef<HTMLDivElement>(null);
 
@@ -56,20 +58,15 @@ export default function DashboardPage() {
     const fetchRequests = async () => {
       try {
         // GET /webhooks/logs returns the list
-        const { data } = await apiClient.get<WebhookRequest[]>("/webhooks/logs");
-        setRequests(prev => {
-          if (prev.length === 0) return data;
-          const existingIds = new Set(prev.map(r => r.id));
-          const newReqs = data.filter(r => !existingIds.has(r.id));
-          return [...newReqs, ...prev].slice(0, 100);
-        });
+        const { data } = await apiClient.get<WebhookRequest[]>(`/webhooks/logs?status=${logStatus}`);
+        setRequests(data);
       } catch {}
     };
 
     fetchRequests();
     intervalRef.current = setInterval(fetchRequests, 5000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []);
+  }, [logStatus]);
 
   // Close export dropdown on outside click
   useEffect(() => {
@@ -242,6 +239,25 @@ export default function DashboardPage() {
               className="input-field pl-10"
               placeholder="Buscar en body, path o método..."
             />
+          </div>
+
+          <div className="flex flex-wrap gap-1 rounded-lg p-1 mb-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            {([
+              ["all", "All"],
+              ["failed", "Failed"],
+              ["successful", "2xx"],
+              ["pending", "Pending"],
+              ["auto_retry", "Auto retry"],
+            ] as [LogStatusFilter, string][]).map(([value, label]) => (
+              <button key={value} onClick={() => setLogStatus(value)}
+                className="text-xs font-medium px-3 py-2 rounded-md transition-colors"
+                style={{
+                  backgroundColor: logStatus === value ? "var(--color-accent-dim)" : "transparent",
+                  color: logStatus === value ? "var(--color-accent)" : "var(--color-text-secondary)",
+                }}>
+                {label}
+              </button>
+            ))}
           </div>
 
           <div className="flex-1 overflow-auto rounded-xl scrollbar-hide"

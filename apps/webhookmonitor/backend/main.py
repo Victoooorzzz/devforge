@@ -88,6 +88,20 @@ class RetryPayload(BaseModel):
     schedule_auto_retry: bool = False        # schedule exponential backoff if delivery fails
 
 
+def _matches_log_status(request: WebhookRequest, status: str) -> bool:
+    if status == "all":
+        return True
+    if status == "failed":
+        return request.last_retry_status is not None and request.last_retry_status >= 400
+    if status == "successful":
+        return request.last_retry_status is not None and 200 <= request.last_retry_status < 300
+    if status == "pending":
+        return request.last_retry_status is None
+    if status == "auto_retry":
+        return bool(request.auto_retry_enabled)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
@@ -153,6 +167,7 @@ async def get_config(
 
 @webhook_router.get("/logs")
 async def list_logs(
+    status: Literal["all", "failed", "successful", "pending", "auto_retry"] = Query(default="all"),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
@@ -160,12 +175,17 @@ async def list_logs(
     ep = ep_result.scalar_one_or_none()
     if not ep:
         return []
-    result = await session.execute(
-        select(WebhookRequest)
-        .where(WebhookRequest.endpoint_id == ep.id)
-        .order_by(WebhookRequest.received_at.desc())
-        .limit(100)
-    )
+    query = select(WebhookRequest).where(WebhookRequest.endpoint_id == ep.id)
+    if status == "failed":
+        query = query.where(WebhookRequest.last_retry_status >= 400)
+    elif status == "successful":
+        query = query.where(WebhookRequest.last_retry_status >= 200, WebhookRequest.last_retry_status < 300)
+    elif status == "pending":
+        query = query.where(WebhookRequest.last_retry_status == None)  # noqa: E711
+    elif status == "auto_retry":
+        query = query.where(WebhookRequest.auto_retry_enabled == True)  # noqa: E712
+    result = await session.execute(query.order_by(WebhookRequest.received_at.desc()).limit(100))
+    requests = [r for r in result.scalars().all() if _matches_log_status(r, status)]
     return [
         {
             "id": r.id,
@@ -179,7 +199,7 @@ async def list_logs(
             "last_retry_status": r.last_retry_status,
             "auto_retry_enabled": r.auto_retry_enabled,
         }
-        for r in result.scalars().all()
+        for r in requests
     ]
 
 

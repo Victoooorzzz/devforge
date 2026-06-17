@@ -152,6 +152,19 @@ class SummaryEndpointIntegrationTests(unittest.TestCase):
         self.assertEqual(response.json()["total_requests"], 2)
         self.assertEqual(response.json()["failed_forwards"], 1)
 
+    def test_webhookmonitor_logs_filter_failed_forwards(self):
+        now = datetime.utcnow()
+        response = _get_json(webhook_app, "/webhooks/logs?status=failed", [
+            [SimpleNamespace(id=10)],
+            [
+                SimpleNamespace(id=1, method="POST", path="/ok", headers_json="{}", body="{}", received_at=now, retry_count=0, next_retry_at=None, last_retry_status=200, auto_retry_enabled=False),
+                SimpleNamespace(id=2, method="POST", path="/failed", headers_json="{}", body="{}", received_at=now, retry_count=2, next_retry_at=None, last_retry_status=500, auto_retry_enabled=True),
+            ],
+        ])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["path"] for item in response.json()], ["/failed"])
+
     def test_feedbacklens_weekly_summary_is_served_by_backend(self):
         response = _get_json(feedback_app, "/feedback/summary/weekly", [[
             SimpleNamespace(sentiment="positive", themes_json='["ux"]', is_urgent=False, created_at=datetime.utcnow()),
