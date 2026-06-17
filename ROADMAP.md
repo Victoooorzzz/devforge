@@ -1,62 +1,95 @@
-# DevForge Ecosystem - Hoja de Ruta y Tareas Pendientes (Roadmap)
+# DevForge 5-Product Execution Roadmap
 
-## Estado Actual del Proyecto (Abril 2026)
+## Estado base verificado
+- Rama de trabajo: `main` (por instruccion del usuario, sin worktree).
+- Productos auditados: FileCleaner, InvoiceFollow, PriceTrackr, WebhookMonitor, FeedbackLens.
+- Tests Python base: `python -m unittest discover -s tests` -> 17 tests OK.
+- Typecheck base: `pnpm run typecheck` -> OK, pero solo 3 paquetes ejecutados porque los frontends no declaran `typecheck`.
+- Lint base: `pnpm run lint` -> OK con warnings existentes de `<img>` y hooks.
+- Arbol sucio previo: Polar/config, `.gitignore`, package lock, `tsconfig.tsbuildinfo` borrados y `.eslintrc.json` sin trackear. No se revierten.
 
-**✅ Infraestructura y Backend**
-- **Monorepo:** Configurado correctamente con Turborepo, compartiendo paquetes (`@devforge/ui` y `@devforge/core`).
-- **Despliegues:** Frontends desplegados en Vercel y Backends desplegados en Render.
-- **Lógica Core:** La base de datos, APIs, CRON jobs, web scraping e IA (Gemini) están implementados.
+## Iteracion 1 - Quick Wins: estabilidad base
 
-**✅ Frontend (Conexión API)**
-- Las 5 aplicaciones ya tienen sus páginas de `login`, `register` y `dashboard` programadas.
-- Todas están configuradas usando `apiClient` para comunicarse con sus respectivos backends (hacen POST, GET de listas, suben archivos, etc.).
+**Objetivo:** hacer que verificacion frontend cubra realmente los 5 productos y reducir bugs de API base en exports/uploads.
 
----
+| Tarea | Archivos | MoSCoW | Esfuerzo |
+|---|---|---:|---:|
+| Agregar `typecheck` a los 5 frontend package.json | `apps/*/frontend/package.json` | Must | S |
+| Crear helper compartido para API base, upload y download blob | `packages/core/lib/api.ts`, `packages/core/index.ts` | Must | M |
+| Migrar dashboards que usan fetch manual a helpers compartidos | `apps/*/frontend/src/app/dashboard/page.tsx` | Should | M |
+| Registrar resultado | `ROADMAP-PROGRESS.md` | Must | S |
 
-## ❌ ¿Por qué te sale error 404 en la página de Settings?
+**Criterios de exito**
+- `pnpm run typecheck` ejecuta core, ui y los 5 frontends.
+- `python -m unittest discover -s tests` sigue OK.
+- No hay uso de `NEXT_PUBLIC_API_URL || ""` en dashboards.
+- Commit: `iter-1: quick-wins-stability`
 
-Mencionaste que al entrar a `Settings` te sale un 404. El motivo es porque **la página de Settings y su endpoint en el backend NO existen en ninguna de las 5 apps.**
+## Iteracion 2 - Deuda Tecnica: insights compartidos testeables
 
-Actualmente las carpetas de Next.js en las 5 aplicaciones solo tienen:
-- `/login`
-- `/register`
-- `/dashboard`
+**Objetivo:** extraer logica de summaries de producto a helpers puros para que Value Features no aumenten acoplamiento.
 
-Y los backends en Python solo tienen endpoints relacionados con su función principal (ej. `/invoices`, `/trackers`, `/webhooks`), pero **no hay un endpoint general de configuración (`/settings`)** para gestionar la cuenta, perfil, suscripciones o variables específicas de la app.
+| Tarea | Archivos | MoSCoW | Esfuerzo |
+|---|---|---:|---:|
+| Agregar tests RED para summaries por producto | `tests/test_product_insights.py` | Must | M |
+| Implementar helpers puros de summaries | `packages/backend_core/product_insights.py` | Must | M |
+| Exportar/usar helpers sin tocar endpoints aun | `packages/backend_core/__init__.py` si aplica | Could | S |
+| Registrar resultado | `ROADMAP-PROGRESS.md` | Must | S |
 
----
+**Criterios de exito**
+- Los tests nuevos fallan antes de implementar helpers.
+- `python -m unittest discover -s tests` OK despues.
+- Commit: `iter-2: shared-product-insights`
 
-## 📋 Tareas Pendientes (Lo que REALMENTE falta por programar)
+## Iteracion 3 - VALUE FEATURES: paneles de decision por producto
 
-Para que el ecosistema esté 100% completo, debes implementar lo siguiente en cada aplicación (tanto en Frontend como en Backend):
+**Objetivo central:** exponer valor agregado visible en cada producto sin romper contratos existentes.
 
-### 1. Configurar Producción en Vercel (Crítico)
-- **Frontend:** Configurar en Vercel la variable de entorno `NEXT_PUBLIC_API_URL` apuntando a las URLs de producción de Render (ej. `https://devforge-backend.onrender.com`). Si no lo haces, tus frontends intentarán conectarse a `http://localhost:8000` en producción y fallarán.
+| Producto | Feature | Archivos | MoSCoW | Esfuerzo |
+|---|---|---|---:|---:|
+| FileCleaner | `/files/summary` con files procesados, filas ahorradas y errores | `apps/filecleaner/backend/main.py`, dashboard | Must | M |
+| InvoiceFollow | `/invoices/summary` con overdue amount, promised amount y cash at risk | `apps/invoicefollow/backend/main.py`, dashboard | Must | M |
+| PriceTrackr | `/trackers/summary` con drops, stock changes y oportunidad | `apps/pricetrackr/backend/main.py`, dashboard | Must | M |
+| WebhookMonitor | `/webhooks/summary` con volumen, retry pressure y silencio | `apps/webhookmonitor/backend/main.py`, dashboard | Must | M |
+| FeedbackLens | usar `/feedback/summary/weekly` en dashboard principal | `apps/feedbacklens/frontend/src/app/dashboard/page.tsx` | Must | S |
+| Tests | ampliar helpers si hacen falta | `tests/test_product_insights.py` | Must | S |
+| Progreso | registrar resultados | `ROADMAP-PROGRESS.md` | Must | S |
 
-### 2. Implementar la Página y API de "Settings" (Global)
-- **Frontend:** Crear la carpeta y página `src/app/dashboard/settings/page.tsx` en las 5 aplicaciones (el enlace que te daba 404).
-- **Backend:** Crear un nuevo router `settings_router` en `backend_core` o en el `main.py` de cada app para permitir al usuario actualizar su perfil, ver si tiene plan activo y cambiar preferencias.
+**Criterios de exito**
+- Cada dashboard muestra al menos un bloque de insight accionable.
+- Todos los endpoints nuevos exigen auth/acceso por su router existente.
+- `python -m unittest discover -s tests`, `pnpm run typecheck` y `pnpm run lint` pasan.
+- Commit: `iter-3: value-feature-insight-panels`
 
----
+## Iteracion 4 - Optimizacion: seguridad y performance pragmatica
 
-### Tareas Faltantes Específicas por SaaS:
+**Objetivo:** reducir riesgos evidentes sin introducir infraestructura pesada.
 
-#### 📄 InvoiceFollow (Recordatorios de Facturas)
-- **Frontend:** Falta crear un botón en la tabla para marcar una factura como pagada (ya tienes el endpoint listo en el backend `/invoices/{id}/mark-paid`, pero olvidaste agregar el botón visual en `page.tsx`).
-- **Backend/Frontend (Settings):** Falta poder configurar desde qué correo se envían los recordatorios o personalizar la plantilla del correo de cobranza.
+| Tarea | Archivos | MoSCoW | Esfuerzo |
+|---|---|---:|---:|
+| Agregar helper de masking para headers sensibles de webhooks | `packages/backend_core/sensitive_data.py`, tests | Must | M |
+| Aplicar masking en list/export de WebhookMonitor | `apps/webhookmonitor/backend/main.py` | Must | M |
+| Limitar fuzzy-check por cantidad de filas ademas de MB | `apps/filecleaner/backend/main.py`, tests | Should | S |
+| Registrar resultado | `ROADMAP-PROGRESS.md` | Must | S |
 
-#### 📉 PriceTrackr (Rastreador de Precios)
-- **Frontend:** Falta crear un botón en el dashboard para poder borrar (Delete) un producto de la lista (el endpoint `/trackers/{id}` ya existe en el backend, pero no hay botón para borrarlo en la interfaz).
-- **Backend/Frontend (Settings):** Falta configurar notificaciones (ej. a qué correo enviar la alerta cuando el precio baje al objetivo deseado).
+**Criterios de exito**
+- Headers como authorization, cookie y x-signature no se exponen completos en logs/list/export.
+- Fuzzy check rechaza datasets demasiado grandes para O(n2).
+- Tests y typecheck/lint OK.
+- Commit: `iter-4: optimize-security-and-performance`
 
-#### 🪝 WebhookMonitor (Capturador de Webhooks)
-- **Frontend:** La lista de webhooks se carga una sola vez al entrar. Faltaría implementar "polling" (un `setInterval` o websockets) para que los nuevos webhooks aparezcan en tiempo real sin recargar la página. 
-- **Backend:** Falta programar un endpoint para eliminar todo el historial de webhooks (`DELETE /webhooks/requests`) y agregar un botón de "Limpiar" en el frontend.
+## Iteracion 5 - Polish: documentacion operativa y reporte
 
-#### 🧹 FileCleaner (Clasificador/Limpiador de Archivos)
-- **Backend:** El endpoint actual `/files/upload` sube el archivo, verifica que pese menos de 50MB, y devuelve un link simulado `/files/download/...`. **Falta la lógica real** que abra el archivo (CSV/PDF), lo limpie o procese y genere un link de descarga válido.
-- **Frontend:** Falta el botón real para borrar archivos subidos o cancelar descargas.
+**Objetivo:** dejar el repo mantenible y el estado final claro.
 
-#### 🧠 FeedbackLens (Analizador de Feedback)
-- **Frontend:** El dashboard principal parece estar completo.
-- **Backend/Frontend (Settings):** En la nueva página de Settings faltaría permitir que el usuario ponga instrucciones de IA personalizadas (Custom Prompts) para Gemini, o configurar alertas automáticas cuando se reciba un feedback "muy negativo".
+| Tarea | Archivos | MoSCoW | Esfuerzo |
+|---|---|---:|---:|
+| Actualizar docs de produccion con checks y envs reales | `PRODUCTION_SETUP.md` | Should | S |
+| Completar reporte final de auditoria/ejecucion | `FINAL-REPORT.md` | Must | M |
+| Cerrar progreso al 100% | `ROADMAP-PROGRESS.md` | Must | S |
+| Registrar blockers si quedo alguno | `BLOCKERS.md` si aplica | Could | S |
+
+**Criterios de exito**
+- `FINAL-REPORT.md` resume cambios por producto, metricas, deuda residual y siguientes pasos.
+- Verificacion final fresca ejecutada y registrada.
+- Commit: `iter-5: polish-docs-final-report`
