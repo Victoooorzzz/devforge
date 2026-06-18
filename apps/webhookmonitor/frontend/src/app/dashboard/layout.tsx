@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { auth } from "@devforge/core";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Home, Settings, LogOut, Layout } from "lucide-react";
+import { Home, Settings, LogOut } from "lucide-react";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [authorized, setAuthorized] = useState(false);
@@ -20,35 +20,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!authorized) return null;
 
   return (
-    <div className="min-h-screen bg-black flex">
+    <div className="min-h-screen bg-black flex flex-col md:flex-row">
       {/* Sidebar */}
-      <aside className="w-64 border-r border-white/5 p-6 flex flex-col">
-        <Link href="/" className="flex items-center gap-3 mb-8">
+      <aside className="w-full md:w-64 border-b md:border-b-0 md:border-r border-white/5 p-4 md:p-6 flex flex-col md:min-h-screen">
+        <Link href="/" className="flex items-center gap-3 mb-4 md:mb-8">
           <img src="/devforge-logo-white.svg" alt="DevForge" className="h-5 w-auto" />
           <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3">
             Webhook<span className="text-accent">Monitor</span>
           </span>
         </Link>
 
-        <nav className="space-y-1 flex-1">
-          <Link href="/dashboard" className="flex items-center gap-3 px-3 py-2 rounded-lg bg-accent/10 text-white text-sm font-medium">
+        <nav className="flex flex-wrap gap-2 md:block md:space-y-1 md:flex-1">
+          <Link href="/dashboard" className="flex items-center gap-3 px-3 py-2 rounded-lg bg-accent/10 text-white text-sm font-medium whitespace-nowrap">
             <Home size={18} /> Overview
           </Link>
-          <Link href="/dashboard/settings" className="flex items-center gap-3 px-3 py-2 rounded-lg text-neutral-400 hover:text-white hover:bg-white/5 text-sm font-medium">
+          <Link href="/dashboard/settings" className="flex items-center gap-3 px-3 py-2 rounded-lg text-neutral-400 hover:text-white hover:bg-white/5 text-sm font-medium whitespace-nowrap">
             <Settings size={18} /> Settings
           </Link>
         </nav>
 
         <button 
           onClick={() => { auth.logout(); router.push("/login"); }}
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-neutral-400 hover:text-red-400 hover:bg-red-400/5 text-sm font-medium mt-auto"
+          className="flex items-center gap-3 px-3 py-2 rounded-lg text-neutral-400 hover:text-red-400 hover:bg-red-400/5 text-sm font-medium mt-3 md:mt-auto w-fit md:w-auto"
         >
           <LogOut size={18} /> Logout
         </button>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-8 overflow-auto">
+      <main className="flex-1 min-w-0 p-4 md:p-8 overflow-auto">
         {children}
       </main>
     </div>

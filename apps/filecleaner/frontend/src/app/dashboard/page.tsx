@@ -28,7 +28,7 @@ interface FileReport {
 interface FileItem {
   id: string;
   name: string;
-  size: number;
+  size?: number;
   status: "queued" | "processing" | "complete" | "error";
   downloadUrl?: string;
   report?: FileReport;
@@ -82,6 +82,7 @@ export default function DashboardPage() {
   const [loading, setLoading]         = useState(true);
   const [loadError, setLoadError]     = useState(false);
   const [toast, setToast]             = useState<DashboardToast | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [utilityFormat, setUtilityFormat] = useState<"original" | "png" | "jpg" | "webp">("original");
   const [utilityQuality, setUtilityQuality] = useState(82);
   const [utilityLoading, setUtilityLoading] = useState(false);
@@ -105,8 +106,8 @@ export default function DashboardPage() {
     if (filesResult.status === "fulfilled") {
       setFiles(filesResult.value.data.map((f: any) => ({
         id: f.id.toString(),
-        name: f.name,
-        size: f.size,
+        name: f.name ?? f.original_filename ?? f.filename ?? "Untitled file",
+        size: typeof f.size === "number" ? f.size : typeof f.size_bytes === "number" ? f.size_bytes : undefined,
         status: f.status,
         downloadUrl: f.download_url,
         report: f.report ?? undefined,
@@ -158,7 +159,13 @@ export default function DashboardPage() {
   }, []);
 
   const handleDelete = async (fileId: string) => {
-    if (!window.confirm("Delete this file from your dashboard?")) return;
+    if (deleteConfirmId !== fileId) {
+      setDeleteConfirmId(fileId);
+      showToast({ tone: "info", message: "Click delete again to remove this file." });
+      window.setTimeout(() => setDeleteConfirmId(current => current === fileId ? null : current), 5000);
+      return;
+    }
+    setDeleteConfirmId(null);
     trackEvent("feature_used", { feature_name: "delete_file" });
     try {
       await apiClient.delete(`/files/${fileId}`);
@@ -169,7 +176,8 @@ export default function DashboardPage() {
     }
   };
 
-  const formatSize = (bytes: number) => {
+  const formatSize = (bytes?: number) => {
+    if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return "Size unavailable";
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

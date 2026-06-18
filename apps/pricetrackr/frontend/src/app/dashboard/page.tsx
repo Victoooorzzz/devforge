@@ -66,6 +66,7 @@ export default function DashboardPage() {
   const [history, setHistory]     = useState<PricePoint[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [deleting, setDeleting]   = useState<Set<number>>(new Set());
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [form, setForm]           = useState({ url: "", label: "", check_frequency_hours: 24 });
   const [exportOpen, setExportOpen] = useState(false);
   const [alertConfigs, setAlertConfigs] = useState<Record<number, AlertConfig>>({});
@@ -141,7 +142,13 @@ export default function DashboardPage() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm("Stop watching this product?")) return;
+    if (deleteConfirmId !== id) {
+      setDeleteConfirmId(id);
+      showToast({ tone: "info", message: "Click Stop watching again to remove this product." });
+      window.setTimeout(() => setDeleteConfirmId(current => current === id ? null : current), 5000);
+      return;
+    }
+    setDeleteConfirmId(null);
     setDeleting(prev => new Set(prev).add(id));
     try {
       await apiClient.delete(`/trackers/${id}`);
@@ -224,6 +231,11 @@ export default function DashboardPage() {
     if (!t.current_price || !t.previous_price) return null;
     return ((t.current_price - t.previous_price) / t.previous_price) * 100;
   };
+
+  const safeNumber = (value: unknown, fallback = 0) =>
+    typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  const formatCount = (value: unknown, fallback = 0) => safeNumber(value, fallback).toLocaleString();
+  const formatMoney = (value: unknown) => `$${safeNumber(value).toFixed(2)}`;
 
   const isMinHistoric = (t: TrackedUrl) =>
     t.current_price !== null && t.min_price !== null && t.current_price <= t.min_price;
@@ -310,10 +322,10 @@ export default function DashboardPage() {
         {summary && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
             {[
-              { label: "Products watched", value: summary.active_trackers.toLocaleString(), color: "var(--color-accent)" },
-              { label: "Dropped in price", value: summary.price_drop_count.toLocaleString(), color: "#10B981" },
-              { label: "Out of stock", value: summary.out_of_stock_count.toLocaleString(), color: summary.out_of_stock_count ? "#EF4444" : "#10B981" },
-              { label: "Potential savings", value: `$${summary.potential_savings.toFixed(2)}`, color: "#F59E0B" },
+              { label: "Products watched", value: formatCount(summary.active_trackers, trackers.length), color: "var(--color-accent)" },
+              { label: "Dropped in price", value: formatCount(summary.price_drop_count), color: "#10B981" },
+              { label: "Out of stock", value: formatCount(summary.out_of_stock_count), color: safeNumber(summary.out_of_stock_count) ? "#EF4444" : "#10B981" },
+              { label: "Potential savings", value: formatMoney(summary.potential_savings), color: "#F59E0B" },
             ].map(stat => (
               <div key={stat.label} className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
                 <p className="text-xs mb-1" style={{ color: "var(--color-text-secondary)" }}>{stat.label}</p>
@@ -359,7 +371,7 @@ export default function DashboardPage() {
             style={{ backgroundColor: "var(--color-surface)" }}>
             <div className="md:col-span-1">
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Product name</label>
-              <input value={form.label} onChange={e => setForm({ ...form, label: e.target.value })} className="input-field" placeholder="Ej: iPhone 15 Pro" required />
+              <input value={form.label} onChange={e => setForm({ ...form, label: e.target.value })} className="input-field" placeholder="Example: iPhone 15 Pro" required />
             </div>
             <div className="md:col-span-1">
               <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-secondary)" }}>Product URL</label>
@@ -399,9 +411,9 @@ export default function DashboardPage() {
             const alertCfg = alertConfigs[t.id];
             return (
               <div key={t.id} className="rounded-lg overflow-hidden" style={{ backgroundColor: selected?.id === t.id ? "var(--color-surface-raised)" : "var(--color-surface)", border: isMin ? "1px solid rgba(16,185,129,0.4)" : "1px solid transparent" }}>
-                <div onClick={() => handleSelect(t)} className="p-4 flex items-start justify-between gap-4 cursor-pointer">
+                <div onClick={() => handleSelect(t)} className="p-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 cursor-pointer">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
                       <p className="text-sm font-semibold truncate" style={{ color: "var(--color-text)" }}>{t.label}</p>
                       {isMin && (
                         <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0"
@@ -421,8 +433,8 @@ export default function DashboardPage() {
                     </div>
                     <p className="text-xs truncate" style={{ color: "var(--color-text-secondary)" }}>{t.url}</p>
                   </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    <div className="text-right">
+                  <div className="w-full sm:w-auto flex flex-wrap items-center gap-2 sm:gap-3 sm:flex-shrink-0">
+                    <div className="min-w-[90px] text-left sm:text-right mr-auto sm:mr-0">
                       {t.current_price !== null ? (
                         <p className="text-lg font-bold font-mono" style={{ color: "var(--color-accent)" }}>
                           ${t.current_price.toFixed(2)}
@@ -465,7 +477,7 @@ export default function DashboardPage() {
                     </button>
                     <button onClick={e => { e.stopPropagation(); handleDelete(t.id); }}
                       disabled={deleting.has(t.id)}
-                      className="text-xs px-2 py-1 rounded transition-colors"
+                      className="text-xs px-2 py-1 rounded transition-colors whitespace-nowrap"
                       style={{ backgroundColor: "var(--color-surface-high)", color: "var(--color-text-secondary)" }}>
                       {deleting.has(t.id) ? "Removing" : "Stop watching"}
                     </button>
@@ -479,8 +491,8 @@ export default function DashboardPage() {
                       style={{ color: "var(--color-text-secondary)" }}>
                       <Bell size={12} /> Alert me when the price drops below:
                     </p>
-                    <div className="flex items-center gap-2">
-                      <div className="relative flex-1">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                      <div className="relative flex-1 min-w-[160px]">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-mono"
                           style={{ color: "var(--color-text-secondary)" }}>$</span>
                         <input
@@ -493,14 +505,14 @@ export default function DashboardPage() {
                       </div>
                       <button onClick={() => handleSaveAlert(t.id)}
                         disabled={alertCfg.saving || !alertCfg.threshold}
-                        className="px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5"
+                        className="px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-1.5"
                         style={{ backgroundColor: "var(--color-primary)", color: "#000", opacity: alertCfg.saving || !alertCfg.threshold ? 0.6 : 1 }}>
                         {alertCfg.saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                         Save alert
                       </button>
                       <button onClick={() => handleTestAlert(t.id)}
                         disabled={alertCfg.testing}
-                        className="px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5"
+                        className="px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-1.5"
                         style={{ backgroundColor: "var(--color-surface-high)", color: "var(--color-text)" }}>
                         {alertCfg.testing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
                         Test

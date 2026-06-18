@@ -19,9 +19,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   };
 
   return (
-    <div className="min-h-screen flex" style={{ backgroundColor: "var(--color-bg)" }}>
+    <div className="min-h-screen flex flex-col md:flex-row" style={{ backgroundColor: "var(--color-bg)" }}>
       {/* Sidebar */}
-      <aside className="w-56 flex-shrink-0 flex flex-col border-r" style={{ backgroundColor: "var(--color-surface)", borderColor: "var(--color-border)" }}>
+      <aside className="w-full md:w-56 md:flex-shrink-0 flex flex-col border-b md:border-b-0 md:border-r" style={{ backgroundColor: "var(--color-surface)", borderColor: "var(--color-border)" }}>
         <div className="h-16 flex items-center px-5 border-b" style={{ borderColor: "var(--color-border)" }}>
           <Link href="/" className="flex items-center gap-3">
             <img src="/devforge-logo-white.svg" alt="DevForge" className="h-5 w-auto" />
@@ -30,19 +30,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </span>
           </Link>
         </div>
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        <nav className="flex flex-wrap gap-2 md:block md:flex-1 px-3 py-3 md:py-4 md:space-y-1">
           <Link
             href="/dashboard"
-            className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors"
+            className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
             style={{ color: "var(--color-text)", backgroundColor: "var(--color-surface-raised)" }}
           >
             <span style={{ color: "var(--color-accent)" }}>◈</span> Feedback
           </Link>
         </nav>
-        <div className="px-3 pb-4 border-t pt-4" style={{ borderColor: "var(--color-border)" }}>
+        <div className="px-3 pb-3 md:pb-4 md:border-t md:pt-4" style={{ borderColor: "var(--color-border)" }}>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-2 px-3 py-2 w-full text-sm rounded-md transition-colors"
+            className="flex items-center gap-2 px-3 py-2 w-fit md:w-full text-sm rounded-md transition-colors"
             style={{ color: "var(--color-text-secondary)" }}
           >
             <span>→</span> Sign out
@@ -51,8 +51,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-auto">
-        <div className="max-w-4xl mx-auto px-8 py-10">
+      <main className="flex-1 min-w-0 overflow-auto">
+        <div className="max-w-4xl mx-auto px-4 md:px-8 py-6 md:py-10">
           {children}
         </div>
       </main>

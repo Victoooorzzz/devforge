@@ -220,16 +220,16 @@ export default function DashboardPage() {
       <ActionToast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex-1 min-w-0">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>What your users are saying</h1>
             <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>{entries.length} feedback items reviewed</p>
           </div>
           {/* Export Dropdown */}
-          <div className="relative" ref={exportRef}>
+          <div className="relative w-full sm:w-auto" ref={exportRef}>
             <button
               onClick={() => setExportOpen(!exportOpen)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
+              className="flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
               style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
             >
               <Download size={15} />

@@ -57,6 +57,7 @@ export default function DashboardPage() {
   const [loading, setLoading]         = useState(true);
   const [loadError, setLoadError]     = useState(false);
   const [toast, setToast]             = useState<DashboardToast | null>(null);
+  const [clearConfirm, setClearConfirm] = useState(false);
   const intervalRef                   = useRef<NodeJS.Timeout | null>(null);
   const exportRef                     = useRef<HTMLDivElement>(null);
 
@@ -106,7 +107,13 @@ export default function DashboardPage() {
   }, [selected]);
 
   const handleClearHistory = async () => {
-    if (!window.confirm("Clear your connection history? This cannot be undone.")) return;
+    if (!clearConfirm) {
+      setClearConfirm(true);
+      showToast({ tone: "info", message: "Click Clear history again to delete all webhook logs." });
+      window.setTimeout(() => setClearConfirm(false), 5000);
+      return;
+    }
+    setClearConfirm(false);
     trackEvent("feature_used", { feature_name: "clear_webhook_history" });
     try {
       // DELETE /webhooks/requests
@@ -185,12 +192,12 @@ export default function DashboardPage() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           {/* Export Dropdown */}
           <div className="relative" ref={exportRef}>
             <button
               onClick={() => setExportOpen(!exportOpen)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
               style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
             >
               <Download size={14} />
@@ -212,7 +219,7 @@ export default function DashboardPage() {
           </div>
           <button
             onClick={handleClearHistory}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all"
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all"
           >
             <Trash2 size={16} />
             <span>Clear history</span>
@@ -327,7 +334,44 @@ export default function DashboardPage() {
                 </p>
               </div>
             ) : (
-              <table className="w-full border-collapse">
+              <>
+              <div className="md:hidden divide-y divide-[var(--color-border)]/50">
+                {filtered.map(req => (
+                  <button
+                    key={req.id}
+                    type="button"
+                    onClick={() => setSelected(req)}
+                    className="w-full p-4 text-left transition-all hover:bg-black/5"
+                    style={{
+                      backgroundColor: selected?.id === req.id ? "rgba(var(--color-primary-rgb), 0.05)" : "transparent",
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded border"
+                          style={{
+                            backgroundColor: `${methodColors[req.method] || "#A3A3A3"}15`,
+                            color: methodColors[req.method] || "#A3A3A3",
+                            borderColor: `${methodColors[req.method] || "#A3A3A3"}30`
+                          }}>
+                          {req.method}
+                        </span>
+                        <span className="text-xs font-mono truncate" style={{ color: "var(--color-text)" }}>
+                          {req.path}
+                        </span>
+                      </div>
+                      <ChevronRight size={16} className={`flex-shrink-0 transition-transform ${selected?.id === req.id ? "rotate-90 text-[var(--color-primary)]" : "opacity-30"}`} />
+                    </div>
+                    <div className="flex items-center justify-between gap-3 text-[11px] font-mono" style={{ color: "var(--color-text-secondary)" }}>
+                      <span>{formatTime(req.received_at)}</span>
+                      <span>
+                        {req.retry_count > 0 ? `${req.retry_count} retries` : "No retries"}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <table className="hidden md:table w-full border-collapse">
                 <thead className="sticky top-0 bg-[var(--color-surface)] z-10">
                   <tr className="border-b border-[var(--color-border)]">
                     {["Delivered", "Method", "Path", "Retries", ""].map((h, i) => (
@@ -374,6 +418,7 @@ export default function DashboardPage() {
                   ))}
                 </tbody>
               </table>
+              </>
             )}
           </div>
         </div>
