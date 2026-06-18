@@ -13,12 +13,12 @@ const toastStyles: Record<ToastTone, { border: string; text: string; bg: string 
   success: {
     border: "rgba(16,185,129,0.35)",
     text: "#10B981",
-    bg: "rgba(16,185,129,0.12)",
+    bg: "#06251D",
   },
   error: {
     border: "rgba(239,68,68,0.35)",
     text: "#EF4444",
-    bg: "rgba(239,68,68,0.12)",
+    bg: "#2A1111",
   },
   info: {
     border: "var(--color-border)",

@@ -20,3 +20,10 @@ export {
   WelcomeSteps,
 } from "./components/DashboardUX";
 export type { DashboardToast } from "./components/DashboardUX";
+export {
+  getSettingsErrorMessage,
+  SettingsLoading,
+  SettingsSection,
+  SubscriptionPanel,
+} from "./components/SettingsUX";
+export type { SettingsSubscriptionProfile } from "./components/SettingsUX";

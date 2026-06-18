@@ -1,80 +1,282 @@
 "use client";
-import { useState, useEffect } from "react";
+
+import { useEffect, useState, type FormEvent } from "react";
 import { apiClient, trackEvent } from "@devforge/core";
+import {
+  ActionToast,
+  getSettingsErrorMessage,
+  SettingsLoading,
+  SettingsSection,
+  SubscriptionPanel,
+  type DashboardToast,
+  type SettingsSubscriptionProfile,
+} from "@devforge/ui";
 import { product } from "@/config/product";
 
+type Profile = SettingsSubscriptionProfile & {
+  name: string;
+  email: string;
+  has_access: boolean;
+};
+
+type TrackerSettings = {
+  alert_email: string;
+  frequency: string;
+};
+
+const emptyProfile: Profile = {
+  name: "",
+  email: "",
+  has_active_subscription: false,
+  is_on_trial: false,
+  has_access: false,
+  trial_ends_at: null,
+};
+
 export default function SettingsPage() {
-  const [profile, setProfile] = useState({
-    name: "", email: "", has_active_subscription: false,
-    is_on_trial: false, has_access: false, trial_ends_at: null as string | null,
+  const [profile, setProfile] = useState<Profile>(emptyProfile);
+  const [trackerSettings, setTrackerSettings] = useState<TrackerSettings>({
+    alert_email: "",
+    frequency: "24h",
   });
-  const [trackerSettings, setTrackerSettings] = useState({ alert_email: "", frequency: "24h" });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingTracker, setSavingTracker] = useState(false);
+  const [managingSubscription, setManagingSubscription] = useState(false);
+  const [toast, setToast] = useState<DashboardToast | null>(null);
 
   useEffect(() => {
-    Promise.all([
-      apiClient.get("/auth/profile").then((r) => {
-        const d = r.data as any;
-        setProfile({ name: d.name||"", email: d.email||"", has_active_subscription: d.has_active_subscription, is_on_trial: d.is_on_trial, has_access: d.has_access, trial_ends_at: d.trial_ends_at });
-      }),
-      apiClient.get("/settings/tracker-prefs").then((r) => {
-        const d = r.data as any;
-        setTrackerSettings({ alert_email: d.alert_email||"", frequency: d.frequency||"24h" });
-      })
-    ]).finally(() => setLoading(false));
+    let mounted = true;
+
+    async function loadSettings() {
+      try {
+        const [profileResponse, trackerResponse] = await Promise.all([
+          apiClient.get<Profile>("/auth/profile"),
+          apiClient.get<TrackerSettings>("/settings/tracker-prefs"),
+        ]);
+
+        if (!mounted) return;
+
+        const profileData = profileResponse.data;
+        setProfile({
+          name: profileData.name || "",
+          email: profileData.email || "",
+          has_active_subscription: Boolean(profileData.has_active_subscription),
+          is_on_trial: Boolean(profileData.is_on_trial),
+          has_access: Boolean(profileData.has_access),
+          trial_ends_at: profileData.trial_ends_at || null,
+        });
+        setTrackerSettings({
+          alert_email: trackerResponse.data.alert_email || "",
+          frequency: trackerResponse.data.frequency || "24h",
+        });
+      } catch (error) {
+        const message = getSettingsErrorMessage(error, "We could not load your settings.");
+        if (!mounted) return;
+        setLoadError(message);
+        setToast({ tone: "error", message });
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    loadSettings();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const handleProfileSave = async (e: React.FormEvent) => { e.preventDefault(); trackEvent("settings_updated",{section:"profile"}); try { await apiClient.put("/auth/profile",{name:profile.name,email:profile.email}); alert("Profile updated successfully"); } catch(err:any){ alert("Failed: "+(err.response?.data?.detail||err.message)); }};
-  const handleTrackerSave = async (e: React.FormEvent) => { e.preventDefault(); trackEvent("settings_updated",{section:"tracker_prefs"}); try { await apiClient.put("/settings/tracker-prefs",{alert_email:trackerSettings.alert_email,frequency:trackerSettings.frequency}); alert("Tracker preferences updated"); } catch(err:any){ alert("Failed: "+err.message); }};
-  const handleManageSubscription = async () => { trackEvent("subscription_manage_clicked"); if(profile.has_active_subscription){ try{ const{data}=await apiClient.get("/polar/portal") as{data:{portal_url:string}}; window.open(data.portal_url,"_blank"); }catch{alert("Failed to open portal");} }else{ try{ const{data}=await apiClient.post("/polar/checkout",{app_name: product.name}) as{data:{checkout_url:string}}; window.open(data.checkout_url,"_blank"); }catch{alert("Failed to start checkout");} }};
+  const handleProfileSave = async (event: FormEvent) => {
+    event.preventDefault();
+    if (savingProfile) return;
 
-  const trialDaysLeft = profile.trial_ends_at ? Math.max(0,Math.ceil((new Date(profile.trial_ends_at).getTime()-Date.now())/(1000*60*60*24))) : 0;
-  if (loading) return <div className="p-8" style={{color:"var(--color-text-secondary)"}}>Loading settings...</div>;
+    setSavingProfile(true);
+    trackEvent("settings_updated", { section: "profile" });
+
+    try {
+      await apiClient.put("/auth/profile", { name: profile.name, email: profile.email });
+      setToast({ tone: "success", message: "Profile updated successfully." });
+    } catch (error) {
+      setToast({
+        tone: "error",
+        message: getSettingsErrorMessage(error, "Failed to update profile."),
+      });
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleTrackerSave = async (event: FormEvent) => {
+    event.preventDefault();
+    if (savingTracker) return;
+
+    setSavingTracker(true);
+    trackEvent("settings_updated", { section: "tracker_prefs" });
+
+    try {
+      await apiClient.put("/settings/tracker-prefs", {
+        alert_email: trackerSettings.alert_email,
+        frequency: trackerSettings.frequency,
+      });
+      setToast({ tone: "success", message: "Tracker preferences updated successfully." });
+    } catch (error) {
+      setToast({
+        tone: "error",
+        message: getSettingsErrorMessage(error, "Failed to update tracker preferences."),
+      });
+    } finally {
+      setSavingTracker(false);
+    }
+  };
+
+  const openBillingUrl = (url: string, successMessage: string) => {
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      throw new Error("Your browser blocked the billing window. Allow pop-ups and try again.");
+    }
+    setToast({ tone: "success", message: successMessage });
+  };
+
+  const handleManageSubscription = async () => {
+    if (managingSubscription) return;
+
+    setManagingSubscription(true);
+    trackEvent("subscription_manage_clicked");
+
+    try {
+      if (profile.has_active_subscription) {
+        const { data } = await apiClient.get<{ portal_url: string }>("/polar/portal");
+        openBillingUrl(data.portal_url, "Billing portal opened in a new tab.");
+      } else {
+        const { data } = await apiClient.post<{ checkout_url: string }>("/polar/checkout", {
+          app_name: product.name,
+        });
+        openBillingUrl(data.checkout_url, "Checkout opened in a new tab.");
+      }
+    } catch (error) {
+      setToast({
+        tone: "error",
+        message: getSettingsErrorMessage(error, "Failed to open billing."),
+      });
+    } finally {
+      setManagingSubscription(false);
+    }
+  };
+
+  const trialDaysLeft = profile.trial_ends_at
+    ? Math.max(0, Math.ceil((new Date(profile.trial_ends_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+    : 0;
+
+  if (loading) return <SettingsLoading />;
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold tracking-tight mb-8" style={{color:"var(--color-text)"}}>Settings</h1>
+    <div className="mx-auto max-w-4xl">
+      <ActionToast toast={toast} onDismiss={() => setToast(null)} />
+      <h1 className="mb-8 text-2xl font-bold tracking-tight" style={{ color: "var(--color-text)" }}>
+        Settings
+      </h1>
 
-      <section className="p-6 rounded-lg mb-8" style={{backgroundColor:"var(--color-surface)"}}>
-        <h2 className="text-lg font-semibold mb-4" style={{color:"var(--color-text)"}}>Profile</h2>
-        <form onSubmit={handleProfileSave} className="space-y-4 max-w-md">
-          <div><label className="block text-sm font-medium mb-1.5" style={{color:"var(--color-text-secondary)"}}>Name</label><input value={profile.name} onChange={(e)=>setProfile({...profile,name:e.target.value})} className="input-field w-full" placeholder="Your name"/></div>
-          <div><label className="block text-sm font-medium mb-1.5" style={{color:"var(--color-text-secondary)"}}>Email</label><input type="email" value={profile.email} onChange={(e)=>setProfile({...profile,email:e.target.value})} className="input-field w-full" required/></div>
-          <button type="submit" className="btn-primary">Save Profile</button>
-        </form>
-      </section>
-
-      <section className="p-6 rounded-lg mb-8" style={{backgroundColor:"var(--color-surface)"}}>
-        <h2 className="text-lg font-semibold mb-4" style={{color:"var(--color-text)"}}>Subscription</h2>
-        {profile.is_on_trial && !profile.has_active_subscription && (
-          <div className="p-4 rounded-lg mb-4 border" style={{backgroundColor:"var(--color-accent-dim)",borderColor:"var(--color-accent)"}}>
-            <div className="flex items-center gap-2 mb-1"><span className="text-lg">🎉</span><p className="text-sm font-semibold" style={{color:"var(--color-text)"}}>Free Trial Active</p></div>
-            <p className="text-xs" style={{color:"var(--color-text-secondary)"}}>You have <strong style={{color:"var(--color-accent)"}}>{trialDaysLeft} day{trialDaysLeft!==1?"s":""}</strong> remaining. Subscribe now to keep access.</p>
-          </div>
-        )}
-        {!profile.is_on_trial && !profile.has_active_subscription && profile.trial_ends_at && (
-          <div className="p-4 rounded-lg mb-4 border" style={{backgroundColor:"rgba(239,68,68,0.1)",borderColor:"rgba(239,68,68,0.3)"}}>
-            <div className="flex items-center gap-2 mb-1"><span className="text-lg">⏰</span><p className="text-sm font-semibold" style={{color:"var(--color-text)"}}>Trial Expired</p></div>
-            <p className="text-xs" style={{color:"var(--color-text-secondary)"}}>Your free trial has ended. Subscribe to regain access.</p>
-          </div>
-        )}
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium" style={{color:"var(--color-text)"}}>{profile.has_active_subscription?"Active Plan":profile.is_on_trial?"Free Trial":"No active subscription"}</p>
-            <p className="text-xs mt-1" style={{color:"var(--color-text-secondary)"}}>{profile.has_active_subscription?"You are currently on a premium plan.":profile.is_on_trial?`Your trial ends on ${new Date(profile.trial_ends_at!).toLocaleDateString()}.`:"Subscribe to access all features."}</p>
-          </div>
-          <button onClick={handleManageSubscription} className="btn-primary">{profile.has_active_subscription?"Manage Plan":profile.is_on_trial?"Subscribe Now":"Subscribe"}</button>
+      {loadError ? (
+        <div
+          className="rounded-lg p-5"
+          style={{ backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}
+          role="alert"
+        >
+          <h2 className="mb-2 text-base font-semibold text-red-500">Settings unavailable</h2>
+          <p className="mb-4 text-sm leading-6" style={{ color: "var(--color-text-secondary)" }}>
+            {loadError}
+          </p>
+          <button type="button" onClick={() => window.location.reload()} className="btn-secondary">
+            Retry
+          </button>
         </div>
-      </section>
+      ) : (
+        <>
+          <SettingsSection title="Profile">
+            <form onSubmit={handleProfileSave} className="max-w-md space-y-4">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                  Name
+                </label>
+                <input
+                  value={profile.name}
+                  onChange={(event) => setProfile({ ...profile, name: event.target.value })}
+                  className="input-field w-full"
+                  placeholder="Your name"
+                  disabled={savingProfile}
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={profile.email}
+                  onChange={(event) => setProfile({ ...profile, email: event.target.value })}
+                  className="input-field w-full"
+                  required
+                  disabled={savingProfile}
+                />
+              </div>
+              <button type="submit" className="btn-primary" disabled={savingProfile}>
+                {savingProfile ? "Saving..." : "Save Profile"}
+              </button>
+            </form>
+          </SettingsSection>
 
-      <section className="p-6 rounded-lg mb-8" style={{backgroundColor:"var(--color-surface)"}}>
-        <h2 className="text-lg font-semibold mb-4" style={{color:"var(--color-text)"}}>Tracker Preferences</h2>
-        <form onSubmit={handleTrackerSave} className="space-y-4 max-w-md">
-          <div><label className="block text-sm font-medium mb-1.5" style={{color:"var(--color-text-secondary)"}}>Alert Email</label><input type="email" value={trackerSettings.alert_email} onChange={(e)=>setTrackerSettings({...trackerSettings,alert_email:e.target.value})} className="input-field w-full" placeholder="Email to receive price drop alerts" required/></div>
-          <div><label className="block text-sm font-medium mb-1.5" style={{color:"var(--color-text-secondary)"}}>Check Frequency</label><select value={trackerSettings.frequency} onChange={(e)=>setTrackerSettings({...trackerSettings,frequency:e.target.value})} className="input-field w-full"><option value="12h">Every 12 Hours</option><option value="24h">Every 24 Hours</option></select></div>
-          <button type="submit" className="btn-primary">Save Preferences</button>
-        </form>
-      </section>
+          <SettingsSection title="Subscription">
+            <SubscriptionPanel
+              profile={profile}
+              trialDaysLeft={trialDaysLeft}
+              onManage={handleManageSubscription}
+              busy={managingSubscription}
+            />
+          </SettingsSection>
+
+          <SettingsSection
+            title="Tracker Preferences"
+            description="Choose where price alerts are sent and the default check cadence for new trackers."
+          >
+            <form onSubmit={handleTrackerSave} className="max-w-md space-y-4">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                  Alert Email
+                </label>
+                <input
+                  type="email"
+                  value={trackerSettings.alert_email}
+                  onChange={(event) => setTrackerSettings({ ...trackerSettings, alert_email: event.target.value })}
+                  className="input-field w-full"
+                  placeholder="Email to receive price drop alerts"
+                  required
+                  disabled={savingTracker}
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                  Check Frequency
+                </label>
+                <select
+                  value={trackerSettings.frequency}
+                  onChange={(event) => setTrackerSettings({ ...trackerSettings, frequency: event.target.value })}
+                  className="input-field w-full"
+                  disabled={savingTracker}
+                >
+                  <option value="1h">Every 1 Hour</option>
+                  <option value="6h">Every 6 Hours</option>
+                  <option value="12h">Every 12 Hours</option>
+                  <option value="24h">Every 24 Hours</option>
+                </select>
+              </div>
+              <button type="submit" className="btn-primary" disabled={savingTracker}>
+                {savingTracker ? "Saving..." : "Save Preferences"}
+              </button>
+            </form>
+          </SettingsSection>
+        </>
+      )}
     </div>
   );
 }
