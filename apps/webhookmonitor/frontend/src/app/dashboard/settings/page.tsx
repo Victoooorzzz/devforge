@@ -21,6 +21,9 @@ type Profile = SettingsSubscriptionProfile & {
 
 type WebhookSettings = {
   forward_url: string;
+  expected_interval_minutes: number;
+  alert_email: string;
+  auto_retry_enabled: boolean;
 };
 
 const emptyProfile: Profile = {
@@ -34,7 +37,12 @@ const emptyProfile: Profile = {
 
 export default function SettingsPage() {
   const [profile, setProfile] = useState<Profile>(emptyProfile);
-  const [webhookSettings, setWebhookSettings] = useState<WebhookSettings>({ forward_url: "" });
+  const [webhookSettings, setWebhookSettings] = useState<WebhookSettings>({
+    forward_url: "",
+    expected_interval_minutes: 0,
+    alert_email: "",
+    auto_retry_enabled: false,
+  });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -67,6 +75,9 @@ export default function SettingsPage() {
         });
         setWebhookSettings({
           forward_url: webhookResponse.data.forward_url || "",
+          expected_interval_minutes: webhookResponse.data.expected_interval_minutes || 0,
+          alert_email: webhookResponse.data.alert_email || "",
+          auto_retry_enabled: Boolean(webhookResponse.data.auto_retry_enabled),
         });
       } catch (error) {
         const message = getSettingsErrorMessage(error, "We could not load your settings.");
@@ -114,6 +125,9 @@ export default function SettingsPage() {
     try {
       await apiClient.put("/settings/webhook-prefs", {
         forward_url: webhookSettings.forward_url,
+        expected_interval_minutes: webhookSettings.expected_interval_minutes,
+        alert_email: webhookSettings.alert_email,
+        auto_retry_enabled: webhookSettings.auto_retry_enabled,
       });
       setToast({ tone: "success", message: "Webhook preferences updated successfully." });
     } catch (error) {
@@ -272,7 +286,7 @@ export default function SettingsPage() {
                 <input
                   type="url"
                   value={webhookSettings.forward_url}
-                  onChange={(event) => setWebhookSettings({ forward_url: event.target.value })}
+                  onChange={(event) => setWebhookSettings({ ...webhookSettings, forward_url: event.target.value })}
                   className="input-field w-full"
                   placeholder="https://your-server.com/api/webhooks"
                   disabled={savingWebhook}
@@ -280,6 +294,77 @@ export default function SettingsPage() {
                 <p className="mt-1.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
                   Leave this blank to capture requests without forwarding them.
                 </p>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                  Silence Alert Interval
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="5"
+                  value={webhookSettings.expected_interval_minutes}
+                  onChange={(event) =>
+                    setWebhookSettings({
+                      ...webhookSettings,
+                      expected_interval_minutes: Math.max(0, Number(event.target.value) || 0),
+                    })
+                  }
+                  className="input-field w-full"
+                  disabled={savingWebhook}
+                />
+                <p className="mt-1.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                  Use 0 to disable silence checks; otherwise alerts trigger after roughly 2 missed intervals.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                  Alert Email
+                </label>
+                <input
+                  type="email"
+                  value={webhookSettings.alert_email}
+                  onChange={(event) => setWebhookSettings({ ...webhookSettings, alert_email: event.target.value })}
+                  className="input-field w-full"
+                  placeholder="alerts@example.com"
+                  disabled={savingWebhook}
+                />
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+                    Auto Retry Forwarding
+                  </p>
+                  <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                    Queue failed forwards for exponential backoff retries.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={webhookSettings.auto_retry_enabled}
+                  onClick={() =>
+                    setWebhookSettings({
+                      ...webhookSettings,
+                      auto_retry_enabled: !webhookSettings.auto_retry_enabled,
+                    })
+                  }
+                  className="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{
+                    backgroundColor: webhookSettings.auto_retry_enabled
+                      ? "var(--color-accent)"
+                      : "var(--color-border)",
+                  }}
+                  disabled={savingWebhook}
+                >
+                  <span
+                    className="inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200"
+                    style={{ transform: webhookSettings.auto_retry_enabled ? "translateX(20px)" : "translateX(0)" }}
+                  />
+                </button>
               </div>
               <button type="submit" className="btn-primary" disabled={savingWebhook}>
                 {savingWebhook ? "Saving..." : "Save Preferences"}

@@ -35,7 +35,7 @@ def build_polar_checkout_payload(
     frontend_url = frontend_url.rstrip("/")
 
     return {
-        "products": [product_id],
+        "product_id": product_id,
         "customer_email": user_email,
         "external_customer_id": str(user_id),
         "metadata": {"user_id": str(user_id)},

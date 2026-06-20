@@ -34,6 +34,41 @@ class FrontendSettingsUxTests(unittest.TestCase):
                 for marker in broken_markers:
                     self.assertNotIn(marker, source)
 
+    def test_webhookmonitor_settings_preserve_advanced_preferences(self):
+        source = (
+            ROOT
+            / "apps"
+            / "webhookmonitor"
+            / "frontend"
+            / "src"
+            / "app"
+            / "dashboard"
+            / "settings"
+            / "page.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("expected_interval_minutes", source)
+        self.assertIn("alert_email", source)
+        self.assertIn("auto_retry_enabled", source)
+        self.assertIn("Auto Retry Forwarding", source)
+        self.assertIn("Silence Alert Interval", source)
+
+    def test_feedbacklens_settings_normalize_legacy_thresholds(self):
+        source = (
+            ROOT
+            / "apps"
+            / "feedbacklens"
+            / "frontend"
+            / "src"
+            / "app"
+            / "dashboard"
+            / "settings"
+            / "page.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("normalizeNegativeThreshold", source)
+        self.assertIn("negative_threshold: normalizeNegativeThreshold", source)
+
 
 if __name__ == "__main__":
     unittest.main()

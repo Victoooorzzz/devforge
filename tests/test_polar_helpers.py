@@ -37,7 +37,7 @@ class PolarCheckoutPayloadTests(unittest.TestCase):
             frontend_url="https://filecleaner.devforgeapp.pro",
         )
 
-        self.assertEqual(payload["products"], ["product_123"])
+        self.assertEqual(payload["product_id"], "product_123")
         self.assertEqual(payload["customer_email"], "victor@example.com")
         self.assertEqual(payload["external_customer_id"], "42")
         self.assertEqual(payload["metadata"]["user_id"], "42")

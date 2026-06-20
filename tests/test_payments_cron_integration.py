@@ -143,7 +143,7 @@ class PaymentIntegrationTests(unittest.TestCase):
         request = _FakePolarAsyncClient.requests[0]
         self.assertEqual(request["url"], "https://sandbox-api.polar.sh/v1/checkouts/")
         self.assertEqual(request["headers"]["Authorization"], "Bearer polar_test_token")
-        self.assertEqual(request["json"]["products"], ["prod_filecleaner"])
+        self.assertEqual(request["json"]["product_id"], "prod_filecleaner")
         self.assertEqual(request["json"]["external_customer_id"], "42")
         self.assertEqual(
             request["json"]["success_url"],

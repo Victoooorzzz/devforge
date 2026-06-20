@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile,
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
-from pydantic import BaseModel
+from pydantic import BaseModel, Field as PydanticField
 from typing import Optional, List, Literal
 from datetime import datetime, timezone, timedelta
 from collections import Counter
@@ -78,7 +78,7 @@ class FeedbackSettings(SQLModel, table=True):
     __tablename__ = "feedback_settings"
     user_id: int = Field(primary_key=True)
     custom_prompt: str = Field(default="")
-    negative_threshold: int = Field(default=5)
+    negative_threshold: float = Field(default=0.5, ge=0, le=1)
     alert_email: str = Field(default="")
     weekly_summary_enabled: bool = Field(default=True)
 
@@ -91,7 +91,7 @@ class FeedbackCreate(BaseModel):
 
 class FeedbackPrefsUpdate(BaseModel):
     custom_prompt: str = ""
-    negative_threshold: int = 5
+    negative_threshold: float = PydanticField(default=0.5, ge=0, le=1)
     alert_email: str = ""
     weekly_summary_enabled: bool = True
 

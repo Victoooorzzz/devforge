@@ -133,11 +133,10 @@ async def get_webhook_prefs(
     }
 
 
-@webhook_router.post("/config")
-async def update_config(
+async def _save_webhook_prefs(
     body: WebhookPrefsUpdate,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session)
+    user: User,
+    session: AsyncSession,
 ):
     result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == user.id))
     ws = result.scalar_one_or_none()
@@ -152,6 +151,24 @@ async def update_config(
     session.add(ws)
     await session.flush()
     return {"ok": True}
+
+
+@settings_router.put("/webhook-prefs")
+async def update_webhook_prefs(
+    body: WebhookPrefsUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    return await _save_webhook_prefs(body, user, session)
+
+
+@webhook_router.post("/config")
+async def update_config(
+    body: WebhookPrefsUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    return await _save_webhook_prefs(body, user, session)
 
 
 @webhook_router.get("/config")

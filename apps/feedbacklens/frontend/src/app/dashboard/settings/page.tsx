@@ -35,6 +35,12 @@ const emptyProfile: Profile = {
   trial_ends_at: null,
 };
 
+function normalizeNegativeThreshold(value: number | null | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) return 0.5;
+  if (value > 1) return 0.5;
+  return Math.min(1, Math.max(0, value));
+}
+
 export default function SettingsPage() {
   const [profile, setProfile] = useState<Profile>(emptyProfile);
   const [feedbackSettings, setFeedbackSettings] = useState<FeedbackSettings>({
@@ -74,7 +80,7 @@ export default function SettingsPage() {
         });
         setFeedbackSettings({
           custom_prompt: feedbackData.custom_prompt || "",
-          negative_threshold: feedbackData.negative_threshold ?? 0.5,
+          negative_threshold: normalizeNegativeThreshold(feedbackData.negative_threshold),
           alert_email: feedbackData.alert_email || "",
           weekly_summary_enabled: feedbackData.weekly_summary_enabled ?? true,
         });
