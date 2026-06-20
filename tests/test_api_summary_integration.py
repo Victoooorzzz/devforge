@@ -141,7 +141,6 @@ class SummaryEndpointIntegrationTests(unittest.TestCase):
     def test_webhookmonitor_summary_returns_reliability_metrics(self):
         now = datetime.utcnow()
         response = _get_json(webhook_app, "/webhooks/summary", [
-            [SimpleNamespace(id=10)],
             [
                 SimpleNamespace(received_at=now, retry_count=0, last_retry_status=200, auto_retry_enabled=False),
                 SimpleNamespace(received_at=now - timedelta(days=2), retry_count=2, last_retry_status=500, auto_retry_enabled=True),
@@ -155,7 +154,6 @@ class SummaryEndpointIntegrationTests(unittest.TestCase):
     def test_webhookmonitor_logs_filter_failed_forwards(self):
         now = datetime.utcnow()
         response = _get_json(webhook_app, "/webhooks/logs?status=failed", [
-            [SimpleNamespace(id=10)],
             [
                 SimpleNamespace(id=1, method="POST", path="/ok", headers_json="{}", body="{}", received_at=now, retry_count=0, next_retry_at=None, last_retry_status=200, auto_retry_enabled=False),
                 SimpleNamespace(id=2, method="POST", path="/failed", headers_json="{}", body="{}", received_at=now, retry_count=2, next_retry_at=None, last_retry_status=500, auto_retry_enabled=True),

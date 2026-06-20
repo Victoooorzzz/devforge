@@ -175,7 +175,7 @@ class WebhookConditionalForwardingTests(unittest.TestCase):
         queued_jobs = [item for item in session.added if isinstance(item, SystemOutbox)]
         self.assertEqual(len(queued_jobs), 1)
         job = queued_jobs[0]
-        self.assertEqual(job.max_attempts, 6)
+        self.assertEqual(job.max_attempts, 3)
         self.assertEqual(job.payload["request_id"], 1)
         self.assertEqual(job.payload["forward_rule_id"], 9)
         self.assertEqual(job.payload["forward_url"], "https://example.com/primary-webhook")

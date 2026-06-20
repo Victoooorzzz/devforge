@@ -17,13 +17,24 @@ import {
 
 interface WebhookRequest {
   id: number;
+  event_id?: string;
+  endpoint_id?: number;
   method: string;
   path: string;
   headers: Record<string, string>;
   body: string;
+  query_params?: Record<string, string>;
+  ip_address?: string;
   received_at: string;
   retry_count: number;
   last_retry_status: number | null;
+  forward_error?: string;
+  signature_valid?: boolean | null;
+  signature_error?: string;
+  signature_provider?: string;
+  replay_of_request_id?: number | null;
+  replay_target_url?: string;
+  replay_status?: string;
   auto_retry_enabled: boolean;
 }
 
@@ -34,6 +45,7 @@ const methodColors: Record<string, string> = {
 type ExportFormat = "csv" | "xlsx" | "json";
 type EventExportFormat = "curl" | "postman";
 type LogStatusFilter = "all" | "failed" | "successful" | "pending" | "auto_retry";
+type ReplayMode = "exact" | "modified" | "alternate";
 
 const eventExportQueries: Record<EventExportFormat, string> = {
   curl: "/export?format=curl",
@@ -74,13 +86,29 @@ interface SchemaValidationResult {
   errors: Array<{ path: string; message: string; validator: string }>;
 }
 
+interface ReplayResponse {
+  status: "success" | "failed";
+  error?: string;
+}
+
 export default function DashboardPage() {
   const [requests, setRequests]       = useState<WebhookRequest[]>([]);
   const [selected, setSelected]       = useState<WebhookRequest | null>(null);
   const [endpointUrl, setEndpointUrl] = useState("");
   const [search, setSearch]           = useState("");
+  const [jsonSearchPath, setJsonSearchPath] = useState("");
+  const [jsonSearchEquals, setJsonSearchEquals] = useState("");
+  const [methodFilter, setMethodFilter] = useState("");
+  const [providerFilter, setProviderFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
   const [copied, setCopied]           = useState(false);
   const [retryPayload, setRetryPayload] = useState("");
+  const [replayMode, setReplayMode] = useState<ReplayMode>("exact");
+  const [replayTargetUrl, setReplayTargetUrl] = useState("");
+  const [replayHeaders, setReplayHeaders] = useState("{}");
+  const [isReplaying, setIsReplaying] = useState(false);
   const [isEditingPayload, setIsEditingPayload] = useState(false);
   const [isRetrying, setIsRetrying]   = useState(false);
   const [isDiffing, setIsDiffing]     = useState(false);
@@ -140,6 +168,9 @@ export default function DashboardPage() {
   useEffect(() => {
     if (selected) {
       setRetryPayload(selected.body);
+      setReplayMode("exact");
+      setReplayTargetUrl("");
+      setReplayHeaders(JSON.stringify(selected.headers || {}, null, 2));
       setIsEditingPayload(false);
       setDiffResult(null);
       setSchemaResult(null);
@@ -189,6 +220,62 @@ export default function DashboardPage() {
       showToast({ tone: "error", message: err.response?.data?.detail || "We could not retry this delivery. Check the payload and try again." });
     } finally {
       setIsRetrying(false);
+    }
+  };
+
+  const handleServerSearch = async () => {
+    setIsSearching(true);
+    trackEvent("feature_used", { feature_name: "webhook_search" });
+    try {
+      const { data } = await apiClient.post<{ total: number; items: WebhookRequest[] }>("/webhooks/search", {
+        json_path: jsonSearchPath,
+        equals: jsonSearchEquals || null,
+        status: logStatus,
+        method: methodFilter,
+        provider: providerFilter,
+        date_from: dateFrom || null,
+        date_to: dateTo || null,
+      });
+      setRequests(data.items);
+      setSelected(data.items[0] || null);
+      showToast({ tone: "success", message: `Search returned ${data.total} delivery${data.total === 1 ? "" : "ies"}.` });
+    } catch (err: any) {
+      showToast({ tone: "error", message: err.response?.data?.detail || "We could not search deliveries." });
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleReplay = async () => {
+    if (!selected) return;
+    let headersOverride: Record<string, string> | null = null;
+    if (replayMode !== "exact") {
+      try {
+        headersOverride = JSON.parse(replayHeaders || "{}");
+      } catch {
+        showToast({ tone: "error", message: "Replay headers must be valid JSON." });
+        return;
+      }
+    }
+
+    setIsReplaying(true);
+    trackEvent("feature_used", { feature_name: "webhook_replay", mode: replayMode });
+    try {
+      const { data } = await apiClient.post<ReplayResponse>(`/webhooks/events/${selected.id}/replay`, {
+        mode: replayMode,
+        target_url: replayMode === "alternate" ? replayTargetUrl : "",
+        body_override: replayMode === "exact" ? null : retryPayload,
+        headers_override: headersOverride,
+      });
+      showToast({
+        tone: data.status === "success" ? "success" : "error",
+        message: data.status === "success" ? "Replay sent successfully." : data.error || "Replay failed.",
+      });
+      refreshWebhooks(false);
+    } catch (err: any) {
+      showToast({ tone: "error", message: err.response?.data?.detail || "We could not replay this delivery." });
+    } finally {
+      setIsReplaying(false);
     }
   };
 
@@ -445,6 +532,69 @@ export default function DashboardPage() {
             />
           </div>
 
+          <div className="mb-4 grid gap-3 rounded-lg p-3 md:grid-cols-6" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <label className="md:col-span-2 text-[10px] font-bold uppercase tracking-wider opacity-70">
+              Search JSON path
+              <input
+                type="text"
+                value={jsonSearchPath}
+                onChange={event => setJsonSearchPath(event.target.value)}
+                className="input-field mt-1 w-full text-xs normal-case"
+                placeholder="type"
+              />
+            </label>
+            <label className="md:col-span-2 text-[10px] font-bold uppercase tracking-wider opacity-70">
+              JSON equals
+              <input
+                type="text"
+                value={jsonSearchEquals}
+                onChange={event => setJsonSearchEquals(event.target.value)}
+                className="input-field mt-1 w-full text-xs normal-case"
+                placeholder="payment_intent.succeeded"
+              />
+            </label>
+            <label className="text-[10px] font-bold uppercase tracking-wider opacity-70">
+              Method filter
+              <select value={methodFilter} onChange={event => setMethodFilter(event.target.value)} className="input-field mt-1 w-full text-xs normal-case">
+                <option value="">Any</option>
+                {["POST", "PUT", "PATCH", "DELETE", "GET"].map(method => <option key={method} value={method}>{method}</option>)}
+              </select>
+            </label>
+            <label className="text-[10px] font-bold uppercase tracking-wider opacity-70">
+              Provider filter
+              <select value={providerFilter} onChange={event => setProviderFilter(event.target.value)} className="input-field mt-1 w-full text-xs normal-case">
+                <option value="">Any</option>
+                {["stripe", "github", "shopify", "generic"].map(provider => <option key={provider} value={provider}>{provider}</option>)}
+              </select>
+            </label>
+            <label className="md:col-span-2 text-[10px] font-bold uppercase tracking-wider opacity-70">
+              Date from
+              <input
+                type="datetime-local"
+                value={dateFrom}
+                onChange={event => setDateFrom(event.target.value)}
+                className="input-field mt-1 w-full text-xs normal-case"
+              />
+            </label>
+            <label className="md:col-span-2 text-[10px] font-bold uppercase tracking-wider opacity-70">
+              Date to
+              <input
+                type="datetime-local"
+                value={dateTo}
+                onChange={event => setDateTo(event.target.value)}
+                className="input-field mt-1 w-full text-xs normal-case"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleServerSearch}
+              disabled={isSearching}
+              className="md:col-span-2 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-bold text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSearching ? "Searching..." : "Run search"}
+            </button>
+          </div>
+
           <div className="flex flex-wrap gap-1 rounded-lg p-1 mb-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
             {([
               ["all", "All"],
@@ -589,6 +739,41 @@ export default function DashboardPage() {
 
             <div className="flex-1 overflow-auto p-6 space-y-8 scrollbar-hide">
               <section>
+                <h3 className="text-[10px] font-bold uppercase tracking-widest mb-3 opacity-50">Signature</h3>
+                <div className="rounded-lg bg-black/20 p-4 text-xs">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono opacity-60">{selected.signature_provider || "not configured"}</span>
+                    <span
+                      className="rounded px-2 py-0.5 text-[10px] font-bold uppercase"
+                      style={{
+                        backgroundColor:
+                          selected.signature_valid === true
+                            ? "rgba(16,185,129,0.12)"
+                            : selected.signature_valid === false
+                              ? "rgba(239,68,68,0.12)"
+                              : "rgba(148,163,184,0.12)",
+                        color:
+                          selected.signature_valid === true
+                            ? "#10B981"
+                            : selected.signature_valid === false
+                              ? "#EF4444"
+                              : "var(--color-text-secondary)",
+                      }}
+                    >
+                      {selected.signature_valid === true ? "valid" : selected.signature_valid === false ? "invalid" : "not checked"}
+                    </span>
+                  </div>
+                  {selected.signature_error ? (
+                    <p className="mt-2 break-all font-mono text-[10px] text-red-400">{selected.signature_error}</p>
+                  ) : null}
+                  <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-[10px] opacity-70">
+                    <span>IP: {selected.ip_address || "unknown"}</span>
+                    <span>Event: {selected.event_id || selected.id}</span>
+                  </div>
+                </div>
+              </section>
+
+              <section>
                 <h3 className="text-[10px] font-bold uppercase tracking-widest mb-3 opacity-50">Event Export</h3>
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -682,6 +867,63 @@ export default function DashboardPage() {
                       ) : null}
                     </div>
                   ) : null}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="text-[10px] font-bold uppercase tracking-widest mb-3 opacity-50">Replay</h3>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      ["exact", "Replay exact"],
+                      ["modified", "Replay modified"],
+                      ["alternate", "Replay alternate"],
+                    ] as [ReplayMode, string][]).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setReplayMode(mode)}
+                        className="rounded-lg px-2 py-2 text-[10px] font-bold transition-colors"
+                        style={{
+                          backgroundColor: replayMode === mode ? "var(--color-accent-dim)" : "rgba(0,0,0,0.12)",
+                          color: replayMode === mode ? "var(--color-accent)" : "var(--color-text-secondary)",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {replayMode === "alternate" ? (
+                    <label className="block text-[10px] font-bold uppercase tracking-wider opacity-70">
+                      Replay target URL
+                      <input
+                        type="url"
+                        value={replayTargetUrl}
+                        onChange={event => setReplayTargetUrl(event.target.value)}
+                        className="input-field mt-1 w-full text-xs normal-case"
+                        placeholder="https://localhost-tunnel.example/webhook"
+                      />
+                    </label>
+                  ) : null}
+                  {replayMode !== "exact" ? (
+                    <label className="block text-[10px] font-bold uppercase tracking-wider opacity-70">
+                      Replay headers JSON
+                      <textarea
+                        value={replayHeaders}
+                        onChange={event => setReplayHeaders(event.target.value)}
+                        className="mt-1 min-h-[90px] w-full resize-y rounded-lg border border-black/10 bg-black/20 p-3 font-mono text-[11px] text-emerald-400/90 outline-none focus:border-[var(--color-primary)]"
+                        spellCheck={false}
+                      />
+                    </label>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={handleReplay}
+                    disabled={isReplaying}
+                    className="w-full rounded-lg bg-black/10 px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isReplaying ? "Replaying..." : "Send replay"}
+                  </button>
                 </div>
               </section>
 

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select, delete
 from typing import Any, Optional, Literal
 from datetime import datetime, timezone, timedelta
-import json, uuid, logging, httpx, io
+import base64, hashlib, hmac, json, uuid, logging, httpx, io
 import pandas as pd
 from urllib.parse import parse_qsl, urlparse
 from jsonschema import Draft202012Validator
@@ -21,6 +21,7 @@ from backend_core.logic_bridge import detect_and_act_on_payment
 from backend_core.outbox_models import SystemOutbox
 from backend_core.plan_limits import (
     get_webhookmonitor_limits_for_user_id,
+    reject_webhook_endpoint_count_if_needed,
     reject_webhook_rate_if_needed,
 )
 from backend_core.product_insights import summarize_webhooks
@@ -30,9 +31,16 @@ from backend_core.worker import register_job_handler
 from pydantic import BaseModel, Field as PydanticField
 
 logger = logging.getLogger(__name__)
-MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
+MAX_WEBHOOK_BODY_BYTES = 10 * 1024 * 1024
 WEBHOOK_PUBLIC_BASE_URL = "https://webhookmonitor.devforgeapp.pro"
 EXPORT_OMITTED_HEADERS = {"host", "content-length", "transfer-encoding", "connection"}
+DEFAULT_WEBHOOK_METHODS = ["POST", "PUT", "PATCH", "DELETE"]
+DEFAULT_RETRY_BACKOFF_SECONDS = [1, 2, 4]
+SIGNATURE_PROVIDERS = {"", "stripe", "github", "shopify", "generic"}
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # SQL migrations needed:
 # ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS user_id INTEGER;
@@ -51,20 +59,34 @@ EXPORT_OMITTED_HEADERS = {"host", "content-length", "transfer-encoding", "connec
 class WebhookEndpoint(SQLModel, table=True):
     __tablename__ = "webhook_endpoints"
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(unique=True, index=True)
+    user_id: int = Field(index=True)
     slug: str = Field(unique=True, index=True)
+    name: str = Field(default="Default endpoint")
+    allowed_methods_json: str = Field(default='["POST","PUT","PATCH","DELETE"]')
+    is_active: bool = Field(default=True, index=True)
+    created_at: datetime = Field(default_factory=_utc_now_naive)
 
 
 class WebhookRequest(SQLModel, table=True):
     __tablename__ = "webhook_requests"
     id: Optional[int] = Field(default=None, primary_key=True)
+    request_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), index=True)
     endpoint_id: int = Field(index=True)
     user_id: Optional[int] = Field(default=None, index=True)
     method: str
     path: str
     headers_json: str = "{}"
     body: str = ""
-    received_at: datetime = Field(default_factory=datetime.utcnow)
+    query_params_json: str = "{}"
+    ip_address: str = ""
+    received_at: datetime = Field(default_factory=_utc_now_naive)
+    forward_error: str = ""
+    signature_valid: Optional[bool] = None
+    signature_error: str = ""
+    signature_provider: str = ""
+    replay_of_request_id: Optional[int] = Field(default=None, index=True)
+    replay_target_url: str = ""
+    replay_status: str = ""
     # Exponential backoff retry tracking
     retry_count: int = Field(default=0)
     next_retry_at: Optional[datetime] = None
@@ -76,9 +98,17 @@ class WebhookSettings(SQLModel, table=True):
     __tablename__ = "webhook_settings"
     user_id: int = Field(primary_key=True)
     forward_url: str = Field(default="")
+    fallback_url: str = Field(default="")
     expected_interval_minutes: int = Field(default=0)   # 0 = silence check disabled
     alert_email: str = Field(default="")
+    slack_webhook_url: str = Field(default="")
+    discord_webhook_url: str = Field(default="")
     auto_retry_enabled: bool = Field(default=False)     # enable auto exponential backoff
+    retry_max_attempts: int = Field(default=3)
+    retry_backoff_seconds_json: str = Field(default="[1, 2, 4]")
+    forward_timeout_seconds: int = Field(default=30)
+    signature_provider: str = Field(default="")
+    signature_secret: str = Field(default="")
 
 
 class WebhookForwardRule(SQLModel, table=True):
@@ -92,7 +122,7 @@ class WebhookForwardRule(SQLModel, table=True):
     fallback_url: str = Field(default="")
     auto_retry_enabled: bool = Field(default=False)
     is_active: bool = Field(default=True, index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -100,9 +130,40 @@ class WebhookForwardRule(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 class WebhookPrefsUpdate(BaseModel):
     forward_url: str = ""
+    fallback_url: str = ""
     expected_interval_minutes: int = 0
     alert_email: str = ""
+    slack_webhook_url: str = ""
+    discord_webhook_url: str = ""
     auto_retry_enabled: bool = False
+    retry_max_attempts: int = 3
+    retry_backoff_seconds: list[int] = PydanticField(default_factory=lambda: DEFAULT_RETRY_BACKOFF_SECONDS.copy())
+    forward_timeout_seconds: int = 30
+    signature_provider: str = ""
+    signature_secret: str = ""
+
+
+class EndpointCreate(BaseModel):
+    name: str = "Default endpoint"
+    methods: list[str] = PydanticField(default_factory=lambda: DEFAULT_WEBHOOK_METHODS.copy())
+
+
+class ReplayPayload(BaseModel):
+    mode: Literal["exact", "modified", "alternate"] = "exact"
+    target_url: str = ""
+    body_override: Optional[str] = None
+    headers_override: Optional[dict[str, str]] = None
+
+
+class WebhookSearchPayload(BaseModel):
+    json_path: str = ""
+    equals: Optional[str] = None
+    status: Literal["all", "failed", "successful", "pending", "auto_retry"] = "all"
+    method: str = ""
+    provider: str = ""
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    limit: int = 50
 
 
 class RetryPayload(BaseModel):
@@ -125,16 +186,17 @@ class ForwardRuleCreate(BaseModel):
 
 
 def _matches_log_status(request: WebhookRequest, status: str) -> bool:
+    last_retry_status = getattr(request, "last_retry_status", None)
     if status == "all":
         return True
     if status == "failed":
-        return request.last_retry_status is not None and request.last_retry_status >= 400
+        return last_retry_status is not None and last_retry_status >= 400
     if status == "successful":
-        return request.last_retry_status is not None and 200 <= request.last_retry_status < 300
+        return last_retry_status is not None and 200 <= last_retry_status < 300
     if status == "pending":
-        return request.last_retry_status is None
+        return last_retry_status is None
     if status == "auto_retry":
-        return bool(request.auto_retry_enabled)
+        return bool(getattr(request, "auto_retry_enabled", False))
     return True
 
 
@@ -286,6 +348,302 @@ def _select_forward_rule(rules: list[WebhookForwardRule], body: str) -> WebhookF
     return None
 
 
+def _safe_json_dict(value: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _safe_json_list(value: str, default: list[Any]) -> list[Any]:
+    try:
+        parsed = json.loads(value or "[]")
+    except Exception:
+        return default
+    return parsed if isinstance(parsed, list) else default
+
+
+def _allowed_methods(endpoint: WebhookEndpoint) -> list[str]:
+    methods = _safe_json_list(getattr(endpoint, "allowed_methods_json", ""), DEFAULT_WEBHOOK_METHODS.copy())
+    normalized = [str(method).upper() for method in methods if str(method).strip()]
+    return normalized or DEFAULT_WEBHOOK_METHODS.copy()
+
+
+def _headers_lookup(headers: dict[str, Any], name: str) -> str:
+    wanted = name.lower()
+    for key, value in headers.items():
+        if str(key).lower() == wanted:
+            return str(value)
+    return ""
+
+
+def _body_bytes(body: bytes | str) -> bytes:
+    if isinstance(body, bytes):
+        return body
+    return str(body).encode("utf-8")
+
+
+def _signature_response(
+    valid: bool,
+    error: str = "",
+    details: Optional[dict[str, Any]] = None,
+    provider: str = "",
+) -> dict[str, Any]:
+    return {
+        "valid": valid,
+        "error": error,
+        "details": details or {},
+        "provider": provider,
+    }
+
+
+def _parse_stripe_signature(header: str) -> dict[str, list[str]]:
+    parsed: dict[str, list[str]] = {}
+    for part in header.split(","):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        parsed.setdefault(key.strip(), []).append(value.strip())
+    return parsed
+
+
+def _verify_rsa_sha256(public_key_pem: str, signature: str, body: bytes) -> bool:
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.exceptions import InvalidSignature
+    except Exception:
+        return False
+
+    try:
+        public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
+        public_key.verify(base64.b64decode(signature), body, padding.PKCS1v15(), hashes.SHA256())
+        return True
+    except (InvalidSignature, ValueError):
+        return False
+
+
+def validate_webhook_signature(
+    provider: str,
+    secret: str,
+    headers: dict[str, Any],
+    body: bytes | str,
+    *,
+    now: Optional[datetime] = None,
+    tolerance_seconds: int = 300,
+) -> dict[str, Any]:
+    provider_name = (provider or "").strip().lower()
+    if provider_name not in SIGNATURE_PROVIDERS or not provider_name:
+        return _signature_response(False, "unsupported_provider", {"provider": provider}, provider_name)
+    if not secret:
+        return _signature_response(False, "missing_secret", provider=provider_name)
+
+    raw_body = _body_bytes(body)
+    now_utc = now or datetime.now(timezone.utc)
+
+    if provider_name == "stripe":
+        header = _headers_lookup(headers, "stripe-signature")
+        if not header:
+            return _signature_response(False, "missing_signature_header", {"header": "stripe-signature"}, provider_name)
+        parts = _parse_stripe_signature(header)
+        timestamps = parts.get("t") or []
+        signatures = parts.get("v1") or []
+        if not timestamps or not signatures:
+            return _signature_response(False, "malformed_signature_header", {"header": "stripe-signature"}, provider_name)
+        try:
+            timestamp = int(timestamps[0])
+        except ValueError:
+            return _signature_response(False, "invalid_timestamp", {"timestamp": timestamps[0]}, provider_name)
+        diff_seconds = abs(int(now_utc.timestamp()) - timestamp)
+        if diff_seconds > tolerance_seconds:
+            return _signature_response(
+                False,
+                "timestamp_too_old",
+                {
+                    "now": now_utc.isoformat(),
+                    "timestamp": datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat(),
+                    "diff_minutes": round(diff_seconds / 60, 2),
+                },
+                provider_name,
+            )
+        signed_payload = f"{timestamp}.".encode("utf-8") + raw_body
+        expected = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
+        if any(hmac.compare_digest(expected, signature) for signature in signatures):
+            return _signature_response(True, provider=provider_name)
+        return _signature_response(False, "signature_mismatch", {"header": "stripe-signature"}, provider_name)
+
+    if provider_name == "github":
+        header = _headers_lookup(headers, "x-hub-signature-256")
+        if not header.startswith("sha256="):
+            return _signature_response(False, "missing_signature_header", {"header": "x-hub-signature-256"}, provider_name)
+        expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+        return _signature_response(
+            hmac.compare_digest(expected, header),
+            "" if hmac.compare_digest(expected, header) else "signature_mismatch",
+            {"header": "x-hub-signature-256"},
+            provider_name,
+        )
+
+    if provider_name == "shopify":
+        header = _headers_lookup(headers, "x-shopify-hmac-sha256")
+        if not header:
+            return _signature_response(False, "missing_signature_header", {"header": "x-shopify-hmac-sha256"}, provider_name)
+        expected = base64.b64encode(hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).digest()).decode("utf-8")
+        return _signature_response(
+            hmac.compare_digest(expected, header),
+            "" if hmac.compare_digest(expected, header) else "signature_mismatch",
+            {"header": "x-shopify-hmac-sha256"},
+            provider_name,
+        )
+
+    header = _headers_lookup(headers, "x-signature")
+    if not header:
+        return _signature_response(False, "missing_signature_header", {"header": "x-signature"}, provider_name)
+    algorithm, _, supplied = header.partition("=")
+    algorithm = algorithm.lower().strip()
+    supplied = supplied.strip() if supplied else algorithm
+    if not supplied:
+        return _signature_response(False, "malformed_signature_header", {"header": "x-signature"}, provider_name)
+    if algorithm in ("sha256", "hmac-sha256", ""):
+        expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    elif algorithm in ("sha1", "hmac-sha1"):
+        expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha1).hexdigest()
+    elif algorithm in ("rsa-sha256", "rsa"):
+        valid = _verify_rsa_sha256(secret, supplied, raw_body)
+        return _signature_response(
+            valid,
+            "" if valid else "signature_mismatch",
+            {"header": "x-signature", "algorithm": "rsa-sha256"},
+            provider_name,
+        )
+    else:
+        return _signature_response(False, "unsupported_algorithm", {"algorithm": algorithm}, provider_name)
+    return _signature_response(
+        hmac.compare_digest(expected, supplied),
+        "" if hmac.compare_digest(expected, supplied) else "signature_mismatch",
+        {"header": "x-signature", "algorithm": algorithm or "sha256"},
+        provider_name,
+    )
+
+
+def _signature_for_settings(settings: Optional[WebhookSettings], headers: dict[str, Any], body: bytes) -> dict[str, Any]:
+    if not settings or not settings.signature_provider or not settings.signature_secret:
+        return {"valid": None, "error": "", "details": {}, "provider": settings.signature_provider if settings else ""}
+    return validate_webhook_signature(settings.signature_provider, settings.signature_secret, headers, body)
+
+
+def _settings_retry_backoff(settings: Optional[WebhookSettings]) -> list[int]:
+    if not settings:
+        return DEFAULT_RETRY_BACKOFF_SECONDS.copy()
+    values = _safe_json_list(settings.retry_backoff_seconds_json, DEFAULT_RETRY_BACKOFF_SECONDS.copy())
+    cleaned = [max(1, int(value)) for value in values[:3] if str(value).isdigit()]
+    return cleaned or DEFAULT_RETRY_BACKOFF_SECONDS.copy()
+
+
+def _serialize_request(request: WebhookRequest) -> dict[str, Any]:
+    headers = mask_sensitive_mapping(_safe_json_dict(request.headers_json))
+    return {
+        "id": request.id,
+        "event_id": getattr(request, "request_uuid", str(request.id)),
+        "endpoint_id": getattr(request, "endpoint_id", None),
+        "method": getattr(request, "method", ""),
+        "path": getattr(request, "path", ""),
+        "headers": headers,
+        "body": getattr(request, "body", ""),
+        "query_params": _safe_json_dict(getattr(request, "query_params_json", "{}")),
+        "ip_address": getattr(request, "ip_address", ""),
+        "received_at": request.received_at.isoformat() if getattr(request, "received_at", None) else None,
+        "retry_count": getattr(request, "retry_count", 0),
+        "next_retry_at": request.next_retry_at.isoformat() if getattr(request, "next_retry_at", None) else None,
+        "last_retry_status": getattr(request, "last_retry_status", None),
+        "forward_status": getattr(request, "last_retry_status", None),
+        "forward_error": getattr(request, "forward_error", ""),
+        "auto_retry_enabled": getattr(request, "auto_retry_enabled", False),
+        "signature_valid": getattr(request, "signature_valid", None),
+        "signature_error": getattr(request, "signature_error", ""),
+        "signature_provider": getattr(request, "signature_provider", ""),
+        "replay_of_request_id": getattr(request, "replay_of_request_id", None),
+        "replay_target_url": getattr(request, "replay_target_url", ""),
+        "replay_status": getattr(request, "replay_status", ""),
+    }
+
+
+def _parse_optional_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid datetime: {value}")
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _request_received_at_utc(request: WebhookRequest) -> datetime:
+    received = request.received_at
+    if received.tzinfo is None:
+        return received.replace(tzinfo=timezone.utc)
+    return received.astimezone(timezone.utc)
+
+
+def _request_matches_search(request: WebhookRequest, criteria: WebhookSearchPayload) -> bool:
+    if not _matches_log_status(request, criteria.status):
+        return False
+    if criteria.method and request.method.upper() != criteria.method.upper():
+        return False
+    if criteria.provider and getattr(request, "signature_provider", "").lower() != criteria.provider.lower():
+        return False
+
+    received = _request_received_at_utc(request)
+    date_from = _parse_optional_datetime(criteria.date_from)
+    date_to = _parse_optional_datetime(criteria.date_to)
+    if date_from and received < date_from:
+        return False
+    if date_to and received > date_to:
+        return False
+
+    if criteria.json_path:
+        try:
+            payload = json.loads(request.body or "{}")
+        except Exception:
+            return False
+        value = _extract_match_value(payload, criteria.json_path)
+        if criteria.equals is not None and str(value) != criteria.equals:
+            return False
+
+    return True
+
+
+def _validate_public_url_field(value: str, field_name: str) -> None:
+    if value and not is_public_http_url(value):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a public http(s) URL")
+
+
+def _validate_method_list(methods: list[str]) -> list[str]:
+    normalized = []
+    for method in methods:
+        value = str(method).strip().upper()
+        if value not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+            raise HTTPException(status_code=400, detail=f"Unsupported webhook method: {method}")
+        if value not in normalized:
+            normalized.append(value)
+    return normalized or DEFAULT_WEBHOOK_METHODS.copy()
+
+
+def _serialize_endpoint(endpoint: WebhookEndpoint) -> dict[str, Any]:
+    return {
+        "id": endpoint.id,
+        "uuid": endpoint.slug,
+        "name": endpoint.name,
+        "endpoint_url": f"{WEBHOOK_PUBLIC_BASE_URL}/in/{endpoint.slug}",
+        "methods": _allowed_methods(endpoint),
+        "created_at": endpoint.created_at.isoformat() if endpoint.created_at else None,
+        "is_active": endpoint.is_active,
+    }
+
+
 def _request_export_url(request: WebhookRequest) -> str:
     path = request.path or ""
     if path.startswith("http://") or path.startswith("https://"):
@@ -402,9 +760,18 @@ async def get_webhook_prefs(
         await session.flush()
     return {
         "forward_url": ws.forward_url,
+        "fallback_url": ws.fallback_url,
         "expected_interval_minutes": ws.expected_interval_minutes,
         "alert_email": ws.alert_email,
+        "slack_webhook_url": ws.slack_webhook_url,
+        "discord_webhook_url": ws.discord_webhook_url,
         "auto_retry_enabled": ws.auto_retry_enabled,
+        "retry_max_attempts": ws.retry_max_attempts,
+        "retry_backoff_seconds": _settings_retry_backoff(ws),
+        "forward_timeout_seconds": ws.forward_timeout_seconds,
+        "signature_provider": ws.signature_provider,
+        "signature_secret": "",
+        "signature_secret_set": bool(ws.signature_secret),
     }
 
 
@@ -417,12 +784,41 @@ async def _save_webhook_prefs(
     ws = result.scalar_one_or_none()
     if not ws:
         ws = WebhookSettings(user_id=user.id)
-    if body.forward_url and not is_public_http_url(body.forward_url):
-        raise HTTPException(status_code=400, detail="Forward URL must be a public http(s) URL")
-    ws.forward_url = body.forward_url
+    forward_url = body.forward_url.strip()
+    fallback_url = body.fallback_url.strip()
+    slack_webhook_url = body.slack_webhook_url.strip()
+    discord_webhook_url = body.discord_webhook_url.strip()
+    _validate_public_url_field(forward_url, "Forward URL")
+    _validate_public_url_field(fallback_url, "Fallback URL")
+    _validate_public_url_field(slack_webhook_url, "Slack Webhook URL")
+    _validate_public_url_field(discord_webhook_url, "Discord Webhook URL")
+
+    signature_provider = body.signature_provider.strip().lower()
+    if signature_provider not in SIGNATURE_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported signature provider")
+    if signature_provider and not (body.signature_secret or ws.signature_secret):
+        raise HTTPException(status_code=400, detail="Signature secret is required when a provider is selected")
+    if body.retry_max_attempts not in (1, 2, 3):
+        raise HTTPException(status_code=400, detail="Retry attempts must be 1, 2, or 3")
+    if body.forward_timeout_seconds not in (10, 30, 60):
+        raise HTTPException(status_code=400, detail="Forward timeout must be 10, 30, or 60 seconds")
+    retry_backoff_seconds = [max(1, int(value)) for value in body.retry_backoff_seconds[:3]]
+
+    ws.forward_url = forward_url
+    ws.fallback_url = fallback_url
     ws.expected_interval_minutes = body.expected_interval_minutes
-    ws.alert_email = body.alert_email
+    ws.alert_email = body.alert_email.strip()
+    ws.slack_webhook_url = slack_webhook_url
+    ws.discord_webhook_url = discord_webhook_url
     ws.auto_retry_enabled = body.auto_retry_enabled
+    ws.retry_max_attempts = body.retry_max_attempts
+    ws.retry_backoff_seconds_json = json.dumps(retry_backoff_seconds)
+    ws.forward_timeout_seconds = body.forward_timeout_seconds
+    ws.signature_provider = signature_provider
+    if body.signature_secret:
+        ws.signature_secret = body.signature_secret
+    if not signature_provider:
+        ws.signature_secret = ""
     session.add(ws)
     await session.flush()
     return {"ok": True}
@@ -451,14 +847,105 @@ async def get_config(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
-    result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
+    result = await session.execute(
+        select(WebhookEndpoint)
+        .where(WebhookEndpoint.user_id == user.id)
+        .order_by(WebhookEndpoint.created_at.asc())
+    )
     ep = result.scalar_one_or_none()
     if not ep:
-        ep = WebhookEndpoint(user_id=user.id, slug=uuid.uuid4().hex[:12])
+        ep = WebhookEndpoint(user_id=user.id, slug=str(uuid.uuid4()), name="Default endpoint")
         session.add(ep)
         await session.flush()
         await session.refresh(ep)
-    return {"endpoint_url": f"https://webhookmonitor.devforgeapp.pro/hook/{ep.slug}"}
+    return {"endpoint_url": f"{WEBHOOK_PUBLIC_BASE_URL}/in/{ep.slug}", "endpoint": _serialize_endpoint(ep)}
+
+
+@webhook_router.get("/endpoints")
+async def list_endpoints(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        select(WebhookEndpoint)
+        .where(WebhookEndpoint.user_id == user.id)
+        .order_by(WebhookEndpoint.created_at.desc())
+    )
+    return [_serialize_endpoint(endpoint) for endpoint in result.scalars().all()]
+
+
+@webhook_router.post("/endpoints")
+async def create_endpoint(
+    body: EndpointCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    plan, limits = await get_webhookmonitor_limits_for_user_id(session, user.id)
+    count_result = await session.execute(
+        select(func.count(WebhookEndpoint.id)).where(WebhookEndpoint.user_id == user.id)
+    )
+    endpoint_count = count_result.scalar_one()
+    reject_webhook_endpoint_count_if_needed(plan, limits, endpoint_count)
+
+    methods = _validate_method_list(body.methods)
+    name = body.name.strip() or "Default endpoint"
+    endpoint = WebhookEndpoint(
+        user_id=user.id,
+        slug=str(uuid.uuid4()),
+        name=name,
+        allowed_methods_json=json.dumps(methods),
+    )
+    session.add(endpoint)
+    await session.flush()
+    await session.refresh(endpoint)
+    return _serialize_endpoint(endpoint)
+
+
+@webhook_router.get("/endpoints/{endpoint_id}")
+async def get_endpoint(
+    endpoint_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        select(WebhookEndpoint).where(
+            WebhookEndpoint.id == endpoint_id,
+            WebhookEndpoint.user_id == user.id,
+        )
+    )
+    endpoint = result.scalar_one_or_none()
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="Endpoint not found")
+    return _serialize_endpoint(endpoint)
+
+
+@webhook_router.delete("/endpoints/{endpoint_id}")
+async def delete_endpoint(
+    endpoint_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await session.execute(
+        delete(WebhookEndpoint).where(
+            WebhookEndpoint.id == endpoint_id,
+            WebhookEndpoint.user_id == user.id,
+        )
+    )
+    await session.flush()
+    return {"status": "deleted"}
+
+
+@webhook_router.get("/endpoints/{endpoint_id}/events")
+async def list_endpoint_events(
+    endpoint_id: int,
+    status: Literal["all", "failed", "successful", "pending", "auto_retry"] = Query(default="all"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    endpoint = await get_endpoint(endpoint_id, user, session)
+    query = select(WebhookRequest).where(WebhookRequest.endpoint_id == endpoint["id"])
+    result = await session.execute(query.order_by(WebhookRequest.received_at.desc()).limit(50))
+    return [_serialize_request(request) for request in result.scalars().all() if _matches_log_status(request, status)]
 
 
 @webhook_router.get("/logs")
@@ -467,11 +954,7 @@ async def list_logs(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
-    ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
-    ep = ep_result.scalar_one_or_none()
-    if not ep:
-        return []
-    query = select(WebhookRequest).where(WebhookRequest.endpoint_id == ep.id)
+    query = select(WebhookRequest).where(WebhookRequest.user_id == user.id)
     if status == "failed":
         query = query.where(WebhookRequest.last_retry_status >= 400)
     elif status == "successful":
@@ -482,21 +965,7 @@ async def list_logs(
         query = query.where(WebhookRequest.auto_retry_enabled == True)  # noqa: E712
     result = await session.execute(query.order_by(WebhookRequest.received_at.desc()).limit(100))
     requests = [r for r in result.scalars().all() if _matches_log_status(r, status)]
-    return [
-        {
-            "id": r.id,
-            "method": r.method,
-            "path": r.path,
-            "headers": mask_sensitive_mapping(json.loads(r.headers_json)),
-            "body": r.body,
-            "received_at": r.received_at.isoformat(),
-            "retry_count": r.retry_count,
-            "next_retry_at": r.next_retry_at.isoformat() if r.next_retry_at else None,
-            "last_retry_status": r.last_retry_status,
-            "auto_retry_enabled": r.auto_retry_enabled,
-        }
-        for r in requests
-    ]
+    return [_serialize_request(r) for r in requests]
 
 
 @webhook_router.get("/summary")
@@ -504,14 +973,9 @@ async def webhook_summary(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
-    ep = ep_result.scalar_one_or_none()
-    if not ep:
-        return summarize_webhooks([])
-
     result = await session.execute(
         select(WebhookRequest)
-        .where(WebhookRequest.endpoint_id == ep.id)
+        .where(WebhookRequest.user_id == user.id)
         .order_by(WebhookRequest.received_at.desc())
         .limit(1000)
     )
@@ -523,11 +987,7 @@ async def delete_requests(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
-    ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
-    ep = ep_result.scalar_one_or_none()
-    if not ep:
-        return {"status": "ok"}
-    await session.execute(delete(WebhookRequest).where(WebhookRequest.endpoint_id == ep.id))
+    await session.execute(delete(WebhookRequest).where(WebhookRequest.user_id == user.id))
     await session.flush()
     return {"status": "deleted", "message": "All logs cleared"}
 
@@ -597,7 +1057,12 @@ async def delete_forward_rule(
 
 
 async def _get_user_endpoint(user: User, session: AsyncSession) -> WebhookEndpoint:
-    ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
+    ep_result = await session.execute(
+        select(WebhookEndpoint)
+        .where(WebhookEndpoint.user_id == user.id)
+        .order_by(WebhookEndpoint.created_at.asc())
+        .limit(1)
+    )
     ep = ep_result.scalar_one_or_none()
     if not ep:
         raise HTTPException(status_code=404, detail="No endpoint configured")
@@ -617,6 +1082,19 @@ async def _get_owned_request(request_id: int, endpoint_id: int, session: AsyncSe
     return req
 
 
+async def _get_owned_request_for_user(request_id: int, user_id: int, session: AsyncSession) -> WebhookRequest:
+    req_result = await session.execute(
+        select(WebhookRequest).where(
+            WebhookRequest.id == request_id,
+            WebhookRequest.user_id == user_id,
+        )
+    )
+    req = req_result.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    return req
+
+
 @webhook_router.get("/requests/{request_id}/diff")
 async def diff_request(
     request_id: int,
@@ -624,9 +1102,8 @@ async def diff_request(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    ep = await _get_user_endpoint(user, session)
-    request = await _get_owned_request(request_id, ep.id, session)
-    base_request = await _get_owned_request(base_request_id, ep.id, session)
+    request = await _get_owned_request_for_user(request_id, user.id, session)
+    base_request = await _get_owned_request_for_user(base_request_id, user.id, session)
 
     return {
         "request_id": request.id,
@@ -649,8 +1126,7 @@ async def validate_request_schema(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    ep = await _get_user_endpoint(user, session)
-    request = await _get_owned_request(request_id, ep.id, session)
+    request = await _get_owned_request_for_user(request_id, user.id, session)
 
     try:
         Draft202012Validator.check_schema(body.json_schema)
@@ -682,8 +1158,7 @@ async def export_request(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    ep = await _get_user_endpoint(user, session)
-    request = await _get_owned_request(request_id, ep.id, session)
+    request = await _get_owned_request_for_user(request_id, user.id, session)
 
     if format == "postman":
         collection = _build_postman_collection(request)
@@ -702,6 +1177,139 @@ async def export_request(
     )
 
 
+@webhook_router.get("/events/{request_id}")
+async def get_event(
+    request_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    request = await _get_owned_request_for_user(request_id, user.id, session)
+    return _serialize_request(request)
+
+
+@webhook_router.get("/events/{request_id}/diff")
+async def diff_event(
+    request_id: int,
+    base_request_id: int = Query(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await diff_request(request_id, base_request_id, user, session)
+
+
+async def _replay_event_impl(
+    request_id: int,
+    body: ReplayPayload,
+    user: User,
+    session: AsyncSession,
+):
+    request = await _get_owned_request_for_user(request_id, user.id, session)
+
+    target_url = body.target_url.strip()
+    if not target_url:
+        if body.mode == "alternate":
+            raise HTTPException(status_code=400, detail="Replay target URL is required for alternate replay")
+        target_url = _request_export_url(request)
+    _validate_public_url_field(target_url, "Replay target URL")
+
+    headers = _exportable_headers(request.headers_json)
+    if body.headers_override:
+        headers.update({str(key): str(value) for key, value in body.headers_override.items()})
+    replay_body = body.body_override if body.body_override is not None else request.body
+
+    status_code: Optional[int] = None
+    replay_status = "failed"
+    forward_error = ""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                content=replay_body.encode("utf-8"),
+            )
+        status_code = response.status_code
+        replay_status = "success" if 200 <= response.status_code < 300 else "failed"
+        if replay_status == "failed":
+            forward_error = f"Replay returned {response.status_code}"
+    except httpx.RequestError as exc:
+        forward_error = str(exc)
+
+    replay_request = WebhookRequest(
+        endpoint_id=request.endpoint_id,
+        user_id=request.user_id,
+        method=request.method,
+        path=target_url,
+        headers_json=json.dumps(headers),
+        body=replay_body,
+        query_params_json=getattr(request, "query_params_json", "{}"),
+        ip_address="replay",
+        last_retry_status=status_code,
+        forward_error=forward_error,
+        signature_valid=getattr(request, "signature_valid", None),
+        signature_error=getattr(request, "signature_error", ""),
+        signature_provider=getattr(request, "signature_provider", ""),
+        replay_of_request_id=request.id,
+        replay_target_url=target_url,
+        replay_status=replay_status,
+    )
+    session.add(replay_request)
+    await session.flush()
+    await session.commit()
+
+    return {
+        "status": replay_status,
+        "event": _serialize_request(replay_request),
+        "target_url": target_url,
+        "response_status": status_code,
+        "error": forward_error,
+    }
+
+
+@webhook_router.post("/events/{request_id}/replay")
+async def replay_event(
+    request_id: int,
+    body: ReplayPayload,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await _replay_event_impl(request_id, body, user, session)
+
+
+@webhook_router.post("/requests/{request_id}/replay")
+async def replay_request(
+    request_id: int,
+    body: ReplayPayload,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await _replay_event_impl(request_id, body, user, session)
+
+
+@webhook_router.post("/search")
+async def search_events(
+    body: WebhookSearchPayload,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    limit = min(max(body.limit, 1), 100)
+    result = await session.execute(
+        select(WebhookRequest)
+        .where(WebhookRequest.user_id == user.id)
+        .order_by(WebhookRequest.received_at.desc())
+        .limit(1000)
+    )
+    matches = [
+        request
+        for request in result.scalars().all()
+        if _request_matches_search(request, body)
+    ]
+    return {
+        "total": len(matches),
+        "items": [_serialize_request(request) for request in matches[:limit]],
+    }
+
+
 @webhook_router.post("/requests/{request_id}/retry")
 async def retry_request(
     request_id: int,
@@ -712,20 +1320,7 @@ async def retry_request(
     """
     Encola un job de reenvío en system_outbox.
     """
-    ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
-    ep = ep_result.scalar_one_or_none()
-    if not ep:
-        raise HTTPException(status_code=404, detail="No endpoint configured")
-
-    req_result = await session.execute(
-        select(WebhookRequest).where(
-            WebhookRequest.id == request_id,
-            WebhookRequest.endpoint_id == ep.id,
-        )
-    )
-    req = req_result.scalar_one_or_none()
-    if not req:
-        raise HTTPException(status_code=404, detail="Request not found")
+    req = await _get_owned_request_for_user(request_id, user.id, session)
 
     ws_result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == user.id))
     ws = ws_result.scalar_one_or_none()
@@ -737,9 +1332,17 @@ async def retry_request(
     job = SystemOutbox(
         app_name="webhookmonitor",
         job_type="forward_webhook",
-        payload={"request_id": req.id, "payload_override": body.payload_override},
+        payload={
+            "request_id": req.id,
+            "payload_override": body.payload_override,
+            "forward_url": ws.forward_url,
+            "fallback_url": ws.fallback_url,
+            "max_attempts": ws.retry_max_attempts,
+            "backoff_seconds": _settings_retry_backoff(ws),
+            "timeout_seconds": ws.forward_timeout_seconds,
+        },
         status="pending",
-        max_attempts=6 if body.schedule_auto_retry else 1
+        max_attempts=ws.retry_max_attempts if body.schedule_auto_retry else 1
     )
     session.add(job)
     await session.commit()
@@ -784,7 +1387,7 @@ async def check_webhook_silences():
             )
             last_req = last_res.scalar_one_or_none()
 
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             silence_threshold = timedelta(minutes=ws.expected_interval_minutes * 2)
 
             if last_req is None:
@@ -821,17 +1424,25 @@ async def check_webhook_silences():
 
 async def cleanup_old_logs():
     """
-    Cron: deletes webhook request logs older than 30 days.
-    Prevents the table from growing indefinitely.
+    Cron: deletes webhook request logs outside each user's retention window.
     """
     async with get_managed_session() as session:
-        cutoff = datetime.utcnow() - timedelta(days=30)
-        result = await session.execute(
-            delete(WebhookRequest).where(WebhookRequest.received_at < cutoff)
+        endpoints_result = await session.execute(
+            select(WebhookEndpoint.user_id).distinct()
         )
-        deleted = result.rowcount
+        deleted = 0
+        for user_id in endpoints_result.scalars().all():
+            _plan, limits = await get_webhookmonitor_limits_for_user_id(session, user_id)
+            cutoff = _utc_now_naive() - timedelta(days=limits.retention_days)
+            result = await session.execute(
+                delete(WebhookRequest).where(
+                    WebhookRequest.user_id == user_id,
+                    WebhookRequest.received_at < cutoff,
+                )
+            )
+            deleted += result.rowcount or 0
         await session.commit()
-        logger.info(f"Cleanup cron: deleted {deleted} webhook logs older than 30 days")
+        logger.info("Cleanup cron: deleted %s webhook logs outside plan retention", deleted)
         return deleted
 
 
@@ -866,29 +1477,34 @@ async def export_logs(
     session: AsyncSession = Depends(get_session),
 ):
     """Export all webhook request logs as CSV, XLSX, or JSON."""
-    ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
-    ep = ep_result.scalar_one_or_none()
-    if not ep:
-        rows = []
-    else:
-        result = await session.execute(
-            select(WebhookRequest)
-            .where(WebhookRequest.endpoint_id == ep.id)
-            .order_by(WebhookRequest.received_at.desc())
-            .limit(1000)
-        )
-        requests = result.scalars().all()
-        rows = [{
-            "id": r.id,
-            "method": r.method,
-            "path": r.path,
-            "headers_preview": json.dumps(mask_sensitive_mapping(json.loads(r.headers_json))),
-            "body_preview": mask_sensitive_text(r.body[:200] if r.body else ""),
-            "received_at": r.received_at.isoformat(),
-            "retry_count": r.retry_count,
-            "last_retry_status": r.last_retry_status,
-            "auto_retry_enabled": r.auto_retry_enabled,
-        } for r in requests]
+    result = await session.execute(
+        select(WebhookRequest)
+        .where(WebhookRequest.user_id == user.id)
+        .order_by(WebhookRequest.received_at.desc())
+        .limit(1000)
+    )
+    requests = result.scalars().all()
+    rows = [{
+        "id": r.id,
+        "event_id": getattr(r, "request_uuid", str(r.id)),
+        "endpoint_id": r.endpoint_id,
+        "method": r.method,
+        "path": r.path,
+        "headers_preview": json.dumps(mask_sensitive_mapping(_safe_json_dict(r.headers_json))),
+        "body_preview": mask_sensitive_text(r.body[:200] if r.body else ""),
+        "query_params": getattr(r, "query_params_json", "{}"),
+        "ip_address": getattr(r, "ip_address", ""),
+        "received_at": r.received_at.isoformat(),
+        "retry_count": r.retry_count,
+        "last_retry_status": r.last_retry_status,
+        "forward_error": getattr(r, "forward_error", ""),
+        "signature_valid": getattr(r, "signature_valid", None),
+        "signature_error": getattr(r, "signature_error", ""),
+        "signature_provider": getattr(r, "signature_provider", ""),
+        "replay_of_request_id": getattr(r, "replay_of_request_id", None),
+        "replay_status": getattr(r, "replay_status", ""),
+        "auto_retry_enabled": r.auto_retry_enabled,
+    } for r in requests]
 
     if format == "json":
         return StreamingResponse(
@@ -914,8 +1530,45 @@ async def export_logs(
 # Ingestion (public, no auth)
 # ---------------------------------------------------------------------------
 
-async def _persist_and_forward(endpoint_id, user_id, method, path, headers, body):
+async def _notify_webhook_issue(settings: Optional[WebhookSettings], subject: str, message: str) -> None:
+    if not settings:
+        return
+    if settings.alert_email:
+        try:
+            send_email(
+                to=settings.alert_email,
+                subject=subject,
+                html_body=f"<p>{message}</p>",
+            )
+        except Exception as exc:
+            logger.warning("Webhook email notification failed: %s", exc)
+
+    async def post_json(url: str, payload: dict[str, Any]) -> None:
+        if not url or not is_public_http_url(url):
+            return
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.post(url, json=payload)
+        except Exception as exc:
+            logger.warning("Webhook notification failed for %s: %s", url, exc)
+
+    await post_json(settings.slack_webhook_url, {"text": f"{subject}: {message}"})
+    await post_json(settings.discord_webhook_url, {"content": f"{subject}: {message}"})
+
+
+async def _persist_and_forward(
+    endpoint_id,
+    user_id,
+    method,
+    path,
+    headers,
+    body,
+    query_params: Optional[dict[str, Any]] = None,
+    ip_address: str = "",
+    signature_result: Optional[dict[str, Any]] = None,
+):
     async with get_managed_session() as session:
+        signature_result = signature_result or {"valid": None, "error": "", "provider": "", "details": {}}
         req = WebhookRequest(
             endpoint_id=endpoint_id,
             user_id=user_id,
@@ -923,6 +1576,11 @@ async def _persist_and_forward(endpoint_id, user_id, method, path, headers, body
             path=path,
             headers_json=json.dumps(headers),
             body=body,
+            query_params_json=json.dumps(query_params or {}),
+            ip_address=ip_address,
+            signature_valid=signature_result.get("valid"),
+            signature_error=signature_result.get("error") or "",
+            signature_provider=signature_result.get("provider") or "",
         )
         session.add(req)
         await session.flush()
@@ -935,6 +1593,14 @@ async def _persist_and_forward(endpoint_id, user_id, method, path, headers, body
         )
         matched_rule = _select_forward_rule(list(rules_result.scalars().all()), body)
 
+        settings_result = await session.execute(
+            select(WebhookSettings).where(WebhookSettings.user_id == user_id)
+        )
+        user_settings = settings_result.scalar_one_or_none()
+        retry_attempts = user_settings.retry_max_attempts if user_settings else 3
+        retry_backoff = _settings_retry_backoff(user_settings)
+        timeout_seconds = user_settings.forward_timeout_seconds if user_settings else 30
+
         if matched_rule:
             req.auto_retry_enabled = matched_rule.auto_retry_enabled
             job = SystemOutbox(
@@ -945,33 +1611,40 @@ async def _persist_and_forward(endpoint_id, user_id, method, path, headers, body
                     "forward_rule_id": matched_rule.id,
                     "forward_url": matched_rule.forward_url,
                     "fallback_url": matched_rule.fallback_url,
+                    "max_attempts": retry_attempts,
+                    "backoff_seconds": retry_backoff,
+                    "timeout_seconds": timeout_seconds,
                 },
                 status="pending",
-                max_attempts=6 if matched_rule.auto_retry_enabled else 1
+                max_attempts=retry_attempts if matched_rule.auto_retry_enabled else 1
             )
             session.add(job)
-        else:
-            settings_result = await session.execute(
-                select(WebhookSettings).where(WebhookSettings.user_id == user_id)
+        elif user_settings and user_settings.forward_url:
+            req.auto_retry_enabled = user_settings.auto_retry_enabled
+            job = SystemOutbox(
+                app_name="webhookmonitor",
+                job_type="forward_webhook",
+                payload={
+                    "request_id": req.id,
+                    "forward_url": user_settings.forward_url,
+                    "fallback_url": user_settings.fallback_url,
+                    "max_attempts": retry_attempts,
+                    "backoff_seconds": retry_backoff,
+                    "timeout_seconds": timeout_seconds,
+                },
+                status="pending",
+                max_attempts=retry_attempts if user_settings.auto_retry_enabled else 1
             )
-            user_settings = settings_result.scalar_one_or_none()
-
-            if user_settings and user_settings.forward_url:
-                req.auto_retry_enabled = user_settings.auto_retry_enabled
-                job = SystemOutbox(
-                    app_name="webhookmonitor",
-                    job_type="forward_webhook",
-                    payload={
-                        "request_id": req.id,
-                        "forward_url": user_settings.forward_url,
-                        "fallback_url": "",
-                    },
-                    status="pending",
-                    max_attempts=6 if user_settings.auto_retry_enabled else 1
-                )
-                session.add(job)
+            session.add(job)
             
         await session.commit()
+
+        if signature_result.get("valid") is False:
+            await _notify_webhook_issue(
+                user_settings,
+                "Webhook signature validation failed",
+                f"Provider={signature_result.get('provider')}; error={signature_result.get('error')}; path={path}",
+            )
 
         # Logic Bridge: check if this is a payment webhook and auto-pay invoices
         try:
@@ -984,6 +1657,8 @@ async def process_webhook_forward(payload: dict):
     payload_override = payload.get("payload_override")
     forward_url = (payload.get("forward_url") or "").strip()
     fallback_url = (payload.get("fallback_url") or "").strip()
+    max_attempts = int(payload.get("max_attempts") or 1)
+    timeout_seconds = float(payload.get("timeout_seconds") or 30)
     
     async with get_managed_session() as session:
         req_result = await session.execute(select(WebhookRequest).where(WebhookRequest.id == request_id))
@@ -991,10 +1666,17 @@ async def process_webhook_forward(payload: dict):
         if not req:
             return {"status": "skipped", "reason": "request not found"}
 
+        ws = None
         if not forward_url:
             ws_result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == req.user_id))
             ws = ws_result.scalar_one_or_none()
             forward_url = ws.forward_url if ws else ""
+            fallback_url = fallback_url or (ws.fallback_url if ws else "")
+            max_attempts = ws.retry_max_attempts if ws else max_attempts
+            timeout_seconds = float(ws.forward_timeout_seconds if ws else timeout_seconds)
+        elif req.user_id is not None:
+            ws_result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == req.user_id))
+            ws = ws_result.scalar_one_or_none()
 
         if not forward_url:
             return {"status": "skipped", "reason": "no forward url"}
@@ -1003,7 +1685,7 @@ async def process_webhook_forward(payload: dict):
         if fallback_url and not is_public_http_url(fallback_url):
             return {"status": "skipped", "reason": "unsafe fallback url"}
             
-        headers = json.loads(req.headers_json)
+        headers = _safe_json_dict(req.headers_json)
         safe_headers = {
             k: v for k, v in headers.items()
             if k.lower() not in ("host", "content-length", "transfer-encoding", "connection")
@@ -1012,7 +1694,7 @@ async def process_webhook_forward(payload: dict):
         body_to_send = payload_override if payload_override is not None else req.body
 
         async def deliver(url: str):
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
                 return await client.request(
                     method=req.method,
                     url=url,
@@ -1020,59 +1702,68 @@ async def process_webhook_forward(payload: dict):
                     content=body_to_send.encode("utf-8"),
                 )
 
+        async def deliver_fallback_if_final(reason: str):
+            if not fallback_url or req.retry_count < max_attempts:
+                return None
+            response = await deliver(fallback_url)
+            req.last_retry_status = response.status_code
+            if 200 <= response.status_code < 300:
+                req.auto_retry_enabled = False
+                req.next_retry_at = None
+                req.forward_error = ""
+                session.add(req)
+                await session.commit()
+                return {
+                    "status": "success",
+                    "forward_url": fallback_url,
+                    "response_status": response.status_code,
+                    "fallback": True,
+                }
+            req.forward_error = f"{reason}; fallback returned {response.status_code}"
+            return None
+
         try:
             response = await deliver(forward_url)
             req.last_retry_status = response.status_code
-            is_success = 200 <= response.status_code < 300
-
-            if not is_success and fallback_url:
-                req.retry_count += 1
-                response = await deliver(fallback_url)
-                req.last_retry_status = response.status_code
-                if 200 <= response.status_code < 300:
-                    req.auto_retry_enabled = False
-                    req.next_retry_at = None
-                    session.add(req)
-                    await session.commit()
-                    return {"status": "success", "forward_url": fallback_url, "response_status": response.status_code}
-
-            if not is_success:
-                req.retry_count += 1
+            if 200 <= response.status_code < 300:
+                req.auto_retry_enabled = False
+                req.next_retry_at = None
+                req.forward_error = ""
                 session.add(req)
                 await session.commit()
-                raise Exception(f"Forward returned {response.status_code}")
-                
-            # success!
-            req.auto_retry_enabled = False
-            req.next_retry_at = None
+                return {"status": "success", "forward_url": forward_url, "response_status": response.status_code}
+
+            req.retry_count += 1
+            req.forward_error = f"Forward returned {response.status_code}"
+            fallback_result = await deliver_fallback_if_final(req.forward_error)
+            if fallback_result:
+                return fallback_result
             session.add(req)
             await session.commit()
-            
-            return {"status": "success", "forward_url": forward_url, "response_status": response.status_code}
-            
+            if req.retry_count >= max_attempts:
+                await _notify_webhook_issue(ws, "Webhook forward failed", req.forward_error)
+            raise Exception(req.forward_error)
+
         except httpx.RequestError as e:
             req.retry_count += 1
-            if fallback_url:
-                try:
-                    response = await deliver(fallback_url)
-                except httpx.RequestError:
-                    session.add(req)
-                    await session.commit()
-                    raise e
-                req.last_retry_status = response.status_code
-                if 200 <= response.status_code < 300:
-                    req.auto_retry_enabled = False
-                    req.next_retry_at = None
-                    session.add(req)
-                    await session.commit()
-                    return {"status": "success", "forward_url": fallback_url, "response_status": response.status_code}
+            req.forward_error = str(e)
+            try:
+                fallback_result = await deliver_fallback_if_final(req.forward_error)
+            except httpx.RequestError as fallback_error:
+                req.forward_error = f"{req.forward_error}; fallback failed: {fallback_error}"
+                fallback_result = None
+            if fallback_result:
+                return fallback_result
             session.add(req)
             await session.commit()
+            if req.retry_count >= max_attempts:
+                await _notify_webhook_issue(ws, "Webhook forward failed", req.forward_error)
             raise e
 
 register_job_handler("webhookmonitor", "forward_webhook", process_webhook_forward)
 
 
+@ingestion_router.api_route("/in/{slug}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 @ingestion_router.api_route("/hook/{slug}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def ingest_webhook(
     slug: str,
@@ -1084,6 +1775,8 @@ async def ingest_webhook(
     ep = result.scalar_one_or_none()
     if not ep:
         raise HTTPException(status_code=404, detail="Endpoint not found")
+    if request.method.upper() not in _allowed_methods(ep):
+        raise HTTPException(status_code=405, detail="HTTP method is not enabled for this endpoint")
 
     content_length = request.headers.get("content-length")
     if content_length:
@@ -1094,10 +1787,10 @@ async def ingest_webhook(
             raise HTTPException(status_code=400, detail="Invalid content-length header")
 
     plan, limits = await get_webhookmonitor_limits_for_user_id(session, ep.user_id)
-    since = datetime.utcnow() - timedelta(minutes=1)
+    since = _utc_now_naive() - timedelta(days=1)
     count_result = await session.execute(
         select(func.count(WebhookRequest.id)).where(
-            WebhookRequest.endpoint_id == ep.id,
+            WebhookRequest.user_id == ep.user_id,
             WebhookRequest.received_at >= since,
         )
     )
@@ -1110,6 +1803,11 @@ async def ingest_webhook(
 
     body = raw_body.decode("utf-8", errors="replace")
     headers = dict(request.headers)
+    settings_result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == ep.user_id))
+    settings = settings_result.scalar_one_or_none()
+    signature_result = _signature_for_settings(settings, headers, raw_body)
+    query_params = dict(request.query_params.multi_items())
+    ip_address = request.client.host if request.client else ""
 
     background_tasks.add_task(
         _persist_and_forward,
@@ -1119,8 +1817,15 @@ async def ingest_webhook(
         path=str(request.url.path),
         headers=headers,
         body=body,
+        query_params=query_params,
+        ip_address=ip_address,
+        signature_result=signature_result,
     )
-    return {"status": "received"}
+    return {
+        "status": "received",
+        "signature_valid": signature_result.get("valid"),
+        "signature_error": signature_result.get("error", ""),
+    }
 
 
 # ---------------------------------------------------------------------------

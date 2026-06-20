@@ -1,0 +1,1 @@
+"""WebhookMonitor CLI package."""

@@ -20,7 +20,12 @@ class PriceTrackrLimits:
 
 @dataclass(frozen=True)
 class WebhookMonitorLimits:
-    webhooks_per_minute: int
+    max_endpoints: int
+    events_per_day: int
+    retention_days: int
+    replay_enabled: bool
+    diff_enabled: bool
+    search_enabled: bool
 
 
 PRICETRACKR_LIMITS: dict[PlanName, PriceTrackrLimits] = {
@@ -29,8 +34,22 @@ PRICETRACKR_LIMITS: dict[PlanName, PriceTrackrLimits] = {
 }
 
 WEBHOOKMONITOR_LIMITS: dict[PlanName, WebhookMonitorLimits] = {
-    "trial": WebhookMonitorLimits(webhooks_per_minute=30),
-    "paid": WebhookMonitorLimits(webhooks_per_minute=300),
+    "trial": WebhookMonitorLimits(
+        max_endpoints=1,
+        events_per_day=100,
+        retention_days=7,
+        replay_enabled=False,
+        diff_enabled=False,
+        search_enabled=False,
+    ),
+    "paid": WebhookMonitorLimits(
+        max_endpoints=10,
+        events_per_day=10_000,
+        retention_days=30,
+        replay_enabled=True,
+        diff_enabled=True,
+        search_enabled=True,
+    ),
 }
 
 
@@ -101,11 +120,22 @@ def reject_tracker_count_if_needed(plan: PlanName, limits: PriceTrackrLimits, ac
 
 
 def reject_webhook_rate_if_needed(plan: PlanName, limits: WebhookMonitorLimits, recent_count: int) -> None:
-    if recent_count >= limits.webhooks_per_minute:
+    if recent_count >= limits.events_per_day:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(
                 f"{_plan_label(plan)} plan is limited to "
-                f"{limits.webhooks_per_minute} webhooks per minute."
+                f"{limits.events_per_day} events per day."
+            ),
+        )
+
+
+def reject_webhook_endpoint_count_if_needed(plan: PlanName, limits: WebhookMonitorLimits, endpoint_count: int) -> None:
+    if endpoint_count >= limits.max_endpoints:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"{_plan_label(plan)} plan is limited to "
+                f"{limits.max_endpoints} webhook endpoint{'s' if limits.max_endpoints != 1 else ''}."
             ),
         )

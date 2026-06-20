@@ -90,7 +90,6 @@ class WebhookMonitorMoatTests(unittest.TestCase):
         )
 
         response = self._client([
-            [SimpleNamespace(id=7, user_id=42)],
             [new_request],
             [base_request],
         ]).get("/webhooks/requests/2/diff?base_request_id=1")
@@ -134,7 +133,6 @@ class WebhookMonitorMoatTests(unittest.TestCase):
         }
 
         response = self._client([
-            [SimpleNamespace(id=7, user_id=42)],
             [request],
         ]).post("/webhooks/requests/2/validate-schema", json={"schema": schema})
 
@@ -154,7 +152,6 @@ class WebhookMonitorMoatTests(unittest.TestCase):
         )
 
         response = self._client([
-            [SimpleNamespace(id=7, user_id=42)],
             [request],
         ]).get("/webhooks/requests/2/export?format=curl")
 
@@ -177,7 +174,6 @@ class WebhookMonitorMoatTests(unittest.TestCase):
         )
 
         response = self._client([
-            [SimpleNamespace(id=7, user_id=42)],
             [request],
         ]).get("/webhooks/requests/2/export?format=postman")
 

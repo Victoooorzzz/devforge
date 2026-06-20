@@ -21,9 +21,18 @@ type Profile = SettingsSubscriptionProfile & {
 
 type WebhookSettings = {
   forward_url: string;
+  fallback_url: string;
   expected_interval_minutes: number;
   alert_email: string;
+  slack_webhook_url: string;
+  discord_webhook_url: string;
   auto_retry_enabled: boolean;
+  retry_max_attempts: number;
+  retry_backoff_seconds: number[];
+  forward_timeout_seconds: number;
+  signature_provider: string;
+  signature_secret: string;
+  signature_secret_set?: boolean;
 };
 
 type ForwardRule = {
@@ -61,9 +70,18 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState<Profile>(emptyProfile);
   const [webhookSettings, setWebhookSettings] = useState<WebhookSettings>({
     forward_url: "",
+    fallback_url: "",
     expected_interval_minutes: 0,
     alert_email: "",
+    slack_webhook_url: "",
+    discord_webhook_url: "",
     auto_retry_enabled: false,
+    retry_max_attempts: 3,
+    retry_backoff_seconds: [1, 2, 4],
+    forward_timeout_seconds: 30,
+    signature_provider: "",
+    signature_secret: "",
+    signature_secret_set: false,
   });
   const [forwardRules, setForwardRules] = useState<ForwardRule[]>([]);
   const [newForwardRule, setNewForwardRule] = useState<ForwardRuleDraft>(emptyForwardRule);
@@ -102,9 +120,18 @@ export default function SettingsPage() {
         });
         setWebhookSettings({
           forward_url: webhookResponse.data.forward_url || "",
+          fallback_url: webhookResponse.data.fallback_url || "",
           expected_interval_minutes: webhookResponse.data.expected_interval_minutes || 0,
           alert_email: webhookResponse.data.alert_email || "",
+          slack_webhook_url: webhookResponse.data.slack_webhook_url || "",
+          discord_webhook_url: webhookResponse.data.discord_webhook_url || "",
           auto_retry_enabled: Boolean(webhookResponse.data.auto_retry_enabled),
+          retry_max_attempts: webhookResponse.data.retry_max_attempts || 3,
+          retry_backoff_seconds: webhookResponse.data.retry_backoff_seconds || [1, 2, 4],
+          forward_timeout_seconds: webhookResponse.data.forward_timeout_seconds || 30,
+          signature_provider: webhookResponse.data.signature_provider || "",
+          signature_secret: "",
+          signature_secret_set: Boolean(webhookResponse.data.signature_secret_set),
         });
         setForwardRules(rulesResponse.data);
       } catch (error) {
@@ -153,9 +180,17 @@ export default function SettingsPage() {
     try {
       await apiClient.put("/settings/webhook-prefs", {
         forward_url: webhookSettings.forward_url,
+        fallback_url: webhookSettings.fallback_url,
         expected_interval_minutes: webhookSettings.expected_interval_minutes,
         alert_email: webhookSettings.alert_email,
+        slack_webhook_url: webhookSettings.slack_webhook_url,
+        discord_webhook_url: webhookSettings.discord_webhook_url,
         auto_retry_enabled: webhookSettings.auto_retry_enabled,
+        retry_max_attempts: webhookSettings.retry_max_attempts,
+        retry_backoff_seconds: webhookSettings.retry_backoff_seconds,
+        forward_timeout_seconds: webhookSettings.forward_timeout_seconds,
+        signature_provider: webhookSettings.signature_provider,
+        signature_secret: webhookSettings.signature_secret,
       });
       setToast({ tone: "success", message: "Webhook preferences updated successfully." });
     } catch (error) {
@@ -376,6 +411,81 @@ export default function SettingsPage() {
 
               <div>
                 <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                  Fallback URL
+                </label>
+                <input
+                  type="url"
+                  value={webhookSettings.fallback_url}
+                  onChange={(event) => setWebhookSettings({ ...webhookSettings, fallback_url: event.target.value })}
+                  className="input-field w-full"
+                  placeholder="https://backup.example.com/webhooks"
+                  disabled={savingWebhook}
+                />
+                <p className="mt-1.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                  Used only after configured retry attempts are exhausted.
+                </p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                    Retry Attempts
+                  </label>
+                  <select
+                    value={webhookSettings.retry_max_attempts}
+                    onChange={(event) =>
+                      setWebhookSettings({ ...webhookSettings, retry_max_attempts: Number(event.target.value) })
+                    }
+                    className="input-field w-full"
+                    disabled={savingWebhook}
+                  >
+                    {[1, 2, 3].map((attempts) => (
+                      <option key={attempts} value={attempts}>{attempts}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                    Backoff Seconds
+                  </label>
+                  <input
+                    value={webhookSettings.retry_backoff_seconds.join(",")}
+                    onChange={(event) =>
+                      setWebhookSettings({
+                        ...webhookSettings,
+                        retry_backoff_seconds: event.target.value
+                          .split(",")
+                          .map((value) => Number(value.trim()))
+                          .filter((value) => Number.isFinite(value) && value > 0)
+                          .slice(0, 3),
+                      })
+                    }
+                    className="input-field w-full"
+                    placeholder="1,2,4"
+                    disabled={savingWebhook}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                    Forward Timeout
+                  </label>
+                  <select
+                    value={webhookSettings.forward_timeout_seconds}
+                    onChange={(event) =>
+                      setWebhookSettings({ ...webhookSettings, forward_timeout_seconds: Number(event.target.value) })
+                    }
+                    className="input-field w-full"
+                    disabled={savingWebhook}
+                  >
+                    {[10, 30, 60].map((seconds) => (
+                      <option key={seconds} value={seconds}>{seconds}s</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
                   Silence Alert Interval
                 </label>
                 <input
@@ -409,6 +519,70 @@ export default function SettingsPage() {
                   placeholder="alerts@example.com"
                   disabled={savingWebhook}
                 />
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                    Slack Webhook URL
+                  </label>
+                  <input
+                    type="url"
+                    value={webhookSettings.slack_webhook_url}
+                    onChange={(event) => setWebhookSettings({ ...webhookSettings, slack_webhook_url: event.target.value })}
+                    className="input-field w-full"
+                    placeholder="https://hooks.slack.com/services/..."
+                    disabled={savingWebhook}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                    Discord Webhook URL
+                  </label>
+                  <input
+                    type="url"
+                    value={webhookSettings.discord_webhook_url}
+                    onChange={(event) => setWebhookSettings({ ...webhookSettings, discord_webhook_url: event.target.value })}
+                    className="input-field w-full"
+                    placeholder="https://discord.com/api/webhooks/..."
+                    disabled={savingWebhook}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                    Signature Provider
+                  </label>
+                  <select
+                    value={webhookSettings.signature_provider}
+                    onChange={(event) =>
+                      setWebhookSettings({ ...webhookSettings, signature_provider: event.target.value })
+                    }
+                    className="input-field w-full"
+                    disabled={savingWebhook}
+                  >
+                    <option value="">Disabled</option>
+                    <option value="stripe">Stripe</option>
+                    <option value="github">GitHub</option>
+                    <option value="shopify">Shopify</option>
+                    <option value="generic">Generic X-Signature</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                    Signature Secret
+                  </label>
+                  <input
+                    type="password"
+                    value={webhookSettings.signature_secret}
+                    onChange={(event) => setWebhookSettings({ ...webhookSettings, signature_secret: event.target.value })}
+                    className="input-field w-full"
+                    placeholder={webhookSettings.signature_secret_set ? "Secret already saved" : "whsec_..."}
+                    disabled={savingWebhook}
+                  />
+                </div>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

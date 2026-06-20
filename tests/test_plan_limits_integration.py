@@ -17,7 +17,7 @@ from backend_core.database import get_session
 
 
 TRIAL_PRICE_TRACKERS = 5
-TRIAL_WEBHOOKS_PER_MINUTE = 30
+TRIAL_WEBHOOKS_PER_DAY = 100
 LEGACY_WEBHOOKS_PER_MINUTE = 60
 
 
@@ -67,6 +67,8 @@ class _QueryAwareSession:
             return _FakeExecuteResult(scalar=self.recent_webhook_count)
         if "FROM webhook_endpoints" in query_text:
             return _FakeExecuteResult(rows=[self.endpoint] if self.endpoint else [])
+        if "FROM webhook_settings" in query_text:
+            return _FakeExecuteResult(rows=[])
         if "FROM users" in query_text:
             return _FakeExecuteResult(rows=[self.user] if self.user else [])
         if "FROM user_product_access" in query_text:
@@ -173,12 +175,12 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
         self.assertIn("5 active trackers", response.json()["detail"])
         self.assertEqual(calls, {"price": 0, "stock": 0})
 
-    def test_webhookmonitor_trial_rejects_ingest_above_trial_minute_limit(self):
+    def test_webhookmonitor_trial_rejects_ingest_above_daily_limit(self):
         endpoint = SimpleNamespace(id=10, user_id=77, slug="trial-slug")
         session = _QueryAwareSession(
             user=_trial_user(77),
             endpoint=endpoint,
-            recent_webhook_count=TRIAL_WEBHOOKS_PER_MINUTE,
+            recent_webhook_count=TRIAL_WEBHOOKS_PER_DAY,
         )
 
         async def override_session():
@@ -186,10 +188,11 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
 
         webhook_main.app.dependency_overrides[get_session] = override_session
 
-        response = TestClient(webhook_main.app).post("/hook/trial-slug", json={"ok": True})
+        response = TestClient(webhook_main.app).post("/in/trial-slug", json={"ok": True})
 
         self.assertEqual(response.status_code, 429)
         self.assertIn("Trial plan", response.json()["detail"])
+        self.assertIn("100 events per day", response.json()["detail"])
 
     def test_webhookmonitor_paid_allows_above_legacy_sixty_per_minute(self):
         endpoint = SimpleNamespace(id=10, user_id=77, slug="paid-slug")
@@ -211,15 +214,17 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
         webhook_main._persist_and_forward = fake_persist_and_forward
         webhook_main.app.dependency_overrides[get_session] = override_session
         try:
-            response = TestClient(webhook_main.app).post("/hook/paid-slug", json={"ok": True})
+            response = TestClient(webhook_main.app).post("/in/paid-slug", json={"ok": True})
         finally:
             webhook_main._persist_and_forward = original_persist
             webhook_main.app.dependency_overrides.clear()
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "received"})
+        self.assertEqual(response.json()["status"], "received")
         self.assertEqual(len(persisted), 1)
         self.assertEqual(persisted[0]["user_id"], 77)
+        self.assertEqual(persisted[0]["query_params"], {})
+        self.assertTrue(persisted[0]["ip_address"])
 
 
 if __name__ == "__main__":

@@ -88,7 +88,7 @@ async def complete_job(session: AsyncSession, job_id: uuid.UUID, result: Any):
     await session.commit()
 
 async def fail_job(session: AsyncSession, job_id: uuid.UUID, error_message: str):
-    job_query = text("SELECT attempts, max_attempts FROM system_outbox WHERE id = :job_id FOR UPDATE")
+    job_query = text("SELECT attempts, max_attempts, payload FROM system_outbox WHERE id = :job_id FOR UPDATE")
     res = await session.execute(job_query, {"job_id": job_id})
     job = res.fetchone()
     if not job:
@@ -99,8 +99,19 @@ async def fail_job(session: AsyncSession, job_id: uuid.UUID, error_message: str)
     
     status = 'failed' if attempts >= max_attempts else 'pending'
     
-    # Calculate backoff (exponential: 5min, 25min, etc)
-    next_retry = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5 ** attempts)
+    # Default backoff remains unchanged; jobs may opt into explicit seconds.
+    retry_delay = timedelta(minutes=5 ** attempts)
+    try:
+        import json
+        payload = job.payload
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        backoff_seconds = payload.get("backoff_seconds") if isinstance(payload, dict) else None
+        if isinstance(backoff_seconds, list) and backoff_seconds:
+            retry_delay = timedelta(seconds=int(backoff_seconds[min(attempts - 1, len(backoff_seconds) - 1)]))
+    except Exception:
+        retry_delay = timedelta(minutes=5 ** attempts)
+    next_retry = datetime.now(timezone.utc).replace(tzinfo=None) + retry_delay
     
     update_query = text("""
         UPDATE system_outbox
