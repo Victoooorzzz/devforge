@@ -78,6 +78,20 @@ class WebhookSettings(SQLModel, table=True):
     auto_retry_enabled: bool = Field(default=False)     # enable auto exponential backoff
 
 
+class WebhookForwardRule(SQLModel, table=True):
+    __tablename__ = "webhook_forward_rules"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    name: str
+    match_path: str
+    match_equals: str
+    forward_url: str
+    fallback_url: str = Field(default="")
+    auto_retry_enabled: bool = Field(default=False)
+    is_active: bool = Field(default=True, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
@@ -95,6 +109,16 @@ class RetryPayload(BaseModel):
 
 class SchemaValidationPayload(BaseModel):
     json_schema: dict[str, Any] = PydanticField(alias="schema")
+
+
+class ForwardRuleCreate(BaseModel):
+    name: str
+    match_path: str
+    match_equals: str
+    forward_url: str
+    fallback_url: str = ""
+    auto_retry_enabled: bool = False
+    is_active: bool = True
 
 
 def _matches_log_status(request: WebhookRequest, status: str) -> bool:
@@ -201,6 +225,62 @@ def _parse_request_body_json(request: WebhookRequest) -> Any:
 
 def _schema_error_path(error) -> str:
     return _json_path(list(error.absolute_path))
+
+
+def _serialize_forward_rule(rule: WebhookForwardRule) -> dict[str, Any]:
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "match_path": rule.match_path,
+        "match_equals": rule.match_equals,
+        "forward_url": rule.forward_url,
+        "fallback_url": rule.fallback_url,
+        "auto_retry_enabled": rule.auto_retry_enabled,
+        "is_active": rule.is_active,
+        "created_at": rule.created_at.isoformat() if rule.created_at else None,
+    }
+
+
+def _validate_forward_rule_urls(forward_url: str, fallback_url: str = "") -> None:
+    if not is_public_http_url(forward_url):
+        raise HTTPException(status_code=400, detail="Forward URL must be a public http(s) URL")
+    if fallback_url and not is_public_http_url(fallback_url):
+        raise HTTPException(status_code=400, detail="Fallback URL must be a public http(s) URL")
+
+
+def _extract_match_value(payload: Any, match_path: str) -> Any:
+    normalized = match_path.strip().removeprefix("$.").removeprefix("$")
+    if not normalized:
+        return payload
+
+    current = payload
+    for part in normalized.split("."):
+        if not part:
+            continue
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list) and part.isdigit():
+            index = int(part)
+            current = current[index] if 0 <= index < len(current) else None
+        else:
+            return None
+    return current
+
+
+def _rule_matches_body(rule: WebhookForwardRule, body: str) -> bool:
+    try:
+        payload = json.loads(body or "{}")
+    except Exception:
+        return False
+    value = _extract_match_value(payload, rule.match_path)
+    return str(value) == rule.match_equals
+
+
+def _select_forward_rule(rules: list[WebhookForwardRule], body: str) -> WebhookForwardRule | None:
+    for rule in rules:
+        if rule.is_active and _rule_matches_body(rule, body):
+            return rule
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +433,70 @@ async def delete_requests(
     await session.execute(delete(WebhookRequest).where(WebhookRequest.endpoint_id == ep.id))
     await session.flush()
     return {"status": "deleted", "message": "All logs cleared"}
+
+
+@webhook_router.get("/forward-rules")
+async def list_forward_rules(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        select(WebhookForwardRule)
+        .where(WebhookForwardRule.user_id == user.id)
+        .order_by(WebhookForwardRule.id.desc())
+    )
+    return [_serialize_forward_rule(rule) for rule in result.scalars().all()]
+
+
+@webhook_router.post("/forward-rules")
+async def create_forward_rule(
+    body: ForwardRuleCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    name = body.name.strip()
+    match_path = body.match_path.strip()
+    match_equals = body.match_equals.strip()
+    forward_url = body.forward_url.strip()
+    fallback_url = body.fallback_url.strip()
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Rule name is required")
+    if not match_path:
+        raise HTTPException(status_code=400, detail="Match path is required")
+    if not match_equals:
+        raise HTTPException(status_code=400, detail="Match value is required")
+    _validate_forward_rule_urls(forward_url, fallback_url)
+
+    rule = WebhookForwardRule(
+        user_id=user.id,
+        name=name,
+        match_path=match_path,
+        match_equals=match_equals,
+        forward_url=forward_url,
+        fallback_url=fallback_url,
+        auto_retry_enabled=body.auto_retry_enabled,
+        is_active=body.is_active,
+    )
+    session.add(rule)
+    await session.flush()
+    return _serialize_forward_rule(rule)
+
+
+@webhook_router.delete("/forward-rules/{rule_id}")
+async def delete_forward_rule(
+    rule_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await session.execute(
+        delete(WebhookForwardRule).where(
+            WebhookForwardRule.id == rule_id,
+            WebhookForwardRule.user_id == user.id,
+        )
+    )
+    await session.flush()
+    return {"status": "deleted"}
 
 
 async def _get_user_endpoint(user: User, session: AsyncSession) -> WebhookEndpoint:
@@ -659,20 +803,49 @@ async def _persist_and_forward(endpoint_id, user_id, method, path, headers, body
         session.add(req)
         await session.flush()
 
-        settings_result = await session.execute(
-            select(WebhookSettings).where(WebhookSettings.user_id == user_id)
+        rules_result = await session.execute(
+            select(WebhookForwardRule).where(
+                WebhookForwardRule.user_id == user_id,
+                WebhookForwardRule.is_active == True,  # noqa: E712
+            )
         )
-        user_settings = settings_result.scalar_one_or_none()
+        matched_rule = _select_forward_rule(list(rules_result.scalars().all()), body)
 
-        if user_settings and user_settings.forward_url:
+        if matched_rule:
+            req.auto_retry_enabled = matched_rule.auto_retry_enabled
             job = SystemOutbox(
                 app_name="webhookmonitor",
                 job_type="forward_webhook",
-                payload={"request_id": req.id},
+                payload={
+                    "request_id": req.id,
+                    "forward_rule_id": matched_rule.id,
+                    "forward_url": matched_rule.forward_url,
+                    "fallback_url": matched_rule.fallback_url,
+                },
                 status="pending",
-                max_attempts=6 if user_settings.auto_retry_enabled else 1
+                max_attempts=6 if matched_rule.auto_retry_enabled else 1
             )
             session.add(job)
+        else:
+            settings_result = await session.execute(
+                select(WebhookSettings).where(WebhookSettings.user_id == user_id)
+            )
+            user_settings = settings_result.scalar_one_or_none()
+
+            if user_settings and user_settings.forward_url:
+                req.auto_retry_enabled = user_settings.auto_retry_enabled
+                job = SystemOutbox(
+                    app_name="webhookmonitor",
+                    job_type="forward_webhook",
+                    payload={
+                        "request_id": req.id,
+                        "forward_url": user_settings.forward_url,
+                        "fallback_url": "",
+                    },
+                    status="pending",
+                    max_attempts=6 if user_settings.auto_retry_enabled else 1
+                )
+                session.add(job)
             
         await session.commit()
 
@@ -685,40 +858,60 @@ async def _persist_and_forward(endpoint_id, user_id, method, path, headers, body
 async def process_webhook_forward(payload: dict):
     request_id = payload.get("request_id")
     payload_override = payload.get("payload_override")
+    forward_url = (payload.get("forward_url") or "").strip()
+    fallback_url = (payload.get("fallback_url") or "").strip()
     
     async with get_managed_session() as session:
         req_result = await session.execute(select(WebhookRequest).where(WebhookRequest.id == request_id))
         req = req_result.scalar_one_or_none()
         if not req:
             return {"status": "skipped", "reason": "request not found"}
-            
-        ws_result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == req.user_id))
-        ws = ws_result.scalar_one_or_none()
-        if not ws or not ws.forward_url:
+
+        if not forward_url:
+            ws_result = await session.execute(select(WebhookSettings).where(WebhookSettings.user_id == req.user_id))
+            ws = ws_result.scalar_one_or_none()
+            forward_url = ws.forward_url if ws else ""
+
+        if not forward_url:
             return {"status": "skipped", "reason": "no forward url"}
-        if not is_public_http_url(ws.forward_url):
+        if not is_public_http_url(forward_url):
             return {"status": "skipped", "reason": "unsafe forward url"}
+        if fallback_url and not is_public_http_url(fallback_url):
+            return {"status": "skipped", "reason": "unsafe fallback url"}
             
         headers = json.loads(req.headers_json)
         safe_headers = {
             k: v for k, v in headers.items()
             if k.lower() not in ("host", "content-length", "transfer-encoding", "connection")
         }
-        
+
         body_to_send = payload_override if payload_override is not None else req.body
-        
-        try:
+
+        async def deliver(url: str):
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.request(
+                return await client.request(
                     method=req.method,
-                    url=ws.forward_url,
+                    url=url,
                     headers=safe_headers,
                     content=body_to_send.encode("utf-8"),
                 )
-            
+
+        try:
+            response = await deliver(forward_url)
             req.last_retry_status = response.status_code
             is_success = 200 <= response.status_code < 300
-            
+
+            if not is_success and fallback_url:
+                req.retry_count += 1
+                response = await deliver(fallback_url)
+                req.last_retry_status = response.status_code
+                if 200 <= response.status_code < 300:
+                    req.auto_retry_enabled = False
+                    req.next_retry_at = None
+                    session.add(req)
+                    await session.commit()
+                    return {"status": "success", "forward_url": fallback_url, "response_status": response.status_code}
+
             if not is_success:
                 req.retry_count += 1
                 session.add(req)
@@ -731,10 +924,24 @@ async def process_webhook_forward(payload: dict):
             session.add(req)
             await session.commit()
             
-            return {"status": "success", "forward_url": ws.forward_url, "response_status": response.status_code}
+            return {"status": "success", "forward_url": forward_url, "response_status": response.status_code}
             
         except httpx.RequestError as e:
             req.retry_count += 1
+            if fallback_url:
+                try:
+                    response = await deliver(fallback_url)
+                except httpx.RequestError:
+                    session.add(req)
+                    await session.commit()
+                    raise e
+                req.last_retry_status = response.status_code
+                if 200 <= response.status_code < 300:
+                    req.auto_retry_enabled = False
+                    req.next_retry_at = None
+                    session.add(req)
+                    await session.commit()
+                    return {"status": "success", "forward_url": fallback_url, "response_status": response.status_code}
             session.add(req)
             await session.commit()
             raise e

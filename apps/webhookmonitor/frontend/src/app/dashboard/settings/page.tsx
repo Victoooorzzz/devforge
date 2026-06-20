@@ -26,6 +26,19 @@ type WebhookSettings = {
   auto_retry_enabled: boolean;
 };
 
+type ForwardRule = {
+  id: number;
+  name: string;
+  match_path: string;
+  match_equals: string;
+  forward_url: string;
+  fallback_url: string;
+  auto_retry_enabled: boolean;
+  is_active: boolean;
+};
+
+type ForwardRuleDraft = Omit<ForwardRule, "id" | "is_active">;
+
 const emptyProfile: Profile = {
   name: "",
   email: "",
@@ -33,6 +46,15 @@ const emptyProfile: Profile = {
   is_on_trial: false,
   has_access: false,
   trial_ends_at: null,
+};
+
+const emptyForwardRule: ForwardRuleDraft = {
+  name: "",
+  match_path: "event",
+  match_equals: "",
+  forward_url: "",
+  fallback_url: "",
+  auto_retry_enabled: true,
 };
 
 export default function SettingsPage() {
@@ -43,10 +65,14 @@ export default function SettingsPage() {
     alert_email: "",
     auto_retry_enabled: false,
   });
+  const [forwardRules, setForwardRules] = useState<ForwardRule[]>([]);
+  const [newForwardRule, setNewForwardRule] = useState<ForwardRuleDraft>(emptyForwardRule);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingWebhook, setSavingWebhook] = useState(false);
+  const [savingRule, setSavingRule] = useState(false);
+  const [deletingRuleId, setDeletingRuleId] = useState<number | null>(null);
   const [managingSubscription, setManagingSubscription] = useState(false);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [clearingHistory, setClearingHistory] = useState(false);
@@ -57,9 +83,10 @@ export default function SettingsPage() {
 
     async function loadSettings() {
       try {
-        const [profileResponse, webhookResponse] = await Promise.all([
+        const [profileResponse, webhookResponse, rulesResponse] = await Promise.all([
           apiClient.get<Profile>("/auth/profile"),
           apiClient.get<WebhookSettings>("/settings/webhook-prefs"),
+          apiClient.get<ForwardRule[]>("/webhooks/forward-rules"),
         ]);
 
         if (!mounted) return;
@@ -79,6 +106,7 @@ export default function SettingsPage() {
           alert_email: webhookResponse.data.alert_email || "",
           auto_retry_enabled: Boolean(webhookResponse.data.auto_retry_enabled),
         });
+        setForwardRules(rulesResponse.data);
       } catch (error) {
         const message = getSettingsErrorMessage(error, "We could not load your settings.");
         if (!mounted) return;
@@ -137,6 +165,56 @@ export default function SettingsPage() {
       });
     } finally {
       setSavingWebhook(false);
+    }
+  };
+
+  const handleForwardRuleSave = async (event: FormEvent) => {
+    event.preventDefault();
+    if (savingRule) return;
+
+    setSavingRule(true);
+    trackEvent("settings_updated", { section: "conditional_forwarding" });
+
+    try {
+      const { data } = await apiClient.post<ForwardRule>("/webhooks/forward-rules", {
+        name: newForwardRule.name,
+        match_path: newForwardRule.match_path,
+        match_equals: newForwardRule.match_equals,
+        forward_url: newForwardRule.forward_url,
+        fallback_url: newForwardRule.fallback_url,
+        auto_retry_enabled: newForwardRule.auto_retry_enabled,
+        is_active: true,
+      });
+      setForwardRules([data, ...forwardRules]);
+      setNewForwardRule(emptyForwardRule);
+      setToast({ tone: "success", message: "Conditional forwarding rule saved." });
+    } catch (error) {
+      setToast({
+        tone: "error",
+        message: getSettingsErrorMessage(error, "Failed to save conditional forwarding rule."),
+      });
+    } finally {
+      setSavingRule(false);
+    }
+  };
+
+  const handleDeleteForwardRule = async (ruleId: number) => {
+    if (deletingRuleId) return;
+
+    setDeletingRuleId(ruleId);
+    trackEvent("settings_updated", { section: "conditional_forwarding_delete" });
+
+    try {
+      await apiClient.delete(`/webhooks/forward-rules/${ruleId}`);
+      setForwardRules(forwardRules.filter((rule) => rule.id !== ruleId));
+      setToast({ tone: "success", message: "Conditional forwarding rule deleted." });
+    } catch (error) {
+      setToast({
+        tone: "error",
+        message: getSettingsErrorMessage(error, "Failed to delete conditional forwarding rule."),
+      });
+    } finally {
+      setDeletingRuleId(null);
     }
   };
 
@@ -370,6 +448,164 @@ export default function SettingsPage() {
                 {savingWebhook ? "Saving..." : "Save Preferences"}
               </button>
             </form>
+
+            <div className="mb-6 pt-6" style={{ borderTop: "1px solid var(--color-border)" }}>
+              <h3 className="mb-2 text-base font-medium" style={{ color: "var(--color-text)" }}>
+                Conditional Forwarding
+              </h3>
+              <p className="mb-4 text-sm leading-6" style={{ color: "var(--color-text-secondary)" }}>
+                Route matched payloads to a primary URL and optionally fail over to a fallback URL.
+              </p>
+
+              <form onSubmit={handleForwardRuleSave} className="max-w-2xl space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                      Rule Name
+                    </label>
+                    <input
+                      value={newForwardRule.name}
+                      onChange={(event) => setNewForwardRule({ ...newForwardRule, name: event.target.value })}
+                      className="input-field w-full"
+                      placeholder="Stripe paid events"
+                      disabled={savingRule}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                      Match Path
+                    </label>
+                    <input
+                      value={newForwardRule.match_path}
+                      onChange={(event) => setNewForwardRule({ ...newForwardRule, match_path: event.target.value })}
+                      className="input-field w-full"
+                      placeholder="event"
+                      disabled={savingRule}
+                      required
+                    />
+                    <p className="mt-1.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                      Use dot paths such as event or data.type.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                      Match Value
+                    </label>
+                    <input
+                      value={newForwardRule.match_equals}
+                      onChange={(event) => setNewForwardRule({ ...newForwardRule, match_equals: event.target.value })}
+                      className="input-field w-full"
+                      placeholder="invoice.paid"
+                      disabled={savingRule}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                      Primary Forward URL
+                    </label>
+                    <input
+                      type="url"
+                      value={newForwardRule.forward_url}
+                      onChange={(event) => setNewForwardRule({ ...newForwardRule, forward_url: event.target.value })}
+                      className="input-field w-full"
+                      placeholder="https://api.example.com/webhooks/paid"
+                      disabled={savingRule}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                      Fallback URL
+                    </label>
+                    <input
+                      type="url"
+                      value={newForwardRule.fallback_url}
+                      onChange={(event) => setNewForwardRule({ ...newForwardRule, fallback_url: event.target.value })}
+                      className="input-field w-full"
+                      placeholder="https://backup.example.com/webhooks"
+                      disabled={savingRule}
+                    />
+                  </div>
+                  <div className="flex flex-col justify-end gap-3">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={newForwardRule.auto_retry_enabled}
+                      onClick={() =>
+                        setNewForwardRule({
+                          ...newForwardRule,
+                          auto_retry_enabled: !newForwardRule.auto_retry_enabled,
+                        })
+                      }
+                      className="flex items-center justify-between rounded-lg px-4 py-3 text-left text-sm transition-colors"
+                      style={{
+                        backgroundColor: "var(--color-surface)",
+                        border: "1px solid var(--color-border)",
+                        color: "var(--color-text)",
+                      }}
+                      disabled={savingRule}
+                    >
+                      <span>Retry matched forwards</span>
+                      <span
+                        className="relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors"
+                        style={{
+                          backgroundColor: newForwardRule.auto_retry_enabled
+                            ? "var(--color-accent)"
+                            : "var(--color-border)",
+                        }}
+                      >
+                        <span
+                          className="inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200"
+                          style={{ transform: newForwardRule.auto_retry_enabled ? "translateX(20px)" : "translateX(0)" }}
+                        />
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <button type="submit" className="btn-primary" disabled={savingRule}>
+                  {savingRule ? "Saving Rule..." : "Save Conditional Rule"}
+                </button>
+              </form>
+
+              {forwardRules.length > 0 ? (
+                <div className="mt-6 space-y-3">
+                  {forwardRules.map((rule) => (
+                    <div
+                      key={rule.id}
+                      className="rounded-lg p-4"
+                      style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}
+                    >
+                      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>
+                            {rule.name}
+                          </p>
+                          <p className="mt-1 font-mono text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                            {rule.match_path} = {rule.match_equals}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteForwardRule(rule.id)}
+                          className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-500 transition-colors hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={deletingRuleId === rule.id}
+                        >
+                          {deletingRuleId === rule.id ? "Deleting..." : "Delete Rule"}
+                        </button>
+                      </div>
+                      <div className="space-y-1 font-mono text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                        <p className="break-all">Primary: {rule.forward_url}</p>
+                        {rule.fallback_url ? <p className="break-all">Fallback: {rule.fallback_url}</p> : null}
+                        <p>Retry: {rule.auto_retry_enabled ? "enabled" : "disabled"}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
 
             <div className="pt-6" style={{ borderTop: "1px solid var(--color-border)" }}>
               <h3 className="mb-2 text-base font-medium text-red-500">Danger Zone</h3>
