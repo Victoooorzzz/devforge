@@ -42,6 +42,32 @@ interface WebhookSummary {
   auto_retry_enabled: number;
 }
 
+interface DiffItem {
+  path: string;
+  value?: unknown;
+  old_value?: unknown;
+  new_value?: unknown;
+}
+
+interface DiffBucket {
+  added: DiffItem[];
+  removed: DiffItem[];
+  changed: DiffItem[];
+}
+
+interface RequestDiff {
+  request_id: number;
+  base_request_id: number;
+  headers: DiffBucket;
+  body: DiffBucket;
+}
+
+interface SchemaValidationResult {
+  request_id: number;
+  valid: boolean;
+  errors: Array<{ path: string; message: string; validator: string }>;
+}
+
 export default function DashboardPage() {
   const [requests, setRequests]       = useState<WebhookRequest[]>([]);
   const [selected, setSelected]       = useState<WebhookRequest | null>(null);
@@ -51,6 +77,11 @@ export default function DashboardPage() {
   const [retryPayload, setRetryPayload] = useState("");
   const [isEditingPayload, setIsEditingPayload] = useState(false);
   const [isRetrying, setIsRetrying]   = useState(false);
+  const [isDiffing, setIsDiffing]     = useState(false);
+  const [diffResult, setDiffResult]   = useState<RequestDiff | null>(null);
+  const [schemaText, setSchemaText]   = useState('{\n  "type": "object"\n}');
+  const [isValidatingSchema, setIsValidatingSchema] = useState(false);
+  const [schemaResult, setSchemaResult] = useState<SchemaValidationResult | null>(null);
   const [exportOpen, setExportOpen]   = useState(false);
   const [summary, setSummary]         = useState<WebhookSummary | null>(null);
   const [logStatus, setLogStatus]     = useState<LogStatusFilter>("all");
@@ -103,6 +134,8 @@ export default function DashboardPage() {
     if (selected) {
       setRetryPayload(selected.body);
       setIsEditingPayload(false);
+      setDiffResult(null);
+      setSchemaResult(null);
     }
   }, [selected]);
 
@@ -152,6 +185,55 @@ export default function DashboardPage() {
     }
   };
 
+  const selectedIndex = selected ? requests.findIndex(req => req.id === selected.id) : -1;
+  const previousRequest = selectedIndex >= 0 ? requests[selectedIndex + 1] : null;
+
+  const handleCompareWithPrevious = async () => {
+    if (!selected || !previousRequest) return;
+    setIsDiffing(true);
+    trackEvent("feature_used", { feature_name: "webhook_diff" });
+    try {
+      const { data } = await apiClient.get<RequestDiff>(
+        `/webhooks/requests/${selected.id}/diff?base_request_id=${previousRequest.id}`
+      );
+      setDiffResult(data);
+      showToast({ tone: "success", message: "Delivery diff generated." });
+    } catch (err: any) {
+      showToast({ tone: "error", message: err.response?.data?.detail || "We could not compare these deliveries." });
+    } finally {
+      setIsDiffing(false);
+    }
+  };
+
+  const handleValidateSchema = async () => {
+    if (!selected) return;
+    let schema: unknown;
+    try {
+      schema = JSON.parse(schemaText);
+    } catch {
+      showToast({ tone: "error", message: "Schema must be valid JSON." });
+      return;
+    }
+
+    setIsValidatingSchema(true);
+    trackEvent("feature_used", { feature_name: "webhook_schema_validation" });
+    try {
+      const { data } = await apiClient.post<SchemaValidationResult>(
+        `/webhooks/requests/${selected.id}/validate-schema`,
+        { schema }
+      );
+      setSchemaResult(data);
+      showToast({
+        tone: data.valid ? "success" : "info",
+        message: data.valid ? "Payload matches the schema." : "Schema validation found payload drift.",
+      });
+    } catch (err: any) {
+      showToast({ tone: "error", message: err.response?.data?.detail || "We could not validate this payload." });
+    } finally {
+      setIsValidatingSchema(false);
+    }
+  };
+
   // Export — GET /webhooks/logs/export?format=csv|xlsx|json
   const handleExport = async (format: ExportFormat) => {
     setExportOpen(false);
@@ -177,6 +259,35 @@ export default function DashboardPage() {
   const formatTime = (iso: string) => {
     const d = new Date(iso);
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  };
+
+  const formatDiffValue = (value: unknown) => {
+    if (typeof value === "string") return value;
+    if (value === undefined) return "";
+    return JSON.stringify(value);
+  };
+
+  const renderDiffRows = (items: DiffItem[], tone: "added" | "removed" | "changed") => {
+    const colors = {
+      added: "text-emerald-400",
+      removed: "text-red-400",
+      changed: "text-amber-400",
+    };
+    return items.slice(0, 6).map(item => (
+      <div key={`${tone}-${item.path}-${formatDiffValue(item.value ?? item.new_value ?? item.old_value)}`} className="rounded-md bg-black/20 p-2">
+        <div className={`font-mono text-[10px] ${colors[tone]}`}>{item.path}</div>
+        {tone === "changed" ? (
+          <div className="mt-1 grid grid-cols-2 gap-2 text-[10px] opacity-80">
+            <span className="break-all">Old: {formatDiffValue(item.old_value)}</span>
+            <span className="break-all">New: {formatDiffValue(item.new_value)}</span>
+          </div>
+        ) : (
+          <div className="mt-1 break-all text-[10px] opacity-80">
+            {formatDiffValue(tone === "added" ? item.value : item.old_value)}
+          </div>
+        )}
+      </div>
+    ));
   };
 
   return (
@@ -448,6 +559,81 @@ export default function DashboardPage() {
             </div>
 
             <div className="flex-1 overflow-auto p-6 space-y-8 scrollbar-hide">
+              <section>
+                <h3 className="text-[10px] font-bold uppercase tracking-widest mb-3 opacity-50">Diff and Schema</h3>
+                <div className="space-y-4">
+                  <div>
+                    <button
+                      type="button"
+                      onClick={handleCompareWithPrevious}
+                      disabled={!previousRequest || isDiffing}
+                      className="w-full rounded-lg bg-black/10 px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isDiffing ? "Comparing..." : "Compare with previous"}
+                    </button>
+                    {!previousRequest ? (
+                      <p className="mt-1.5 text-[10px] opacity-50">Select a newer delivery with an older neighbor to generate a diff.</p>
+                    ) : null}
+                  </div>
+
+                  {diffResult ? (
+                    <div className="space-y-3 rounded-lg bg-black/10 p-3">
+                      <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold uppercase tracking-wider">
+                        <span className="text-emerald-400">{diffResult.body.added.length + diffResult.headers.added.length} added</span>
+                        <span className="text-red-400">{diffResult.body.removed.length + diffResult.headers.removed.length} removed</span>
+                        <span className="text-amber-400">{diffResult.body.changed.length + diffResult.headers.changed.length} changed</span>
+                      </div>
+                      <div className="space-y-2">
+                        {renderDiffRows(diffResult.body.added, "added")}
+                        {renderDiffRows(diffResult.body.removed, "removed")}
+                        {renderDiffRows(diffResult.body.changed, "changed")}
+                        {renderDiffRows(diffResult.headers.changed, "changed")}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-2">
+                    <textarea
+                      value={schemaText}
+                      onChange={event => setSchemaText(event.target.value)}
+                      className="min-h-[120px] w-full resize-y rounded-lg border border-black/10 bg-black/20 p-3 font-mono text-[11px] text-emerald-400/90 outline-none focus:border-[var(--color-primary)]"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleValidateSchema}
+                      disabled={isValidatingSchema}
+                      className="w-full rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-bold text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isValidatingSchema ? "Validating..." : "Validate Schema"}
+                    </button>
+                  </div>
+
+                  {schemaResult ? (
+                    <div
+                      className="rounded-lg p-3 text-xs"
+                      style={{
+                        backgroundColor: schemaResult.valid ? "rgba(16,185,129,0.08)" : "rgba(245,158,11,0.08)",
+                        border: schemaResult.valid ? "1px solid rgba(16,185,129,0.2)" : "1px solid rgba(245,158,11,0.2)",
+                      }}
+                    >
+                      <p className="font-bold" style={{ color: schemaResult.valid ? "#10B981" : "#F59E0B" }}>
+                        {schemaResult.valid ? "Schema matched" : `${schemaResult.errors.length} schema issue${schemaResult.errors.length === 1 ? "" : "s"}`}
+                      </p>
+                      {!schemaResult.valid ? (
+                        <div className="mt-2 space-y-1 font-mono text-[10px]">
+                          {schemaResult.errors.slice(0, 5).map(error => (
+                            <p key={`${error.path}-${error.message}`} className="break-words">
+                              <span className="text-amber-400">{error.path}</span>: {error.message}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+
               <section>
                 <h3 className="text-[10px] font-bold uppercase tracking-widest mb-3 opacity-50">Headers</h3>
                 <div className="rounded-lg bg-black/20 p-4 font-mono text-[11px] leading-relaxed overflow-x-auto">

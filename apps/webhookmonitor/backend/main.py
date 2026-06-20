@@ -6,10 +6,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select, delete
-from typing import Optional, Literal
+from typing import Any, Optional, Literal
 from datetime import datetime, timezone, timedelta
 import json, uuid, logging, httpx, io
 import pandas as pd
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 
 from backend_core import create_app, get_current_user, get_session, User, require_product_access
 from backend_core.database import get_managed_session
@@ -22,9 +24,9 @@ from backend_core.plan_limits import (
 )
 from backend_core.product_insights import summarize_webhooks
 from backend_core.security_utils import is_public_http_url
-from backend_core.sensitive_data import mask_sensitive_mapping, mask_sensitive_text
+from backend_core.sensitive_data import is_sensitive_key, mask_sensitive_mapping, mask_sensitive_text
 from backend_core.worker import register_job_handler
-from pydantic import BaseModel
+from pydantic import BaseModel, Field as PydanticField
 
 logger = logging.getLogger(__name__)
 MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
@@ -91,6 +93,10 @@ class RetryPayload(BaseModel):
     schedule_auto_retry: bool = False        # schedule exponential backoff if delivery fails
 
 
+class SchemaValidationPayload(BaseModel):
+    json_schema: dict[str, Any] = PydanticField(alias="schema")
+
+
 def _matches_log_status(request: WebhookRequest, status: str) -> bool:
     if status == "all":
         return True
@@ -103,6 +109,98 @@ def _matches_log_status(request: WebhookRequest, status: str) -> bool:
     if status == "auto_retry":
         return bool(request.auto_retry_enabled)
     return True
+
+
+def _json_path(path: tuple[Any, ...] | list[Any]) -> str:
+    output = "$"
+    for part in path:
+        if isinstance(part, int):
+            output += f"[{part}]"
+        else:
+            key = str(part)
+            if key.replace("_", "").replace("-", "").isalnum():
+                output += f".{key}"
+            else:
+                output += f"[{json.dumps(key)}]"
+    return output
+
+
+def _mask_diff_value(path: str, value: Any) -> Any:
+    if is_sensitive_key(path):
+        return "[redacted]"
+    if isinstance(value, dict):
+        return {
+            key: _mask_diff_value(f"{path}.{key}", nested_value)
+            for key, nested_value in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _mask_diff_value(f"{path}[{index}]", item)
+            for index, item in enumerate(value)
+        ]
+    if isinstance(value, str):
+        return mask_sensitive_text(value)
+    return value
+
+
+def _parse_json_or_text(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except Exception:
+        return mask_sensitive_text(value)
+
+
+def _diff_values(old: Any, new: Any, path: str = "$") -> dict[str, list[dict[str, Any]]]:
+    diff = {"added": [], "removed": [], "changed": []}
+
+    if isinstance(old, dict) and isinstance(new, dict):
+        old_keys = set(old)
+        new_keys = set(new)
+        for key in sorted(new_keys - old_keys):
+            child_path = f"{path}.{key}"
+            diff["added"].append({"path": child_path, "value": _mask_diff_value(child_path, new[key])})
+        for key in sorted(old_keys - new_keys):
+            child_path = f"{path}.{key}"
+            diff["removed"].append({"path": child_path, "old_value": _mask_diff_value(child_path, old[key])})
+        for key in sorted(old_keys & new_keys):
+            child_path = f"{path}.{key}"
+            nested = _diff_values(old[key], new[key], child_path)
+            for bucket, items in nested.items():
+                diff[bucket].extend(items)
+        return diff
+
+    if isinstance(old, list) and isinstance(new, list):
+        shared = min(len(old), len(new))
+        for index in range(shared):
+            nested = _diff_values(old[index], new[index], f"{path}[{index}]")
+            for bucket, items in nested.items():
+                diff[bucket].extend(items)
+        for index in range(shared, len(new)):
+            child_path = f"{path}[{index}]"
+            diff["added"].append({"path": child_path, "value": _mask_diff_value(child_path, new[index])})
+        for index in range(shared, len(old)):
+            child_path = f"{path}[{index}]"
+            diff["removed"].append({"path": child_path, "old_value": _mask_diff_value(child_path, old[index])})
+        return diff
+
+    if old != new:
+        diff["changed"].append({
+            "path": path,
+            "old_value": _mask_diff_value(path, old),
+            "new_value": _mask_diff_value(path, new),
+        })
+    return diff
+
+
+def _parse_request_body_json(request: WebhookRequest) -> Any:
+    try:
+        return json.loads(request.body or "{}")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON for schema validation")
+
+
+def _schema_error_path(error) -> str:
+    return _json_path(list(error.absolute_path))
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +353,85 @@ async def delete_requests(
     await session.execute(delete(WebhookRequest).where(WebhookRequest.endpoint_id == ep.id))
     await session.flush()
     return {"status": "deleted", "message": "All logs cleared"}
+
+
+async def _get_user_endpoint(user: User, session: AsyncSession) -> WebhookEndpoint:
+    ep_result = await session.execute(select(WebhookEndpoint).where(WebhookEndpoint.user_id == user.id))
+    ep = ep_result.scalar_one_or_none()
+    if not ep:
+        raise HTTPException(status_code=404, detail="No endpoint configured")
+    return ep
+
+
+async def _get_owned_request(request_id: int, endpoint_id: int, session: AsyncSession) -> WebhookRequest:
+    req_result = await session.execute(
+        select(WebhookRequest).where(
+            WebhookRequest.id == request_id,
+            WebhookRequest.endpoint_id == endpoint_id,
+        )
+    )
+    req = req_result.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    return req
+
+
+@webhook_router.get("/requests/{request_id}/diff")
+async def diff_request(
+    request_id: int,
+    base_request_id: int = Query(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    ep = await _get_user_endpoint(user, session)
+    request = await _get_owned_request(request_id, ep.id, session)
+    base_request = await _get_owned_request(base_request_id, ep.id, session)
+
+    return {
+        "request_id": request.id,
+        "base_request_id": base_request.id,
+        "headers": _diff_values(
+            json.loads(base_request.headers_json or "{}"),
+            json.loads(request.headers_json or "{}"),
+        ),
+        "body": _diff_values(
+            _parse_json_or_text(base_request.body or ""),
+            _parse_json_or_text(request.body or ""),
+        ),
+    }
+
+
+@webhook_router.post("/requests/{request_id}/validate-schema")
+async def validate_request_schema(
+    request_id: int,
+    body: SchemaValidationPayload,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    ep = await _get_user_endpoint(user, session)
+    request = await _get_owned_request(request_id, ep.id, session)
+
+    try:
+        Draft202012Validator.check_schema(body.json_schema)
+    except SchemaError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON Schema: {exc.message}")
+
+    validator = Draft202012Validator(body.json_schema)
+    payload = _parse_request_body_json(request)
+    errors = sorted(validator.iter_errors(payload), key=lambda error: list(error.absolute_path))
+
+    return {
+        "request_id": request.id,
+        "valid": not errors,
+        "errors": [
+            {
+                "path": _schema_error_path(error),
+                "message": error.message,
+                "validator": error.validator,
+            }
+            for error in errors
+        ],
+    }
 
 
 @webhook_router.post("/requests/{request_id}/retry")
