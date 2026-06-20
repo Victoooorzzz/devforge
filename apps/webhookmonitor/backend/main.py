@@ -2,7 +2,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select, delete
@@ -10,6 +10,7 @@ from typing import Any, Optional, Literal
 from datetime import datetime, timezone, timedelta
 import json, uuid, logging, httpx, io
 import pandas as pd
+from urllib.parse import parse_qsl, urlparse
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
@@ -30,6 +31,8 @@ from pydantic import BaseModel, Field as PydanticField
 
 logger = logging.getLogger(__name__)
 MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
+WEBHOOK_PUBLIC_BASE_URL = "https://webhookmonitor.devforgeapp.pro"
+EXPORT_OMITTED_HEADERS = {"host", "content-length", "transfer-encoding", "connection"}
 
 # SQL migrations needed:
 # ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS user_id INTEGER;
@@ -281,6 +284,100 @@ def _select_forward_rule(rules: list[WebhookForwardRule], body: str) -> WebhookF
         if rule.is_active and _rule_matches_body(rule, body):
             return rule
     return None
+
+
+def _request_export_url(request: WebhookRequest) -> str:
+    path = request.path or ""
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"{WEBHOOK_PUBLIC_BASE_URL}{normalized_path}"
+
+
+def _exportable_headers(headers_json: str) -> dict[str, str]:
+    try:
+        raw_headers = json.loads(headers_json or "{}")
+    except Exception:
+        raw_headers = {}
+
+    headers: dict[str, str] = {}
+    for key, value in raw_headers.items():
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            continue
+        if normalized_key.lower() in EXPORT_OMITTED_HEADERS:
+            continue
+        headers[normalized_key] = str(value)
+    return headers
+
+
+def _shell_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _build_curl_export(request: WebhookRequest) -> str:
+    url = _request_export_url(request)
+    lines = [f"curl --request {request.method.upper()} {_shell_quote(url)}"]
+    for key, value in _exportable_headers(request.headers_json).items():
+        lines.append(f"  --header {_shell_quote(f'{key}: {value}')}")
+    if request.body:
+        lines.append(f"  --data-raw {_shell_quote(request.body)}")
+    return " \\\n".join(lines) + "\n"
+
+
+def _postman_url(raw_url: str) -> dict[str, Any]:
+    parsed = urlparse(raw_url)
+    url_payload: dict[str, Any] = {"raw": raw_url}
+    if parsed.scheme:
+        url_payload["protocol"] = parsed.scheme
+    if parsed.netloc:
+        url_payload["host"] = parsed.netloc.split(".")
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if path_parts:
+        url_payload["path"] = path_parts
+    query_parts = [{"key": key, "value": value} for key, value in parse_qsl(parsed.query, keep_blank_values=True)]
+    if query_parts:
+        url_payload["query"] = query_parts
+    return url_payload
+
+
+def _build_postman_collection(request: WebhookRequest) -> dict[str, Any]:
+    url = _request_export_url(request)
+    item_request: dict[str, Any] = {
+        "method": request.method.upper(),
+        "header": [
+            {"key": key, "value": value}
+            for key, value in _exportable_headers(request.headers_json).items()
+        ],
+        "url": _postman_url(url),
+    }
+    if request.body:
+        item_request["body"] = {
+            "mode": "raw",
+            "raw": request.body,
+            "options": {"raw": {"language": "json" if _looks_like_json(request.body) else "text"}},
+        }
+    return {
+        "info": {
+            "_postman_id": str(uuid.uuid4()),
+            "name": f"WebhookMonitor request {request.id}",
+            "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+        },
+        "item": [
+            {
+                "name": f"{request.method.upper()} {request.path}",
+                "request": item_request,
+            }
+        ],
+    }
+
+
+def _looks_like_json(value: str) -> bool:
+    try:
+        json.loads(value)
+        return True
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +673,33 @@ async def validate_request_schema(
             for error in errors
         ],
     }
+
+
+@webhook_router.get("/requests/{request_id}/export")
+async def export_request(
+    request_id: int,
+    format: Literal["curl", "postman"] = Query(default="curl"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    ep = await _get_user_endpoint(user, session)
+    request = await _get_owned_request(request_id, ep.id, session)
+
+    if format == "postman":
+        collection = _build_postman_collection(request)
+        return Response(
+            content=json.dumps(collection, indent=2),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f"attachment; filename=webhook-request-{request.id}.postman_collection.json"
+            },
+        )
+
+    return Response(
+        content=_build_curl_export(request),
+        media_type="text/plain",
+        headers={"Content-Disposition": f"attachment; filename=webhook-request-{request.id}.curl.sh"},
+    )
 
 
 @webhook_router.post("/requests/{request_id}/retry")

@@ -146,6 +146,56 @@ class WebhookMonitorMoatTests(unittest.TestCase):
         self.assertTrue(any("amount" in message for message in messages))
         self.assertTrue(any("unexpected" in message for message in messages))
 
+    def test_request_export_returns_executable_curl_for_owned_event(self):
+        request = _request(
+            2,
+            body='{"type":"invoice.paid","data":{"amount":9900}}',
+            headers='{"content-type":"application/json","stripe-signature":"t=1,v1=sig","host":"testserver"}',
+        )
+
+        response = self._client([
+            [SimpleNamespace(id=7, user_id=42)],
+            [request],
+        ]).get("/webhooks/requests/2/export?format=curl")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "text/plain")
+        self.assertIn("webhook-request-2.curl.sh", response.headers["content-disposition"])
+        script = response.text
+        self.assertIn("curl --request POST", script)
+        self.assertIn("'https://webhookmonitor.devforgeapp.pro/hook/test'", script)
+        self.assertIn("--header 'content-type: application/json'", script)
+        self.assertIn("--header 'stripe-signature: t=1,v1=sig'", script)
+        self.assertNotIn("--header 'host:", script.lower())
+        self.assertIn("--data-raw '{\"type\":\"invoice.paid\",\"data\":{\"amount\":9900}}'", script)
+
+    def test_request_export_returns_postman_collection_for_owned_event(self):
+        request = _request(
+            2,
+            body='{"type":"invoice.paid","data":{"amount":9900}}',
+            headers='{"content-type":"application/json","stripe-signature":"t=1,v1=sig"}',
+        )
+
+        response = self._client([
+            [SimpleNamespace(id=7, user_id=42)],
+            [request],
+        ]).get("/webhooks/requests/2/export?format=postman")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
+        self.assertIn("webhook-request-2.postman_collection.json", response.headers["content-disposition"])
+        collection = response.json()
+        self.assertEqual(
+            collection["info"]["schema"],
+            "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+        )
+        exported_request = collection["item"][0]["request"]
+        self.assertEqual(exported_request["method"], "POST")
+        self.assertEqual(exported_request["url"]["raw"], "https://webhookmonitor.devforgeapp.pro/hook/test")
+        self.assertIn({"key": "stripe-signature", "value": "t=1,v1=sig"}, exported_request["header"])
+        self.assertEqual(exported_request["body"]["mode"], "raw")
+        self.assertEqual(exported_request["body"]["raw"], '{"type":"invoice.paid","data":{"amount":9900}}')
+
 
 if __name__ == "__main__":
     unittest.main()

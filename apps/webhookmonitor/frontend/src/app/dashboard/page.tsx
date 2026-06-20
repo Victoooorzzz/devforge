@@ -32,7 +32,13 @@ const methodColors: Record<string, string> = {
 };
 
 type ExportFormat = "csv" | "xlsx" | "json";
+type EventExportFormat = "curl" | "postman";
 type LogStatusFilter = "all" | "failed" | "successful" | "pending" | "auto_retry";
+
+const eventExportQueries: Record<EventExportFormat, string> = {
+  curl: "/export?format=curl",
+  postman: "/export?format=postman",
+};
 
 interface WebhookSummary {
   total_requests: number;
@@ -83,6 +89,7 @@ export default function DashboardPage() {
   const [isValidatingSchema, setIsValidatingSchema] = useState(false);
   const [schemaResult, setSchemaResult] = useState<SchemaValidationResult | null>(null);
   const [exportOpen, setExportOpen]   = useState(false);
+  const [eventExporting, setEventExporting] = useState<EventExportFormat | null>(null);
   const [summary, setSummary]         = useState<WebhookSummary | null>(null);
   const [logStatus, setLogStatus]     = useState<LogStatusFilter>("all");
   const [loading, setLoading]         = useState(true);
@@ -243,6 +250,28 @@ export default function DashboardPage() {
       showToast({ tone: "success", message: `Your connection logs export started as ${format.toUpperCase()}.` });
     } catch {
       showToast({ tone: "error", message: "We could not export your connection logs. Retry from the export menu." });
+    }
+  };
+
+  const handleEventExport = async (format: EventExportFormat) => {
+    if (!selected) return;
+
+    setEventExporting(format);
+    trackEvent("feature_used", { feature_name: "export_webhook_event", format });
+    try {
+      const filename =
+        format === "curl"
+          ? `webhook-request-${selected.id}.curl.sh`
+          : `webhook-request-${selected.id}.postman_collection.json`;
+      await downloadFile(`/webhooks/requests/${selected.id}${eventExportQueries[format]}`, filename);
+      showToast({
+        tone: "success",
+        message: format === "curl" ? "cURL export downloaded." : "Postman collection downloaded.",
+      });
+    } catch {
+      showToast({ tone: "error", message: "We could not export this delivery. Retry from the inspector." });
+    } finally {
+      setEventExporting(null);
     }
   };
 
@@ -559,6 +588,28 @@ export default function DashboardPage() {
             </div>
 
             <div className="flex-1 overflow-auto p-6 space-y-8 scrollbar-hide">
+              <section>
+                <h3 className="text-[10px] font-bold uppercase tracking-widest mb-3 opacity-50">Event Export</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleEventExport("curl")}
+                    disabled={eventExporting !== null}
+                    className="rounded-lg bg-black/10 px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {eventExporting === "curl" ? "Exporting..." : "Export cURL"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleEventExport("postman")}
+                    disabled={eventExporting !== null}
+                    className="rounded-lg bg-black/10 px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {eventExporting === "postman" ? "Exporting..." : "Export Postman"}
+                  </button>
+                </div>
+              </section>
+
               <section>
                 <h3 className="text-[10px] font-bold uppercase tracking-widest mb-3 opacity-50">Diff and Schema</h3>
                 <div className="space-y-4">
