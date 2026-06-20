@@ -23,15 +23,43 @@ interface FileReport {
   whitespace_fixed: number;
   rows_saved: number;
   reduction_pct: number;
+  fuzzy_matching?: { clusters_found?: number; rows_affected?: number };
+  schema_validation?: { invalid_rows?: number; rules_count?: number };
+  anomaly_detection?: { total_flags?: number };
+  normalization?: {
+    countries_normalized?: number;
+    phones_normalized?: number;
+    currencies_normalized?: number;
+    dates_normalized?: number;
+  };
+}
+
+type FileStatus = "pending" | "queued" | "processing" | "completed" | "complete" | "failed" | "error" | "canceled";
+
+interface FileProfile {
+  loadable: boolean;
+  filename: string;
+  size_bytes: number;
+  encoding?: string | null;
+  delimiter?: string | null;
+  headers_detected?: boolean;
+  row_count?: number;
+  column_count?: number;
+  columns?: string[];
+  preview_row_count?: number;
+  preview?: Record<string, unknown>[];
+  manual_options?: Record<string, unknown>;
+  error?: string;
 }
 
 interface FileItem {
   id: string;
   name: string;
   size?: number;
-  status: "queued" | "processing" | "complete" | "error";
+  status: FileStatus;
   downloadUrl?: string;
   report?: FileReport;
+  detection?: FileProfile;
   error?: string;
   localOnly?: boolean;
 }
@@ -63,6 +91,7 @@ interface FileSummary {
 type ExportFormat = "csv" | "xlsx" | "json";
 
 const POLL_INTERVAL_MS = 2500;
+const CANCEL_ENDPOINT_TEMPLATE = "/files/{fileId}/cancel";
 
 const severityColor: Record<string, string> = {
   high: "text-red-500 bg-red-500/10",
@@ -87,6 +116,19 @@ export default function DashboardPage() {
   const [utilityQuality, setUtilityQuality] = useState(82);
   const [utilityLoading, setUtilityLoading] = useState(false);
   const [utilityMessage, setUtilityMessage] = useState<string | null>(null);
+  const [profilePanel, setProfilePanel] = useState<FileProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [pipelineConfig, setPipelineConfig] = useState({
+    fuzzyMatching: true,
+    fuzzyColumns: "",
+    fuzzyThreshold: 85,
+    schemaRules: "[]",
+    anomalyDetection: true,
+    countryColumns: "country",
+    phoneColumns: "phone",
+    currencyColumns: "amount,total,price",
+    dateColumns: "date,created_at,joined_at",
+  });
   const pollingIds = useRef<Set<string>>(new Set());
   const exportRef  = useRef<HTMLDivElement>(null);
 
@@ -111,6 +153,8 @@ export default function DashboardPage() {
         status: f.status,
         downloadUrl: f.download_url,
         report: f.report ?? undefined,
+        detection: f.detection ?? undefined,
+        error: f.error,
       })));
     }
     if (summaryResult.status === "fulfilled") {
@@ -130,7 +174,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const interval = setInterval(async () => {
       const pendingFiles = files.filter(f =>
-        (f.status === "queued" || f.status === "processing") && !f.localOnly
+        (f.status === "pending" || f.status === "queued" || f.status === "processing") && !f.localOnly
       );
       for (const f of pendingFiles) {
         if (pollingIds.current.has(f.id)) continue;
@@ -139,7 +183,7 @@ export default function DashboardPage() {
           const { data } = await apiClient.get<any>(`/files/${f.id}/status`);
           setFiles(prev => prev.map(pf => pf.id === f.id ? {
             ...pf, status: data.status, downloadUrl: data.download_url,
-            report: data.report, error: data.error,
+            report: data.report, detection: data.detection, error: data.error,
           } : pf));
         } catch { /* ignore transient */ } finally {
           pollingIds.current.delete(f.id);
@@ -183,12 +227,76 @@ export default function DashboardPage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const handleFiles = useCallback(async (fileList: FileList) => {
+  const splitColumns = (value: string) =>
+    value.split(",").map(item => item.trim()).filter(Boolean);
+
+  const parseSchemaRules = () => {
+    try {
+      const parsed = JSON.parse(pipelineConfig.schemaRules);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const buildPipelineConfig = () => ({
+    basic_cleaning: {
+      drop_empty_rows: true,
+      trim_whitespace: true,
+      normalize_text: true,
+      drop_duplicates: true,
+    },
+    fuzzy_matching: {
+      enabled: pipelineConfig.fuzzyMatching,
+      columns: splitColumns(pipelineConfig.fuzzyColumns),
+      threshold: pipelineConfig.fuzzyThreshold,
+    },
+    schema_validation: {
+      rules: parseSchemaRules(),
+    },
+    anomaly_detection: {
+      enabled: pipelineConfig.anomalyDetection,
+      numeric_columns: splitColumns(pipelineConfig.currencyColumns),
+      categorical_columns: splitColumns(pipelineConfig.countryColumns),
+    },
+    normalization: {
+      countries: splitColumns(pipelineConfig.countryColumns),
+      phones: splitColumns(pipelineConfig.phoneColumns).map(column => ({ column, default_country_code: "+1" })),
+      currencies: splitColumns(pipelineConfig.currencyColumns),
+      dates: splitColumns(pipelineConfig.dateColumns),
+    },
+  });
+
+  const analyzeFile = async (fileInput: File) => {
+    setProfileLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", fileInput);
+      const { data } = await uploadFile<FileProfile>("/files/analyze", formData);
+      setProfilePanel(data);
+      return data;
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  const handleCancel = async (fileId: string) => {
+    trackEvent("feature_used", { feature_name: "cancel_file_job" });
+    try {
+      await apiClient.post(CANCEL_ENDPOINT_TEMPLATE.replace("{fileId}", fileId));
+      setFiles(prev => prev.map(f => f.id === fileId ? { ...f, status: "canceled" } : f));
+      showToast({ tone: "success", message: "Processing was canceled and temp files were cleaned." });
+    } catch {
+      showToast({ tone: "error", message: "We could not cancel that job. Refresh and retry." });
+    }
+  };
+
+  const handleFiles = async (fileList: FileList) => {
     const newFiles: FileItem[] = Array.from(fileList).map(f => ({
       id: crypto.randomUUID(),
       name: f.name,
       size: f.size,
-      status: "queued" as const,
+      status: "pending" as const,
       localOnly: true,
     }));
     setFiles(prev => [...newFiles, ...prev]);
@@ -198,19 +306,24 @@ export default function DashboardPage() {
       const file = fileList[i];
       const tempId = newFiles[i].id;
       try {
+        const profile = await analyzeFile(file);
+        if (!profile.loadable) {
+          throw new Error("File needs manual encoding, delimiter, or header options before processing.");
+        }
         const formData = new FormData();
         formData.append("file", file);
-        const { data } = await uploadFile<{ id: number; status: FileItem["status"] }>("/files/upload", formData);
+        formData.append("config_json", JSON.stringify(buildPipelineConfig()));
+        const { data } = await uploadFile<{ id: number; status: FileItem["status"]; detection?: FileProfile }>("/files/upload", formData);
         setFiles(prev => prev.map(f => f.id === tempId ? {
-          ...f, id: data.id.toString(), status: data.status, localOnly: false,
+          ...f, id: data.id.toString(), status: data.status, detection: data.detection, localOnly: false,
         } : f));
-        showToast({ tone: "success", message: `${file.name} is queued for cleanup.` });
+        showToast({ tone: "success", message: `${file.name} is pending cleanup.` });
       } catch (e: any) {
-        setFiles(prev => prev.map(f => f.id === tempId ? { ...f, status: "error", error: e.message } : f));
+        setFiles(prev => prev.map(f => f.id === tempId ? { ...f, status: "failed", error: e.message } : f));
         showToast({ tone: "error", message: `We could not read ${file.name}. Check that it is CSV, JSON, XLSX, or XLS.` });
       }
     }
-  }, [showToast]);
+  };
 
   // Export GET /files/export?format=csv|xlsx|json
   const handleExport = async (format: ExportFormat) => {
@@ -284,14 +397,22 @@ export default function DashboardPage() {
   };
 
   const statusIcon = (status: string) => {
-    if (status === "queued") return <Clock className="text-amber-500" size={16} />;
+    if (status === "pending" || status === "queued") return <Clock className="text-amber-500" size={16} />;
     if (status === "processing") return <RefreshCw className="animate-spin text-indigo-500" size={16} />;
-    if (status === "complete") return <CheckCircle className="text-emerald-500" size={16} />;
+    if (status === "completed" || status === "complete") return <CheckCircle className="text-emerald-500" size={16} />;
+    if (status === "canceled") return <X className="text-slate-400" size={16} />;
     return <AlertCircle className="text-red-500" size={16} />;
   };
 
   const statusLabel: Record<string, string> = {
-    queued: "Queued", processing: "Cleaning...", complete: "Ready", error: "Needs attention",
+    pending: "Pending",
+    queued: "Queued",
+    processing: "Cleaning...",
+    completed: "Ready",
+    complete: "Ready",
+    failed: "Needs attention",
+    error: "Needs attention",
+    canceled: "Canceled",
   };
 
   return (
@@ -304,7 +425,7 @@ export default function DashboardPage() {
             Data Cleaning Hub
           </h1>
           <p className="text-sm opacity-60" style={{ color: "var(--color-text)" }}>
-            Smart normalization for CSV and Excel datasets. Up to 200MB.
+            Smart normalization for CSV and Excel datasets. Up to 100MB.
           </p>
         </div>
 
@@ -403,6 +524,133 @@ export default function DashboardPage() {
               <p className={`text-xl font-mono font-bold ${stat.tone}`}>{stat.value}</p>
             </div>
           ))}
+        </div>
+      )}
+
+      <div className="mb-8 p-4 rounded-xl"
+        style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider opacity-50 mb-1">Pipeline controls</p>
+            <p className="text-sm opacity-70">Preview first 100 rows, then run basic cleaning, fuzzy matching, schema validation, anomaly detection, and normalization.</p>
+          </div>
+          {profileLoading && <InlineSpinner />}
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={pipelineConfig.fuzzyMatching}
+                onChange={e => setPipelineConfig(prev => ({ ...prev, fuzzyMatching: e.target.checked }))}
+              />
+              <span>Fuzzy matching</span>
+            </label>
+            <div className="grid grid-cols-[1fr_96px] gap-2">
+              <label className="text-xs">
+                <span className="block opacity-50 mb-1">Fuzzy columns</span>
+                <input
+                  value={pipelineConfig.fuzzyColumns}
+                  onChange={e => setPipelineConfig(prev => ({ ...prev, fuzzyColumns: e.target.value }))}
+                  placeholder="company,name,email"
+                  className="input-field px-3 py-2 w-full"
+                />
+              </label>
+              <label className="text-xs">
+                <span className="block opacity-50 mb-1">Threshold</span>
+                <input
+                  type="number"
+                  min={50}
+                  max={100}
+                  value={pipelineConfig.fuzzyThreshold}
+                  onChange={e => setPipelineConfig(prev => ({ ...prev, fuzzyThreshold: Math.max(50, Math.min(100, Number(e.target.value) || 85)) }))}
+                  className="input-field px-3 py-2 w-full"
+                />
+              </label>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={pipelineConfig.anomalyDetection}
+                onChange={e => setPipelineConfig(prev => ({ ...prev, anomalyDetection: e.target.checked }))}
+              />
+              <span>Anomaly detection</span>
+            </label>
+            <label className="text-xs block">
+              <span className="block opacity-50 mb-1">Schema validation</span>
+              <textarea
+                value={pipelineConfig.schemaRules}
+                onChange={e => setPipelineConfig(prev => ({ ...prev, schemaRules: e.target.value }))}
+                className="input-field px-3 py-2 w-full min-h-20 font-mono"
+                spellCheck={false}
+              />
+            </label>
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-sm font-medium">Normalization</p>
+            {[
+              ["Country columns", "countryColumns"],
+              ["Phone columns", "phoneColumns"],
+              ["Currency columns", "currencyColumns"],
+              ["Date columns", "dateColumns"],
+            ].map(([label, key]) => (
+              <label key={key} className="text-xs block">
+                <span className="block opacity-50 mb-1">{label}</span>
+                <input
+                  value={pipelineConfig[key as keyof typeof pipelineConfig] as string}
+                  onChange={e => setPipelineConfig(prev => ({ ...prev, [key]: e.target.value }))}
+                  className="input-field px-3 py-2 w-full"
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {profilePanel && (
+        <div className="mb-8 p-4 rounded-xl overflow-hidden"
+          style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider opacity-50 mb-1">Preview first 100 rows</p>
+              <p className="text-sm opacity-70">
+                {profilePanel.loadable
+                  ? `${profilePanel.row_count?.toLocaleString() ?? 0} rows, ${profilePanel.column_count ?? 0} columns, ${profilePanel.encoding ?? "auto"}${profilePanel.delimiter ? `, delimiter "${profilePanel.delimiter}"` : ""}`
+                  : profilePanel.error || "Manual options required"}
+              </p>
+            </div>
+            <button
+              onClick={() => setProfilePanel(null)}
+              className="p-2 rounded-lg hover:bg-black/10 transition-colors"
+              title="Close preview"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          {profilePanel.preview && profilePanel.preview.length > 0 && (
+            <div className="overflow-auto max-h-72 border border-[var(--color-border)] rounded-lg">
+              <table className="min-w-full text-xs">
+                <thead className="sticky top-0" style={{ backgroundColor: "var(--color-surface)" }}>
+                  <tr>
+                    {(profilePanel.columns ?? Object.keys(profilePanel.preview[0])).slice(0, 8).map(column => (
+                      <th key={column} className="text-left px-3 py-2 font-bold border-b border-[var(--color-border)]">{column}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {profilePanel.preview.slice(0, 12).map((row, index) => (
+                    <tr key={index} className="border-b border-[var(--color-border)] last:border-0">
+                      {(profilePanel.columns ?? Object.keys(row)).slice(0, 8).map(column => (
+                        <td key={column} className="px-3 py-2 whitespace-nowrap opacity-70">{String(row[column] ?? "")}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -523,7 +771,7 @@ export default function DashboardPage() {
           Drop your file here or click to upload
         </p>
         <p className="text-xs opacity-50" style={{ color: "var(--color-text)" }}>
-          CSV, JSON, XLSX, or XLS up to 200MB. We clean it in the background.
+          CSV, JSON, XLSX, or XLS up to 100MB. We clean it in the background.
         </p>
       </div>
 
@@ -531,7 +779,9 @@ export default function DashboardPage() {
       <div className="space-y-4">
         {files.map(file => {
           const isExpanded = expandedId === file.id;
-          const isPending  = file.status === "queued" || file.status === "processing";
+          const isPending  = file.status === "pending" || file.status === "queued" || file.status === "processing";
+          const isComplete = file.status === "completed" || file.status === "complete";
+          const isFailed = file.status === "failed" || file.status === "error";
           return (
             <div key={file.id} className="rounded-xl overflow-hidden transition-all duration-200"
               style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
@@ -555,7 +805,7 @@ export default function DashboardPage() {
                         <div className="w-24 h-1.5 rounded-full bg-black/10 overflow-hidden">
                           <div
                             className="h-full rounded-full bg-[var(--color-primary)] transition-all"
-                            style={{ width: file.status === "queued" ? "15%" : "65%", animation: "pulse 1.5s ease-in-out infinite" }}
+                            style={{ width: file.status === "processing" ? "65%" : "15%", animation: "pulse 1.5s ease-in-out infinite" }}
                           />
                         </div>
                         <span className="text-[10px] font-bold text-[var(--color-primary)]">{statusLabel[file.status]}</span>
@@ -563,8 +813,9 @@ export default function DashboardPage() {
                     )}
                     {!isPending && (
                       <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded ${
-                        file.status === "complete" ? "bg-emerald-500/10 text-emerald-500" :
-                        file.status === "error" ? "bg-red-500/10 text-red-500" : "bg-black/5"
+                        isComplete ? "bg-emerald-500/10 text-emerald-500" :
+                        isFailed ? "bg-red-500/10 text-red-500" :
+                        file.status === "canceled" ? "bg-slate-500/10 text-slate-500" : "bg-black/5"
                       }`}>
                         {statusLabel[file.status]}
                       </span>
@@ -572,6 +823,15 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {isPending && !file.localOnly && (
+                      <button
+                        onClick={e => { e.stopPropagation(); handleCancel(file.id); }}
+                        className="p-2 rounded-lg hover:bg-amber-500/10 text-amber-600 transition-colors"
+                        title="Cancel job"
+                      >
+                        <X size={18} />
+                      </button>
+                    )}
                     {file.downloadUrl && (
                       <a
                         href={getApiUrl(file.downloadUrl)}
@@ -635,11 +895,33 @@ export default function DashboardPage() {
                       <span>{file.report.reduction_pct}% fewer rows after cleaning</span>
                     </div>
                   )}
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+                    {[
+                      { label: "Fuzzy clusters", value: file.report.fuzzy_matching?.clusters_found ?? 0 },
+                      { label: "Schema invalid rows", value: file.report.schema_validation?.invalid_rows ?? 0 },
+                      { label: "Anomaly flags", value: file.report.anomaly_detection?.total_flags ?? 0 },
+                      {
+                        label: "Normalization edits",
+                        value: (
+                          (file.report.normalization?.countries_normalized ?? 0) +
+                          (file.report.normalization?.phones_normalized ?? 0) +
+                          (file.report.normalization?.currencies_normalized ?? 0) +
+                          (file.report.normalization?.dates_normalized ?? 0)
+                        ),
+                      },
+                    ].map(stat => (
+                      <div key={stat.label} className="p-3 rounded-lg bg-white/5 border border-white/5">
+                        <p className="text-[10px] uppercase font-bold opacity-40 mb-1">{stat.label}</p>
+                        <p className="text-lg font-mono font-bold text-[var(--color-primary)]">{stat.value.toLocaleString()}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
               {/* Error Message */}
-              {file.status === "error" && file.error && (
+              {isFailed && file.error && (
                 <div className="px-6 py-4 border-t border-red-500/20 bg-red-500/5">
                   <p className="text-xs text-red-500">{file.error}</p>
                 </div>

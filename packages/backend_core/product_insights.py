@@ -45,8 +45,8 @@ def _datetime(value: Any) -> datetime | None:
 
 def summarize_files(records: Iterable[Any]) -> dict[str, Any]:
     items = list(records)
-    completed = [item for item in items if _get(item, "status") == "complete"]
-    errored = [item for item in items if _get(item, "status") == "error"]
+    completed = [item for item in items if _get(item, "status") in {"complete", "completed"}]
+    errored = [item for item in items if _get(item, "status") in {"error", "failed"}]
     rows_saved = sum(
         max(0, int(_number(_get(item, "rows_original")) - _number(_get(item, "rows_clean"))))
         for item in completed
