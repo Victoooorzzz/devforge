@@ -94,6 +94,11 @@ export default function SettingsPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [savingTemplateId, setSavingTemplateId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [paymentCredentials, setPaymentCredentials] = useState({
+    stripe_api_key: "",
+    paypal_client_id: "",
+    paypal_client_secret: "",
+  });
   const [managingSubscription, setManagingSubscription] = useState(false);
   const [toast, setToast] = useState<DashboardToast | null>(null);
 
@@ -196,12 +201,21 @@ export default function SettingsPage() {
     setConnecting(provider);
     trackEvent("feature_used", { feature_name: `invoicefollow_connect_${provider}` });
     try {
-      const payload = provider === "stripe" || provider === "paypal" ? { account_label: `${provider} read-only` } : { email: profile.email };
+      const payload =
+        provider === "stripe"
+          ? { account_label: "Stripe read-only", api_key: paymentCredentials.stripe_api_key }
+          : provider === "paypal"
+            ? {
+                account_label: "PayPal read-only",
+                client_id: paymentCredentials.paypal_client_id,
+                client_secret: paymentCredentials.paypal_client_secret,
+              }
+            : { email: profile.email };
       const { data } = await apiClient.post<{ oauth_url?: string; connected?: boolean }>(`/connect/${provider}`, payload);
       if (data.oauth_url && !data.connected) window.open(data.oauth_url, "_blank", "noopener,noreferrer");
       setInvoiceSettings((current) => ({
         ...current,
-        connections: { ...current.connections, [provider]: true },
+        connections: { ...current.connections, [provider]: Boolean(data.connected) || provider === "stripe" || provider === "paypal" },
       }));
       setToast({ tone: "success", message: `${provider} connection started.` });
     } catch (error) {
@@ -273,10 +287,42 @@ export default function SettingsPage() {
                         <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>{row.detail}</p>
                       </div>
                     </div>
-                    <button type="button" onClick={() => handleConnect(row.id)} className="btn-secondary flex items-center gap-2 px-3 py-2 text-sm" disabled={connecting === row.id}>
-                      {connected ? <CheckCircle2 size={14} /> : connecting === row.id ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                      {connected ? "Connected" : "Connect"}
-                    </button>
+                    <div className="flex min-w-0 flex-col items-end gap-2">
+                      {row.id === "stripe" ? (
+                        <input
+                          type="password"
+                          value={paymentCredentials.stripe_api_key}
+                          onChange={(event) => setPaymentCredentials((current) => ({ ...current, stripe_api_key: event.target.value }))}
+                          className="input-field h-9 w-44 text-xs"
+                          placeholder="Restricted key"
+                          autoComplete="off"
+                        />
+                      ) : null}
+                      {row.id === "paypal" ? (
+                        <div className="flex flex-col gap-2">
+                          <input
+                            type="password"
+                            value={paymentCredentials.paypal_client_id}
+                            onChange={(event) => setPaymentCredentials((current) => ({ ...current, paypal_client_id: event.target.value }))}
+                            className="input-field h-9 w-44 text-xs"
+                            placeholder="Client ID"
+                            autoComplete="off"
+                          />
+                          <input
+                            type="password"
+                            value={paymentCredentials.paypal_client_secret}
+                            onChange={(event) => setPaymentCredentials((current) => ({ ...current, paypal_client_secret: event.target.value }))}
+                            className="input-field h-9 w-44 text-xs"
+                            placeholder="Client secret"
+                            autoComplete="off"
+                          />
+                        </div>
+                      ) : null}
+                      <button type="button" onClick={() => handleConnect(row.id)} className="btn-secondary flex items-center gap-2 px-3 py-2 text-sm" disabled={connecting === row.id}>
+                        {connected ? <CheckCircle2 size={14} /> : connecting === row.id ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                        {connected ? "Connected" : "Connect"}
+                      </button>
+                    </div>
                   </div>
                 );
               })}

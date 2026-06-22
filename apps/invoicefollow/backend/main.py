@@ -3,20 +3,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "pa
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal, Optional
+import base64
 import html
 import io
 import json
 import logging
 import re
+import unicodedata
 import uuid
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, ValidationError, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
+import httpx
 import pandas as pd
 
 from backend_core import create_app, get_current_user, get_session, User, require_product_access, get_settings
@@ -32,7 +37,7 @@ settings = get_settings()
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -137,13 +142,22 @@ class InvoiceIntegrationSettings(SQLModel, table=True):
     gmail_connected: bool = Field(default=False)
     gmail_email: str = Field(default="")
     gmail_state: str = Field(default="")
+    gmail_access_token: str = Field(default="")
+    gmail_refresh_token: str = Field(default="")
+    gmail_token_expires_at: Optional[datetime] = None
     outlook_connected: bool = Field(default=False)
     outlook_email: str = Field(default="")
     outlook_state: str = Field(default="")
+    outlook_access_token: str = Field(default="")
+    outlook_refresh_token: str = Field(default="")
+    outlook_token_expires_at: Optional[datetime] = None
     stripe_connected: bool = Field(default=False)
     stripe_account_label: str = Field(default="")
+    stripe_api_key: str = Field(default="")
     paypal_connected: bool = Field(default=False)
     paypal_account_label: str = Field(default="")
+    paypal_client_id: str = Field(default="")
+    paypal_client_secret: str = Field(default="")
     forward_address_token: str = Field(default="")
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
@@ -197,6 +211,7 @@ class InvoiceReplyEvent(SQLModel, table=True):
     invoice_id: int = Field(index=True)
     user_id: int = Field(index=True)
     provider: str = Field(default="gmail")
+    provider_message_id: str = Field(default="", index=True)
     text: str = Field(default="")
     intent_label: str = Field(default="DESCONOCIDO", index=True)
     action_taken: str = Field(default="")
@@ -309,6 +324,8 @@ class InvoiceSettingsUpdate(BaseModel):
 class ConnectRequest(BaseModel):
     email: Optional[EmailStr] = None
     api_key: Optional[str] = None
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
     account_label: Optional[str] = None
     redirect_uri: Optional[str] = None
 
@@ -622,18 +639,104 @@ def render_reminder_template(
     return subject, html_body, {"stage_day": int(stage["day"]), "template_key": stage["id"], "tone": stage["tone"]}
 
 
+def _normalize_intent_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text or "")
+    ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
+    return re.sub(r"\s+", " ", ascii_text.lower()).strip()
+
+
+def _contains_any(text: str, terms: list[str]) -> bool:
+    return any(term in text for term in terms)
+
+
 def classify_reply_intent(text: str) -> dict[str, Any]:
-    normalized = text.lower()
-    paid_terms = ["ya transferi", "transferi", "deposite", "paid", "sent", "listo", "hecho", "ya esta", "confirmado"]
-    valid_excuse_terms = ["problema con el banco", "demora", "proxima semana", "en proceso", "me comprometo", "el viernes", "next week", "bank issue"]
-    false_excuse_terms = ["no recibi", "no me consta", "error", "no es mio", "ya pague", "contador", "accountant"]
-    if any(term in normalized for term in paid_terms):
-        return {"label": "PAGADO", "confidence": 0.86, "reason": "Client says payment was sent."}
-    if any(term in normalized for term in valid_excuse_terms):
-        return {"label": "EXCUSA_VALIDA", "confidence": 0.78, "reason": "Client gave a concrete payment delay or promise."}
-    if any(term in normalized for term in false_excuse_terms):
-        return {"label": "EXCUSA_FALSA", "confidence": 0.66, "reason": "Client disputed receipt or ownership without payment evidence."}
-    return {"label": "DESCONOCIDO", "confidence": 0.35, "reason": "No payment or delay signal was found."}
+    normalized = _normalize_intent_text(text)
+    payment_verbs = r"(transferi|transferido|transferencia|deposite|depositado|pague|pagado|paid|sent|send|wire|wired)"
+    negated_payment = re.search(rf"\b(no|not|never|todavia no|aun no|ni)\b.{0,40}\b{payment_verbs}\b", normalized)
+    attributed_payment = re.search(rf"\b(banco|bank|contador|accountant|bookkeeper)\b.{0,50}\b(dijo|said|dice|claims|me dijo)\b.{0,50}\b{payment_verbs}\b", normalized)
+
+    false_excuse_terms = [
+        "no recibi",
+        "no me consta",
+        "no es mio",
+        "habla con mi contador",
+        "mi contador",
+        "accountant",
+        "invoice error",
+        "wrong invoice",
+        "not mine",
+    ]
+    if _contains_any(normalized, false_excuse_terms):
+        return {
+            "label": "EXCUSA_FALSA",
+            "confidence": 0.72,
+            "reason": "Client disputed receipt, ownership, or redirected responsibility.",
+            "engine": "deterministic",
+            "manual_review_required": True,
+        }
+
+    if negated_payment or attributed_payment:
+        return {
+            "label": "DESCONOCIDO",
+            "confidence": 0.82,
+            "reason": "Payment wording is negated or attributed to a third party, so it is not treated as paid.",
+            "engine": "deterministic",
+            "manual_review_required": True,
+        }
+
+    paid_terms = [
+        "ya transferi",
+        "ya deposite",
+        "depositado",
+        "payment sent",
+        "sent payment",
+        "we paid",
+        "i paid",
+        "paid this invoice",
+        "paid invoice",
+        "transfer completed",
+        "wire sent",
+        "listo",
+        "hecho",
+        "confirmado",
+    ]
+    if _contains_any(normalized, paid_terms):
+        return {
+            "label": "PAGADO",
+            "confidence": 0.88,
+            "reason": "Client directly says payment was sent or completed.",
+            "engine": "deterministic",
+            "manual_review_required": True,
+        }
+
+    valid_excuse_terms = [
+        "problema con el banco",
+        "demora",
+        "proxima semana",
+        "en proceso",
+        "me comprometo",
+        "el viernes",
+        "next week",
+        "bank issue",
+        "processing delay",
+        "payment is processing",
+    ]
+    if _contains_any(normalized, valid_excuse_terms):
+        return {
+            "label": "EXCUSA_VALIDA",
+            "confidence": 0.8,
+            "reason": "Client gave a concrete delay, processing status, or payment promise.",
+            "engine": "deterministic",
+            "manual_review_required": False,
+        }
+
+    return {
+        "label": "DESCONOCIDO",
+        "confidence": 0.35,
+        "reason": "No reliable payment, delay, or dispute signal was found.",
+        "engine": "deterministic",
+        "manual_review_required": True,
+    }
 
 
 def apply_reply_intent(invoice: Invoice, intent: dict[str, Any], *, payment_confirmed: bool, today: date | None = None) -> dict[str, Any]:
@@ -882,6 +985,401 @@ async def _reject_if_over_invoice_limit(session: AsyncSession, user: User) -> No
         raise HTTPException(status_code=429, detail=f"{plan.title()} plan is limited to {limit} active invoices.")
 
 
+def _token_expiry(expires_in: Any) -> datetime:
+    try:
+        seconds = int(expires_in)
+    except (TypeError, ValueError):
+        seconds = 3600
+    return _utc_now() + timedelta(seconds=max(60, seconds - 60))
+
+
+async def exchange_gmail_oauth_code(code: str, redirect_uri: str | None = None) -> dict[str, Any]:
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "https://api.devforgeapp.pro/connect/gmail/callback")
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="Google OAuth client is not configured.")
+    async with httpx.AsyncClient(timeout=20) as client:
+        token_response = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+        token_response.raise_for_status()
+        token_data = token_response.json()
+        if token_data.get("access_token"):
+            profile_response = await client.get(
+                "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+                headers={"Authorization": f"Bearer {token_data['access_token']}"},
+            )
+            if profile_response.status_code < 400:
+                token_data["email"] = profile_response.json().get("emailAddress", "")
+        return token_data
+
+
+async def exchange_outlook_oauth_code(code: str, redirect_uri: str | None = None) -> dict[str, Any]:
+    client_id = os.getenv("MICROSOFT_CLIENT_ID", "")
+    client_secret = os.getenv("MICROSOFT_CLIENT_SECRET", "")
+    redirect_uri = redirect_uri or os.getenv("MICROSOFT_REDIRECT_URI", "https://api.devforgeapp.pro/connect/outlook/callback")
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="Microsoft OAuth client is not configured.")
+    async with httpx.AsyncClient(timeout=20) as client:
+        token_response = await client.post(
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+        token_response.raise_for_status()
+        token_data = token_response.json()
+        if token_data.get("access_token"):
+            profile_response = await client.get(
+                "https://graph.microsoft.com/v1.0/me",
+                headers={"Authorization": f"Bearer {token_data['access_token']}"},
+            )
+            if profile_response.status_code < 400:
+                profile = profile_response.json()
+                token_data["email"] = profile.get("mail") or profile.get("userPrincipalName") or ""
+        return token_data
+
+
+def _message_id_from_headers(headers: list[dict[str, str]]) -> str:
+    for header in headers:
+        if header.get("name", "").lower() in {"message-id", "id"}:
+            return header.get("value", "")
+    return ""
+
+
+def _email_from_headers(headers: list[dict[str, str]], name: str) -> str:
+    for header in headers:
+        if header.get("name", "").lower() == name.lower():
+            value = header.get("value", "")
+            match = re.search(r"<([^>]+)>", value)
+            return (match.group(1) if match else value).strip().lower()
+    return ""
+
+
+def _decode_gmail_body(payload: dict[str, Any]) -> str:
+    bodies: list[str] = []
+
+    def walk(part: dict[str, Any]) -> None:
+        body_data = part.get("body", {}).get("data")
+        if body_data:
+            try:
+                bodies.append(base64.urlsafe_b64decode(body_data + "=" * (-len(body_data) % 4)).decode("utf-8", errors="ignore"))
+            except Exception:
+                pass
+        for child in part.get("parts") or []:
+            walk(child)
+
+    walk(payload)
+    return "\n".join(bodies)
+
+
+async def send_gmail_message(integration: InvoiceIntegrationSettings, *, to: str, subject: str, html_body: str, thread_id: str = "") -> dict[str, Any]:
+    if not integration.gmail_access_token:
+        raise RuntimeError("Gmail access token is missing.")
+    message = EmailMessage()
+    message["To"] = to
+    message["From"] = integration.gmail_email or "me"
+    message["Subject"] = subject
+    message.set_content(re.sub(r"<[^>]+>", " ", html_body))
+    message.add_alternative(html_body, subtype="html")
+    payload: dict[str, Any] = {"raw": base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")}
+    if thread_id:
+        payload["threadId"] = thread_id
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            headers={"Authorization": f"Bearer {integration.gmail_access_token}"},
+            json=payload,
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+async def send_outlook_message(integration: InvoiceIntegrationSettings, *, to: str, subject: str, html_body: str) -> dict[str, Any]:
+    if not integration.outlook_access_token:
+        raise RuntimeError("Outlook access token is missing.")
+    payload = {
+        "message": {
+            "subject": subject,
+            "body": {"contentType": "HTML", "content": html_body},
+            "toRecipients": [{"emailAddress": {"address": to}}],
+        },
+        "saveToSentItems": True,
+    }
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(
+            "https://graph.microsoft.com/v1.0/me/sendMail",
+            headers={"Authorization": f"Bearer {integration.outlook_access_token}"},
+            json=payload,
+        )
+        response.raise_for_status()
+        return {"status": "sent"}
+
+
+async def fetch_gmail_thread_replies(integration: InvoiceIntegrationSettings, invoice: Invoice) -> list[dict[str, Any]]:
+    if not integration.gmail_access_token:
+        return []
+    headers = {"Authorization": f"Bearer {integration.gmail_access_token}"}
+    async with httpx.AsyncClient(timeout=20) as client:
+        if invoice.thread_id:
+            response = await client.get(
+                f"https://gmail.googleapis.com/gmail/v1/users/me/threads/{invoice.thread_id}",
+                headers=headers,
+                params={"format": "full"},
+            )
+            response.raise_for_status()
+            messages = response.json().get("messages", [])
+        else:
+            query = f'from:{invoice.client_email} "{invoice.invoice_number or invoice.id}" newer_than:90d'
+            list_response = await client.get(
+                "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+                headers=headers,
+                params={"q": query},
+            )
+            list_response.raise_for_status()
+            messages = []
+            for item in list_response.json().get("messages", [])[:20]:
+                detail = await client.get(
+                    f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{item['id']}",
+                    headers=headers,
+                    params={"format": "full"},
+                )
+                detail.raise_for_status()
+                messages.append(detail.json())
+    replies: list[dict[str, Any]] = []
+    for message in messages:
+        payload = message.get("payload") or {}
+        msg_headers = payload.get("headers") or []
+        from_email = _email_from_headers(msg_headers, "From")
+        if invoice.client_email and invoice.client_email.lower() not in from_email:
+            continue
+        text = _decode_gmail_body(payload) or message.get("snippet", "")
+        replies.append({
+            "id": message.get("id") or _message_id_from_headers(msg_headers),
+            "provider": "gmail",
+            "text": text,
+            "received_at": _utc_now(),
+        })
+    return replies
+
+
+async def fetch_outlook_thread_replies(integration: InvoiceIntegrationSettings, invoice: Invoice) -> list[dict[str, Any]]:
+    if not integration.outlook_access_token:
+        return []
+    filters = [f"from/emailAddress/address eq '{invoice.client_email}'"]
+    if invoice.thread_id:
+        filters.append(f"conversationId eq '{invoice.thread_id}'")
+    params = {"$top": "20", "$orderby": "receivedDateTime desc", "$filter": " and ".join(filters)}
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.get(
+            "https://graph.microsoft.com/v1.0/me/messages",
+            headers={"Authorization": f"Bearer {integration.outlook_access_token}"},
+            params=params,
+        )
+        response.raise_for_status()
+    replies = []
+    for item in response.json().get("value", []):
+        body = item.get("body", {}).get("content") or item.get("bodyPreview", "")
+        replies.append({
+            "id": item.get("id", ""),
+            "provider": "outlook",
+            "text": re.sub(r"<[^>]+>", " ", body),
+            "received_at": _utc_now(),
+        })
+    return replies
+
+
+async def list_stripe_payment_events(api_key: str) -> list[dict[str, Any]]:
+    if not api_key:
+        return []
+    since = int((_utc_now() - timedelta(days=7)).timestamp())
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.get(
+            "https://api.stripe.com/v1/events",
+            headers={"Authorization": f"Bearer {api_key}"},
+            params={"type": "payment_intent.succeeded", "created[gte]": since, "limit": 100},
+        )
+        response.raise_for_status()
+        return response.json().get("data", [])
+
+
+async def list_paypal_completed_transactions(client_id: str, client_secret: str) -> list[dict[str, Any]]:
+    if not client_id or not client_secret:
+        return []
+    end = _utc_now()
+    start = end - timedelta(days=7)
+    async with httpx.AsyncClient(timeout=20) as client:
+        token_response = await client.post(
+            "https://api-m.paypal.com/v1/oauth2/token",
+            auth=(client_id, client_secret),
+            data={"grant_type": "client_credentials"},
+        )
+        token_response.raise_for_status()
+        access_token = token_response.json().get("access_token")
+        if not access_token:
+            return []
+        response = await client.get(
+            "https://api-m.paypal.com/v1/reporting/transactions",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={
+                "start_date": start.isoformat(),
+                "end_date": end.isoformat(),
+                "fields": "transaction_info,payer_info",
+            },
+        )
+        response.raise_for_status()
+    transactions = []
+    for item in response.json().get("transaction_details", []):
+        info = item.get("transaction_info", {})
+        payer = item.get("payer_info", {})
+        if str(info.get("transaction_status", "")).upper() not in {"S", "COMPLETED"}:
+            continue
+        amount = info.get("transaction_amount", {})
+        transactions.append({
+            "id": info.get("transaction_id", ""),
+            "amount": {"value": amount.get("value", 0), "currency_code": amount.get("currency_code", "USD")},
+            "payer": {"email_address": payer.get("email_address", "")},
+        })
+    return transactions
+
+
+async def poll_reply_threads() -> dict[str, int]:
+    async with get_managed_session() as session:
+        invoice_result = await session.execute(select(Invoice).where(Invoice.status == "pending"))
+        invoices = invoice_result.scalars().all()
+        processed = 0
+        paused = 0
+        flagged = 0
+        for invoice in invoices:
+            integration_result = await session.execute(select(InvoiceIntegrationSettings).where(InvoiceIntegrationSettings.user_id == invoice.user_id))
+            integration = integration_result.scalar_one_or_none()
+            if not integration:
+                continue
+            replies: list[dict[str, Any]] = []
+            if integration.gmail_connected:
+                replies.extend(await fetch_gmail_thread_replies(integration, invoice))
+            if integration.outlook_connected:
+                replies.extend(await fetch_outlook_thread_replies(integration, invoice))
+            for reply in replies:
+                provider_message_id = reply.get("id", "")
+                if provider_message_id:
+                    existing = await session.execute(
+                        select(InvoiceReplyEvent).where(
+                            InvoiceReplyEvent.user_id == invoice.user_id,
+                            InvoiceReplyEvent.provider == reply.get("provider", ""),
+                            InvoiceReplyEvent.provider_message_id == provider_message_id,
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        continue
+                intent = classify_reply_intent(reply.get("text", ""))
+                action = apply_reply_intent(invoice, intent, payment_confirmed=False)
+                if invoice.cron_paused:
+                    paused += 1
+                if intent.get("manual_review_required"):
+                    flagged += 1
+                session.add(InvoiceReplyEvent(
+                    invoice_id=invoice.id or 0,
+                    user_id=invoice.user_id,
+                    provider=reply.get("provider", ""),
+                    provider_message_id=provider_message_id,
+                    text=reply.get("text", ""),
+                    intent_label=intent["label"],
+                    action_taken=action["action"],
+                    received_at=reply.get("received_at") or _utc_now(),
+                ))
+                session.add(invoice)
+                processed += 1
+        await session.commit()
+        return {"processed_replies": processed, "paused_invoices": paused, "manual_review_flags": flagged}
+
+
+async def poll_payment_providers() -> dict[str, int]:
+    async with get_managed_session() as session:
+        invoice_result = await session.execute(select(Invoice).where(Invoice.status != "paid"))
+        invoices = invoice_result.scalars().all()
+        integrations_result = await session.execute(select(InvoiceIntegrationSettings))
+        integrations = {item.user_id: item for item in integrations_result.scalars().all()}
+        stripe_cache: dict[int, list[dict[str, Any]]] = {}
+        paypal_cache: dict[int, list[dict[str, Any]]] = {}
+        processed = 0
+        matched = 0
+        for invoice in invoices:
+            integration = integrations.get(invoice.user_id)
+            if not integration:
+                continue
+            if integration.stripe_connected and invoice.user_id not in stripe_cache:
+                stripe_cache[invoice.user_id] = await list_stripe_payment_events(integration.stripe_api_key or settings.stripe_secret_key)
+            for event in stripe_cache.get(invoice.user_id, []):
+                processed += 1
+                payment = detect_stripe_payment_for_invoice(event, invoice)
+                if not payment["matched"]:
+                    continue
+                existing = await session.execute(select(InvoicePaymentEvent).where(InvoicePaymentEvent.provider == "stripe", InvoicePaymentEvent.provider_event_id == payment["provider_event_id"]))
+                if existing.scalar_one_or_none():
+                    continue
+                invoice.status = "paid"
+                invoice.cron_paused = True
+                invoice.paid_at = _utc_now()
+                invoice.updated_at = _utc_now()
+                session.add(InvoicePaymentEvent(
+                    user_id=invoice.user_id,
+                    invoice_id=invoice.id or 0,
+                    provider="stripe",
+                    provider_event_id=payment["provider_event_id"],
+                    amount=payment["amount"],
+                    currency=payment["currency"],
+                    status="succeeded",
+                    raw_json=json.dumps(event),
+                ))
+                session.add(invoice)
+                matched += 1
+                break
+            if invoice.status == "paid":
+                continue
+            if integration.paypal_connected and invoice.user_id not in paypal_cache:
+                paypal_cache[invoice.user_id] = await list_paypal_completed_transactions(integration.paypal_client_id, integration.paypal_client_secret)
+            for transaction in paypal_cache.get(invoice.user_id, []):
+                processed += 1
+                payment = detect_paypal_payment_for_invoice(transaction, invoice)
+                if not payment["matched"]:
+                    continue
+                existing = await session.execute(select(InvoicePaymentEvent).where(InvoicePaymentEvent.provider == "paypal", InvoicePaymentEvent.provider_event_id == payment["provider_event_id"]))
+                if existing.scalar_one_or_none():
+                    continue
+                invoice.status = "paid"
+                invoice.cron_paused = True
+                invoice.paid_at = _utc_now()
+                invoice.updated_at = _utc_now()
+                session.add(InvoicePaymentEvent(
+                    user_id=invoice.user_id,
+                    invoice_id=invoice.id or 0,
+                    provider="paypal",
+                    provider_event_id=payment["provider_event_id"],
+                    amount=payment["amount"],
+                    currency=payment["currency"],
+                    status="succeeded",
+                    raw_json=json.dumps(transaction),
+                ))
+                session.add(invoice)
+                matched += 1
+                break
+        await session.commit()
+        return {"processed_payments": processed, "matched_payments": matched}
+
+
 @cron_router.post("/cron/reminders/enqueue", tags=["cron"])
 async def cron_enqueue_reminders(authorization: str | None = Header(default=None)):
     expected = os.getenv("CRON_SECRET")
@@ -896,7 +1394,8 @@ async def cron_poll_replies(authorization: str | None = Header(default=None)):
     expected = os.getenv("CRON_SECRET")
     if expected and authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return {"status": "success", "task": "reply_polling_ready", "frequency_hours": 6}
+    result = await poll_reply_threads()
+    return {"status": "success", "task": "reply_polling_completed", "frequency_hours": 6, **result}
 
 
 @cron_router.post("/cron/payments/poll", tags=["cron"])
@@ -904,7 +1403,8 @@ async def cron_poll_payments(authorization: str | None = Header(default=None)):
     expected = os.getenv("CRON_SECRET")
     if expected and authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return {"status": "success", "stripe_frequency_hours": 1, "paypal_frequency_hours": 6}
+    result = await poll_payment_providers()
+    return {"status": "success", "stripe_frequency_hours": 1, "paypal_frequency_hours": 6, **result}
 
 
 async def enqueue_overdue_reminders():
@@ -952,7 +1452,14 @@ async def enqueue_overdue_reminders():
             job = SystemOutbox(
                 app_name="invoicefollow",
                 job_type="send_email",
-                payload={"to": invoice.client_email, "subject": subject, "html_body": html_body},
+                payload={
+                    "user_id": invoice.user_id,
+                    "invoice_id": invoice.id,
+                    "thread_id": invoice.thread_id,
+                    "to": invoice.client_email,
+                    "subject": subject,
+                    "html_body": html_body,
+                },
                 priority=3,
             )
             log = InvoiceReminderLog(
@@ -978,8 +1485,21 @@ async def handle_send_email(payload: dict):
     to = payload.get("to")
     subject = payload.get("subject")
     html_body = payload.get("html_body")
-    send_email(to=to, subject=subject, html_body=html_body)
-    return {"delivered_to": to}
+    user_id = payload.get("user_id")
+    if user_id:
+        async with get_managed_session() as session:
+            result = await session.execute(select(InvoiceIntegrationSettings).where(InvoiceIntegrationSettings.user_id == int(user_id)))
+            integration = result.scalar_one_or_none()
+            if integration and integration.gmail_connected:
+                response = await send_gmail_message(integration, to=to, subject=subject, html_body=html_body, thread_id=payload.get("thread_id") or "")
+                return {"delivered_to": to, "provider": "gmail", "provider_message_id": response.get("id", "")}
+            if integration and integration.outlook_connected:
+                response = await send_outlook_message(integration, to=to, subject=subject, html_body=html_body)
+                return {"delivered_to": to, "provider": "outlook", **response}
+    sent = send_email(to=to, subject=subject, html_body=html_body)
+    if not sent:
+        raise RuntimeError(f"Email provider failed for {to}")
+    return {"delivered_to": to, "provider": "resend"}
 
 
 register_job_handler("invoicefollow", "send_email", handle_send_email)
@@ -1371,7 +1891,6 @@ async def connect_gmail(body: ConnectRequest, user: User = Depends(get_current_u
     state = uuid.uuid4().hex
     integrations.gmail_state = state
     if body.email:
-        integrations.gmail_connected = True
         integrations.gmail_email = str(body.email)
     integrations.updated_at = _utc_now()
     session.add(integrations)
@@ -1379,8 +1898,41 @@ async def connect_gmail(body: ConnectRequest, user: User = Depends(get_current_u
     scopes = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
     client_id = os.getenv("GOOGLE_CLIENT_ID", "")
     redirect_uri = body.redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "https://api.devforgeapp.pro/connect/gmail/callback")
-    oauth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={' '.join(scopes)}&state={state}&access_type=offline&prompt=consent"
+    oauth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": " ".join(scopes),
+        "state": state,
+        "access_type": "offline",
+        "prompt": "consent",
+    })
     return {"provider": "gmail", "oauth_url": oauth_url, "scopes": scopes, "state": state, "connected": integrations.gmail_connected}
+
+
+@connect_router.get("/gmail/callback")
+async def gmail_oauth_callback(
+    code: str,
+    state: str,
+    redirect_uri: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(select(InvoiceIntegrationSettings).where(InvoiceIntegrationSettings.gmail_state == state))
+    integrations = result.scalar_one_or_none()
+    if not integrations:
+        raise HTTPException(status_code=400, detail="Invalid Gmail OAuth state.")
+    token_data = await exchange_gmail_oauth_code(code, redirect_uri)
+    if not token_data.get("access_token"):
+        raise HTTPException(status_code=400, detail="Google did not return an access token.")
+    integrations.gmail_access_token = token_data["access_token"]
+    integrations.gmail_refresh_token = token_data.get("refresh_token") or integrations.gmail_refresh_token
+    integrations.gmail_token_expires_at = _token_expiry(token_data.get("expires_in"))
+    integrations.gmail_email = token_data.get("email") or integrations.gmail_email
+    integrations.gmail_connected = True
+    integrations.updated_at = _utc_now()
+    session.add(integrations)
+    await session.flush()
+    return {"provider": "gmail", "connected": True, "email": integrations.gmail_email}
 
 
 @connect_router.post("/outlook")
@@ -1389,7 +1941,6 @@ async def connect_outlook(body: ConnectRequest, user: User = Depends(get_current
     state = uuid.uuid4().hex
     integrations.outlook_state = state
     if body.email:
-        integrations.outlook_connected = True
         integrations.outlook_email = str(body.email)
     integrations.updated_at = _utc_now()
     session.add(integrations)
@@ -1397,17 +1948,51 @@ async def connect_outlook(body: ConnectRequest, user: User = Depends(get_current
     scopes = ["Mail.Read", "Mail.Send", "offline_access"]
     client_id = os.getenv("MICROSOFT_CLIENT_ID", "")
     redirect_uri = body.redirect_uri or os.getenv("MICROSOFT_REDIRECT_URI", "https://api.devforgeapp.pro/connect/outlook/callback")
-    oauth_url = f"https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={' '.join(scopes)}&state={state}"
+    oauth_url = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?" + urlencode({
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": " ".join(scopes),
+        "state": state,
+    })
     return {"provider": "outlook", "oauth_url": oauth_url, "scopes": scopes, "state": state, "connected": integrations.outlook_connected}
+
+
+@connect_router.get("/outlook/callback")
+async def outlook_oauth_callback(
+    code: str,
+    state: str,
+    redirect_uri: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(select(InvoiceIntegrationSettings).where(InvoiceIntegrationSettings.outlook_state == state))
+    integrations = result.scalar_one_or_none()
+    if not integrations:
+        raise HTTPException(status_code=400, detail="Invalid Outlook OAuth state.")
+    token_data = await exchange_outlook_oauth_code(code, redirect_uri)
+    if not token_data.get("access_token"):
+        raise HTTPException(status_code=400, detail="Microsoft did not return an access token.")
+    integrations.outlook_access_token = token_data["access_token"]
+    integrations.outlook_refresh_token = token_data.get("refresh_token") or integrations.outlook_refresh_token
+    integrations.outlook_token_expires_at = _token_expiry(token_data.get("expires_in"))
+    integrations.outlook_email = token_data.get("email") or integrations.outlook_email
+    integrations.outlook_connected = True
+    integrations.updated_at = _utc_now()
+    session.add(integrations)
+    await session.flush()
+    return {"provider": "outlook", "connected": True, "email": integrations.outlook_email}
 
 
 @connect_router.post("/stripe")
 async def connect_stripe(body: ConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     if not INVOICEFOLLOW_LIMITS[_plan_for_user(user)].payment_connections_enabled:
         raise HTTPException(status_code=402, detail="Stripe read-only connection requires Pro or Team.")
+    if not body.api_key:
+        raise HTTPException(status_code=400, detail="Stripe restricted API key is required.")
     integrations = await _get_or_create_integration_settings(session, user)
+    integrations.stripe_api_key = body.api_key
     integrations.stripe_connected = True
-    integrations.stripe_account_label = body.account_label or (f"key_...{body.api_key[-4:]}" if body.api_key else "read-only")
+    integrations.stripe_account_label = body.account_label or f"key_...{body.api_key[-4:]}"
     integrations.updated_at = _utc_now()
     session.add(integrations)
     await session.flush()
@@ -1418,9 +2003,13 @@ async def connect_stripe(body: ConnectRequest, user: User = Depends(get_current_
 async def connect_paypal(body: ConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     if not INVOICEFOLLOW_LIMITS[_plan_for_user(user)].payment_connections_enabled:
         raise HTTPException(status_code=402, detail="PayPal read-only connection requires Pro or Team.")
+    if not body.client_id or not body.client_secret:
+        raise HTTPException(status_code=400, detail="PayPal client_id and client_secret are required.")
     integrations = await _get_or_create_integration_settings(session, user)
+    integrations.paypal_client_id = body.client_id
+    integrations.paypal_client_secret = body.client_secret
     integrations.paypal_connected = True
-    integrations.paypal_account_label = body.account_label or "read-only"
+    integrations.paypal_account_label = body.account_label or f"client_...{body.client_id[-4:]}"
     integrations.updated_at = _utc_now()
     session.add(integrations)
     await session.flush()

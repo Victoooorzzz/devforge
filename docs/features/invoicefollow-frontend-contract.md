@@ -6,13 +6,15 @@ This contract covers the production InvoiceFollow dashboard, API clients, and CL
 
 - InvoiceFollow tracks existing invoices and automates collection follow-up.
 - Manual form tracks existing invoices only. It does not issue, generate, render, or certify a legal invoice.
-- AI tone is not part of InvoiceFollow. NLP is used only to classify client replies into payment/reason/review buckets.
+- AI is not part of InvoiceFollow. Reply classification is deterministic and conservative; ambiguous or negated payment wording goes to manual review.
 - Reminder copy comes from editable templates with fixed variables.
 
 ## Ingestion
 
-- `POST /connect/gmail` starts Gmail OAuth with `gmail.readonly` and `gmail.send`.
-- `POST /connect/outlook` starts Microsoft Graph OAuth with `Mail.Read`, `Mail.Send`, and `offline_access`.
+- `POST /connect/gmail` starts Gmail OAuth with `gmail.readonly` and `gmail.send`; it does not mark the account connected until callback success.
+- `GET /connect/gmail/callback` exchanges the OAuth code for tokens and stores the connected account.
+- `POST /connect/outlook` starts Microsoft Graph OAuth with `Mail.Read`, `Mail.Send`, and `offline_access`; it does not mark the account connected until callback success.
+- `GET /connect/outlook/callback` exchanges the OAuth code for tokens and stores the connected account.
 - Forward fallback address is returned by `GET /settings` as `forward_address`.
 - `POST /invoices/detect-email` accepts `subject`, `body`, `sender_email`, `sender_name`, `message_id`, and `source`.
 - Detection returns a preview with `client_name`, `client_email`, `amount`, `currency`, `invoice_number`, `due_date`, `issued_date`, `confidence`, `draft_id`, and `requires_user_confirmation`.
@@ -41,18 +43,19 @@ This contract covers the production InvoiceFollow dashboard, API clients, and CL
 ## Settings And Payments
 
 - `GET /settings` and `PUT /settings` manage company name, sender name, send hour, timezone, weekend policy, no-send-after hour, weekly digest, and immediate alerts.
-- `POST /connect/stripe` stores a read-only Stripe connection label and enables matching by `metadata.invoice_id` or amount/email fallback.
-- `POST /connect/paypal` stores a read-only PayPal connection label and enables amount/email matching.
+- `POST /connect/stripe` requires a restricted read-only Stripe key, stores it server-side, and enables matching by `metadata.invoice_id` or amount/email fallback.
+- `POST /connect/paypal` requires read-only PayPal client credentials and enables amount/email matching.
 - Free users cannot connect Stripe or PayPal.
 
 ## Metrics And Digest
 
 - `GET /metrics` returns recovery rate, recovered/pending amounts, average payment time, and at-risk count.
 - `GET /digest` generates the weekly digest preview used for Monday 9am delivery.
-- Cron endpoints exist for reminders, reply polling, and payment polling.
+- Cron endpoints enqueue reminders, poll Gmail/Outlook replies, poll Stripe/PayPal payments, and the shared `/worker/process` endpoint consumes `SystemOutbox` jobs with retry/backoff.
 
 ## Frontend Copy Guardrails
 
 - Do not say "generate invoice" or "issue invoice".
 - Do not expose `/ai-tone`.
+- Do not mention AI or model-generated tone for InvoiceFollow.
 - Use "Track existing invoice", "Import existing invoice records", and "Add existing invoice record".

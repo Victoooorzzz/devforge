@@ -1,4 +1,5 @@
 import sys
+import asyncio
 import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -226,6 +227,17 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
         self.assertTrue(invoice.cron_paused)
         self.assertIn("verify payment", invoice.manual_review_reason)
 
+    def test_reply_intent_negation_and_ambiguous_context_go_to_manual_review_without_ai(self):
+        negated = invoice_main.classify_reply_intent("No transferi nada todavia.")
+        ambiguous = invoice_main.classify_reply_intent("El banco me dijo que la transferi.")
+
+        self.assertEqual(negated["label"], "DESCONOCIDO")
+        self.assertEqual(negated["engine"], "deterministic")
+        self.assertTrue(negated["manual_review_required"])
+        self.assertEqual(ambiguous["label"], "DESCONOCIDO")
+        self.assertEqual(ambiguous["engine"], "deterministic")
+        self.assertTrue(ambiguous["manual_review_required"])
+
     def test_stripe_metadata_matches_exact_invoice_id(self):
         invoice = invoice_main.Invoice(
             id=42,
@@ -316,7 +328,9 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
             "/templates",
             "/templates/{template_id}",
             "/connect/gmail",
+            "/connect/gmail/callback",
             "/connect/outlook",
+            "/connect/outlook/callback",
             "/connect/stripe",
             "/connect/paypal",
             "/metrics",
@@ -329,10 +343,84 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
         self.assertTrue(contract.exists())
         content = contract.read_text(encoding="utf-8")
         self.assertIn("Manual form tracks existing invoices only", content)
-        self.assertIn("AI tone is not part of InvoiceFollow", content)
+        self.assertIn("AI is not part of InvoiceFollow", content)
         self.assertIn("/invoices/detect-email", content)
         self.assertIn("/connect/gmail", content)
         self.assertIn("/connect/stripe", content)
+
+    def test_gmail_oauth_start_does_not_mark_connected_until_callback(self):
+        session = _FakeSession()
+        response = _client(session).post("/connect/gmail", json={"email": "owner@example.com"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["connected"])
+        integration = next(item for item in session.added if isinstance(item, invoice_main.InvoiceIntegrationSettings))
+        self.assertFalse(integration.gmail_connected)
+        self.assertEqual(integration.gmail_email, "owner@example.com")
+
+    def test_gmail_oauth_callback_exchanges_code_and_stores_tokens(self):
+        integration = invoice_main.InvoiceIntegrationSettings(user_id=1, gmail_state="STATE")
+        session = _FakeSession(responses=[[integration]])
+        original_exchange = getattr(invoice_main, "exchange_gmail_oauth_code", None)
+
+        async def fake_exchange(code, redirect_uri):
+            return {
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "expires_in": 3600,
+                "email": "owner@example.com",
+            }
+
+        invoice_main.exchange_gmail_oauth_code = fake_exchange
+        try:
+            response = _client(session).get("/connect/gmail/callback?code=CODE&state=STATE")
+        finally:
+            if original_exchange is not None:
+                invoice_main.exchange_gmail_oauth_code = original_exchange
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(integration.gmail_connected)
+        self.assertEqual(integration.gmail_access_token, "access-token")
+        self.assertEqual(integration.gmail_refresh_token, "refresh-token")
+        self.assertEqual(integration.gmail_email, "owner@example.com")
+
+    def test_reply_and_payment_crons_call_real_pollers(self):
+        calls = []
+        original_replies = invoice_main.poll_reply_threads
+        original_payments = invoice_main.poll_payment_providers
+
+        async def fake_replies():
+            calls.append("replies")
+            return {"processed_replies": 2, "paused_invoices": 1}
+
+        async def fake_payments():
+            calls.append("payments")
+            return {"processed_payments": 3, "matched_payments": 2}
+
+        invoice_main.poll_reply_threads = fake_replies
+        invoice_main.poll_payment_providers = fake_payments
+        try:
+            client = _client()
+            replies = client.post("/invoices/cron/replies/poll")
+            payments = client.post("/invoices/cron/payments/poll")
+        finally:
+            invoice_main.poll_reply_threads = original_replies
+            invoice_main.poll_payment_providers = original_payments
+
+        self.assertEqual(replies.status_code, 200)
+        self.assertEqual(payments.status_code, 200)
+        self.assertEqual(replies.json()["processed_replies"], 2)
+        self.assertEqual(payments.json()["processed_payments"], 3)
+        self.assertEqual(calls, ["replies", "payments"])
+
+    def test_send_email_worker_raises_when_provider_fails_so_outbox_retries(self):
+        original_send = invoice_main.send_email
+        invoice_main.send_email = lambda **_kwargs: False
+        try:
+            with self.assertRaises(RuntimeError):
+                asyncio.run(invoice_main.handle_send_email({"to": "client@example.test", "subject": "Invoice", "html_body": "<p>Pay</p>"}))
+        finally:
+            invoice_main.send_email = original_send
 
     def test_plan_limits_and_cli_match_pricing_spec(self):
         limits = invoice_main.INVOICEFOLLOW_LIMITS

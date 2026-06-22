@@ -53,9 +53,11 @@ MIGRATION_STATEMENTS = [
         "CREATE TABLE IF NOT EXISTS invoice_integration_settings ("
         "user_id INTEGER PRIMARY KEY, "
         "gmail_connected BOOLEAN DEFAULT FALSE, gmail_email VARCHAR DEFAULT '', gmail_state VARCHAR DEFAULT '', "
+        "gmail_access_token TEXT DEFAULT '', gmail_refresh_token TEXT DEFAULT '', gmail_token_expires_at TIMESTAMP, "
         "outlook_connected BOOLEAN DEFAULT FALSE, outlook_email VARCHAR DEFAULT '', outlook_state VARCHAR DEFAULT '', "
-        "stripe_connected BOOLEAN DEFAULT FALSE, stripe_account_label VARCHAR DEFAULT '', "
-        "paypal_connected BOOLEAN DEFAULT FALSE, paypal_account_label VARCHAR DEFAULT '', "
+        "outlook_access_token TEXT DEFAULT '', outlook_refresh_token TEXT DEFAULT '', outlook_token_expires_at TIMESTAMP, "
+        "stripe_connected BOOLEAN DEFAULT FALSE, stripe_account_label VARCHAR DEFAULT '', stripe_api_key TEXT DEFAULT '', "
+        "paypal_connected BOOLEAN DEFAULT FALSE, paypal_account_label VARCHAR DEFAULT '', paypal_client_id TEXT DEFAULT '', paypal_client_secret TEXT DEFAULT '', "
         "forward_address_token VARCHAR DEFAULT '', created_at TIMESTAMP, updated_at TIMESTAMP)"
     ),
     (
@@ -74,7 +76,7 @@ MIGRATION_STATEMENTS = [
     ),
     (
         "CREATE TABLE IF NOT EXISTS invoice_reply_events ("
-        "id SERIAL PRIMARY KEY, invoice_id INTEGER, user_id INTEGER, provider VARCHAR DEFAULT 'gmail', text VARCHAR DEFAULT '', "
+        "id SERIAL PRIMARY KEY, invoice_id INTEGER, user_id INTEGER, provider VARCHAR DEFAULT 'gmail', provider_message_id VARCHAR DEFAULT '', text VARCHAR DEFAULT '', "
         "intent_label VARCHAR DEFAULT 'DESCONOCIDO', action_taken VARCHAR DEFAULT '', received_at TIMESTAMP)"
     ),
     (
@@ -82,6 +84,16 @@ MIGRATION_STATEMENTS = [
         "id SERIAL PRIMARY KEY, user_id INTEGER, invoice_id INTEGER, provider VARCHAR DEFAULT 'stripe', provider_event_id VARCHAR DEFAULT '', "
         "amount DOUBLE PRECISION DEFAULT 0, currency VARCHAR DEFAULT 'USD', status VARCHAR DEFAULT 'succeeded', raw_json TEXT DEFAULT '{}', detected_at TIMESTAMP)"
     ),
+    "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS gmail_access_token TEXT DEFAULT ''",
+    "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS gmail_refresh_token TEXT DEFAULT ''",
+    "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS gmail_token_expires_at TIMESTAMP",
+    "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS outlook_access_token TEXT DEFAULT ''",
+    "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS outlook_refresh_token TEXT DEFAULT ''",
+    "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS outlook_token_expires_at TIMESTAMP",
+    "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS stripe_api_key TEXT DEFAULT ''",
+    "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS paypal_client_id TEXT DEFAULT ''",
+    "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS paypal_client_secret TEXT DEFAULT ''",
+    "ALTER TABLE invoice_reply_events ADD COLUMN IF NOT EXISTS provider_message_id VARCHAR DEFAULT ''",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS min_price DOUBLE PRECISION",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS in_stock BOOLEAN",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS next_check_at TIMESTAMP",

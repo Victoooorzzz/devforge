@@ -46,6 +46,8 @@ from apps.invoicefollow.backend.main import (
     Invoice,
     InvoiceSettings,
     enqueue_overdue_reminders,
+    poll_payment_providers,
+    poll_reply_threads,
 )
 
 # PriceTrackr
@@ -136,7 +138,13 @@ async def enqueue_periodic_tasks(authenticated: bool = Depends(verify_cron_secre
     # 2. InvoiceFollow: Check for overdue invoices
     try:
         await enqueue_overdue_reminders()
-        results["invoicefollow"] = "enqueued"
+        reply_result = await poll_reply_threads()
+        payment_result = await poll_payment_providers()
+        results["invoicefollow"] = {
+            "reminders": "enqueued",
+            "replies": reply_result,
+            "payments": payment_result,
+        }
     except Exception as e:
         results["invoicefollow"] = f"error: {str(e)}"
         
