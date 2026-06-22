@@ -28,6 +28,19 @@ class WebhookMonitorLimits:
     search_enabled: bool
 
 
+@dataclass(frozen=True)
+class InvoiceFollowLimits:
+    max_active_invoices: int
+    monthly_emails: int
+    monthly_nlp: int
+    max_payment_connections: int
+    max_users: int
+    api_access: bool
+    history_retention_days: int
+    payment_connections_enabled: bool
+    weekly_digest_enabled: bool
+
+
 PRICETRACKR_LIMITS: dict[PlanName, PriceTrackrLimits] = {
     "trial": PriceTrackrLimits(max_active_trackers=5, min_check_frequency_hours=24),
     "paid": PriceTrackrLimits(max_active_trackers=100, min_check_frequency_hours=1),
@@ -49,6 +62,43 @@ WEBHOOKMONITOR_LIMITS: dict[PlanName, WebhookMonitorLimits] = {
         replay_enabled=True,
         diff_enabled=True,
         search_enabled=True,
+    ),
+}
+
+
+INVOICEFOLLOW_LIMITS: dict[str, InvoiceFollowLimits] = {
+    "free": InvoiceFollowLimits(
+        max_active_invoices=5,
+        monthly_emails=25,
+        monthly_nlp=10,
+        max_payment_connections=0,
+        max_users=1,
+        api_access=False,
+        history_retention_days=30,
+        payment_connections_enabled=False,
+        weekly_digest_enabled=False,
+    ),
+    "pro": InvoiceFollowLimits(
+        max_active_invoices=50,
+        monthly_emails=500,
+        monthly_nlp=200,
+        max_payment_connections=2,
+        max_users=1,
+        api_access=True,
+        history_retention_days=90,
+        payment_connections_enabled=True,
+        weekly_digest_enabled=True,
+    ),
+    "team": InvoiceFollowLimits(
+        max_active_invoices=200,
+        monthly_emails=2000,
+        monthly_nlp=1000,
+        max_payment_connections=10,
+        max_users=5,
+        api_access=True,
+        history_retention_days=365,
+        payment_connections_enabled=True,
+        weekly_digest_enabled=True,
     ),
 }
 
@@ -95,6 +145,11 @@ async def get_webhookmonitor_limits_for_user_id(
 ) -> tuple[PlanName, WebhookMonitorLimits]:
     plan = await resolve_user_plan_by_id(session, user_id, "webhookmonitor")
     return plan, WEBHOOKMONITOR_LIMITS[plan]
+
+
+async def get_invoicefollow_limits(user: User, session: AsyncSession) -> tuple[str, InvoiceFollowLimits]:
+    plan = "pro" if await resolve_user_plan(user, session, "invoicefollow") == "paid" else "free"
+    return plan, INVOICEFOLLOW_LIMITS[plan]
 
 
 def reject_price_frequency_if_needed(plan: PlanName, limits: PriceTrackrLimits, requested_hours: int) -> None:

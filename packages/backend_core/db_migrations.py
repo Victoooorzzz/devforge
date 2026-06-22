@@ -29,6 +29,59 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_promise_date DATE",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cron_paused BOOLEAN DEFAULT FALSE",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS promise_token VARCHAR",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS currency VARCHAR DEFAULT 'USD'",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS issued_date DATE",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_number VARCHAR DEFAULT ''",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS source VARCHAR DEFAULT 'import'",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS source_message_id VARCHAR DEFAULT ''",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS thread_id VARCHAR DEFAULT ''",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS schedule_paused_until DATE",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS manual_review_reason VARCHAR DEFAULT ''",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS notes VARCHAR DEFAULT ''",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP",
+    "ALTER TABLE invoice_settings ADD COLUMN IF NOT EXISTS templates_json TEXT DEFAULT ''",
+    "ALTER TABLE invoice_settings ADD COLUMN IF NOT EXISTS company_name VARCHAR DEFAULT ''",
+    "ALTER TABLE invoice_settings ADD COLUMN IF NOT EXISTS send_hour INTEGER DEFAULT 9",
+    "ALTER TABLE invoice_settings ADD COLUMN IF NOT EXISTS skip_weekends BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE invoice_settings ADD COLUMN IF NOT EXISTS timezone VARCHAR DEFAULT 'America/Lima'",
+    "ALTER TABLE invoice_settings ADD COLUMN IF NOT EXISTS sender_name VARCHAR DEFAULT ''",
+    "ALTER TABLE invoice_settings ADD COLUMN IF NOT EXISTS weekly_digest_enabled BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE invoice_settings ADD COLUMN IF NOT EXISTS immediate_alerts_enabled BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE invoice_settings ADD COLUMN IF NOT EXISTS no_send_after_hour INTEGER DEFAULT 18",
+    (
+        "CREATE TABLE IF NOT EXISTS invoice_integration_settings ("
+        "user_id INTEGER PRIMARY KEY, "
+        "gmail_connected BOOLEAN DEFAULT FALSE, gmail_email VARCHAR DEFAULT '', gmail_state VARCHAR DEFAULT '', "
+        "outlook_connected BOOLEAN DEFAULT FALSE, outlook_email VARCHAR DEFAULT '', outlook_state VARCHAR DEFAULT '', "
+        "stripe_connected BOOLEAN DEFAULT FALSE, stripe_account_label VARCHAR DEFAULT '', "
+        "paypal_connected BOOLEAN DEFAULT FALSE, paypal_account_label VARCHAR DEFAULT '', "
+        "forward_address_token VARCHAR DEFAULT '', created_at TIMESTAMP, updated_at TIMESTAMP)"
+    ),
+    (
+        "CREATE TABLE IF NOT EXISTS invoice_detected_drafts ("
+        "id SERIAL PRIMARY KEY, user_id INTEGER, source VARCHAR DEFAULT 'email', source_message_id VARCHAR DEFAULT '', "
+        "raw_subject VARCHAR DEFAULT '', raw_body VARCHAR DEFAULT '', sender_email VARCHAR DEFAULT '', sender_name VARCHAR DEFAULT '', "
+        "client_name VARCHAR DEFAULT '', client_email VARCHAR DEFAULT '', amount DOUBLE PRECISION DEFAULT 0, currency VARCHAR DEFAULT 'USD', "
+        "due_date DATE, issued_date DATE, invoice_number VARCHAR DEFAULT '', confidence DOUBLE PRECISION DEFAULT 0, "
+        "status VARCHAR DEFAULT 'needs_review', parsed_json TEXT DEFAULT '{}', created_at TIMESTAMP)"
+    ),
+    (
+        "CREATE TABLE IF NOT EXISTS invoice_reminder_logs ("
+        "id SERIAL PRIMARY KEY, invoice_id INTEGER, user_id INTEGER, stage_day INTEGER, template_key VARCHAR DEFAULT '', "
+        "status VARCHAR DEFAULT 'queued', provider VARCHAR DEFAULT 'gmail', subject VARCHAR DEFAULT '', body_preview VARCHAR DEFAULT '', "
+        "response_intent VARCHAR DEFAULT '', response_excerpt VARCHAR DEFAULT '', sent_at TIMESTAMP)"
+    ),
+    (
+        "CREATE TABLE IF NOT EXISTS invoice_reply_events ("
+        "id SERIAL PRIMARY KEY, invoice_id INTEGER, user_id INTEGER, provider VARCHAR DEFAULT 'gmail', text VARCHAR DEFAULT '', "
+        "intent_label VARCHAR DEFAULT 'DESCONOCIDO', action_taken VARCHAR DEFAULT '', received_at TIMESTAMP)"
+    ),
+    (
+        "CREATE TABLE IF NOT EXISTS invoice_payment_events ("
+        "id SERIAL PRIMARY KEY, user_id INTEGER, invoice_id INTEGER, provider VARCHAR DEFAULT 'stripe', provider_event_id VARCHAR DEFAULT '', "
+        "amount DOUBLE PRECISION DEFAULT 0, currency VARCHAR DEFAULT 'USD', status VARCHAR DEFAULT 'succeeded', raw_json TEXT DEFAULT '{}', detected_at TIMESTAMP)"
+    ),
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS min_price DOUBLE PRECISION",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS in_stock BOOLEAN",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS next_check_at TIMESTAMP",

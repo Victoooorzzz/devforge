@@ -64,10 +64,11 @@ def detect_payment_webhook(payload: str, headers: dict) -> bool:
 def extract_payment_details(payload: str) -> dict:
     """
     Extracts email and amount from a payment webhook payload.
-    Returns {"email": str | None, "amount": float | None}
+    Returns {"email": str | None, "amount": float | None, "invoice_id": str | None}
     """
     email: Optional[str] = None
     amount: Optional[float] = None
+    invoice_id: Optional[str] = None
 
     for pattern in EMAIL_PATTERNS:
         match = pattern.search(payload)
@@ -86,7 +87,16 @@ def extract_payment_details(payload: str) -> dict:
                 pass
             break
 
-    return {"email": email, "amount": amount}
+    try:
+        decoded = json.loads(payload)
+        metadata = decoded.get("data", {}).get("object", {}).get("metadata", {})
+        invoice_id = str(metadata.get("invoice_id") or "") or None
+    except Exception:
+        invoice_match = re.search(r'"invoice_id"\s*:\s*"?(?P<id>[^",}\s]+)', payload)
+        if invoice_match:
+            invoice_id = invoice_match.group("id")
+
+    return {"email": email, "amount": amount, "invoice_id": invoice_id}
 
 
 async def detect_and_act_on_payment(user_id: int, headers: dict, body: str) -> bool:
@@ -102,29 +112,45 @@ async def detect_and_act_on_payment(user_id: int, headers: dict, body: str) -> b
     details = extract_payment_details(body)
     email = details.get("email")
     amount = details.get("amount")
+    invoice_id = details.get("invoice_id")
 
-    if not email:
+    invoice_pk: Optional[int] = None
+    if invoice_id:
+        try:
+            invoice_pk = int(invoice_id)
+        except (TypeError, ValueError):
+            logger.warning("Logic bridge: ignoring non-numeric invoice_id metadata %r", invoice_id)
+
+    if not email and invoice_pk is None:
         logger.debug("Logic bridge: payment detected but no email found in payload")
         return False
 
     try:
         # Import here to avoid circular imports
         from backend_core.database import get_managed_session
-        from sqlmodel import select
 
         async with get_managed_session() as session:
-            # Import the Invoice model from invoicefollow
-            # We use a string-based query to avoid tight coupling
             from sqlalchemy import text
-            query = text("""
-                UPDATE invoices
-                SET status = 'paid', cron_paused = true
-                WHERE user_id = :user_id
-                  AND LOWER(client_email) = :email
-                  AND status != 'paid'
-                RETURNING id
-            """)
-            result = await session.execute(query, {"user_id": user_id, "email": email.lower()})
+            if invoice_pk is not None:
+                query = text("""
+                    UPDATE invoices
+                    SET status = 'paid', cron_paused = true, paid_at = NOW()
+                    WHERE user_id = :user_id
+                      AND id = :invoice_id
+                      AND status != 'paid'
+                    RETURNING id
+                """)
+                result = await session.execute(query, {"user_id": user_id, "invoice_id": invoice_pk})
+            else:
+                query = text("""
+                    UPDATE invoices
+                    SET status = 'paid', cron_paused = true, paid_at = NOW()
+                    WHERE user_id = :user_id
+                      AND LOWER(client_email) = :email
+                      AND status != 'paid'
+                    RETURNING id
+                """)
+                result = await session.execute(query, {"user_id": user_id, "email": email.lower()})
             updated_ids = result.fetchall()
             await session.commit()
 

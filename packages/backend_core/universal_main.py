@@ -38,6 +38,9 @@ from apps.filecleaner.backend.main import (
 from apps.invoicefollow.backend.main import (
     invoice_router,
     settings_router as iv_settings_router,
+    templates_router as iv_templates_router,
+    connect_router as iv_connect_router,
+    digest_router as iv_digest_router,
     public_router as iv_public_router,
     cron_router as iv_cron_router,
     Invoice,
@@ -85,6 +88,9 @@ all_domain_routers = [
     # InvoiceFollow
     invoice_router,
     iv_settings_router,
+    iv_templates_router,
+    iv_connect_router,
+    iv_digest_router,
     iv_public_router,
     iv_cron_router,
     # PriceTrackr

@@ -7,7 +7,7 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = seoMetadata({
   title: "InvoiceFollow - Automated payment recovery",
-  description: "Automate invoice follow-ups and get paid faster. Perfect for freelancers and agencies. Send smart reminders.",
+  description: "Track existing invoices, automate recovery reminders, classify replies, and reconcile payments.",
   url: "https://invoicefollow.devforgeapp.pro",
   productName: "InvoiceFollow",
 });

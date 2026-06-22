@@ -267,8 +267,8 @@ export default function LandingPage() {
               <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
                 <Share2 className="text-accent" size={32} />
               </div>
-              <h4 className="text-xl font-bold mb-3">1. Connect CRM</h4>
-              <p className="text-neutral-400 text-sm">Create invoices manually or import via CSV. Track all your clients in one place.</p>
+              <h4 className="text-xl font-bold mb-3">1. Connect sources</h4>
+              <p className="text-neutral-400 text-sm">Track existing invoices from Gmail, Outlook, forwarded email, CSV, or an existing-record form.</p>
             </div>
             <div className="flex flex-col items-center">
               <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
@@ -304,7 +304,7 @@ export default function LandingPage() {
               <div className="mb-8">
                 <h3 className="text-2xl font-bold mb-2">Growth Plan</h3>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-5xl font-bold">$9.99</span>
+                  <span className="text-5xl font-bold">$19</span>
                   <span className="text-neutral-400">/mo</span>
                 </div>
                 <p className="text-sm text-neutral-400 mt-4 leading-relaxed">
@@ -313,12 +313,12 @@ export default function LandingPage() {
               </div>
               <ul className="space-y-4 mb-10">
                 {[
-                  "Unlimited Invoices Tracking",
+                  "50 Active Invoice Records",
                   "Automated Email Sequences",
-                  "AI-Powered Debt Risk Profiling",
-                  "Debtor Risk Semaphore",
-                  "Escalation Tone Automation",
-                  "Priority 24/7 Support"
+                  "Reply Intent Classification",
+                  "Stripe Read-only Matching",
+                  "Sender Escalation Templates",
+                  "Weekly Recovery Digest"
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">
                     <Check size={18} className="text-accent" /> {item}
@@ -349,7 +349,7 @@ export default function LandingPage() {
           <div className="text-xs space-y-2">
             <p><strong>Soporte:</strong> <a href="mailto:support@devforgeapp.pro" className="hover:text-white transition-colors">support@devforgeapp.pro</a></p>
             <p><strong>Ubicación:</strong> Lima, Perú</p>
-            <p><strong>Refunds:</strong> You have a 7-day free trial. Once the $9.99 monthly charge is processed, all sales are final and no refunds are issued.</p>
+            <p><strong>Refunds:</strong> You can start on the free plan. Once the $19 monthly Pro charge is processed, all sales are final and no refunds are issued.</p>
           </div>
           <p className="mt-4">&copy; 2024 InvoiceFollow. Part of the DevForge ecosystem.</p>
         </div>
