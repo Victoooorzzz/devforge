@@ -21,8 +21,13 @@ from backend_core.config import get_settings
 from apps.feedbacklens.backend.main import (
     feedback_router,
     settings_router as fl_settings_router,
+    sources_router as fl_sources_router,
+    clusters_router as fl_clusters_router,
+    connect_router as fl_connect_router,
+    digest_router as fl_digest_router,
     cron_router as fl_cron_router,
     FeedbackEntry,
+    FeedbackSource,
     FeedbackSettings,
     weekly_summary_cron,
 )
@@ -84,6 +89,10 @@ all_domain_routers = [
     # FeedbackLens
     feedback_router,
     fl_settings_router,
+    fl_sources_router,
+    fl_clusters_router,
+    fl_connect_router,
+    fl_digest_router,
     fl_cron_router,
     # FileCleaner
     file_router,

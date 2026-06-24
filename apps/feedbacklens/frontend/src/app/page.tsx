@@ -1,7 +1,8 @@
 "use client";
+import Image from "next/image";
 import Link from "next/link";
-import { Check, MessageSquare, ThumbsUp, ThumbsDown, BarChart3, Brain, Share2, Activity } from "lucide-react";
-import { useEffect, useState, useRef } from "react";
+import { Check, MessageSquare, ThumbsUp, ThumbsDown, BarChart3, Share2, Activity } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type FeedbackEntry = {
   text: string;
@@ -30,10 +31,10 @@ const FEEDBACK_QUEUE: FeedbackEntry[] = [
     themes: ["#UI", "#Feature-Request"],
   },
   {
-    text: "Absolutely love the AI summaries. Saves me hours every week!",
+    text: "The weekly theme summary saves me hours every week.",
     sentiment: "positive",
     score: 97,
-    themes: ["#AI", "#Productivity"],
+    themes: ["#Themes", "#Productivity"],
   },
   {
     text: "Onboarding was confusing at first but support team was amazing.",
@@ -48,11 +49,12 @@ function FeedbackLensDemo() {
   const [current, setCurrent] = useState<FeedbackEntry | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [done, setDone] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const analyzingRef = useRef(false);
   const queueRef = useRef<FeedbackEntry[]>([...FEEDBACK_QUEUE]);
 
-  function runAnalysis() {
-    if (analyzing) return;
+  const runAnalysis = useCallback(() => {
+    if (analyzingRef.current) return;
+    analyzingRef.current = true;
     setProcessed([]);
     setCurrent(null);
     setDone(false);
@@ -62,6 +64,7 @@ function FeedbackLensDemo() {
 
     function processNext() {
       if (i >= FEEDBACK_QUEUE.length) {
+        analyzingRef.current = false;
         setAnalyzing(false);
         setCurrent(null);
         setDone(true);
@@ -78,12 +81,11 @@ function FeedbackLensDemo() {
     }
 
     setTimeout(processNext, 300);
-  }
+  }, []);
 
   useEffect(() => {
     runAnalysis();
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
+  }, [runAnalysis]);
 
   const positiveCount = processed.filter(f => f.sentiment === "positive").length;
   const negativeCount = processed.filter(f => f.sentiment === "negative").length;
@@ -128,7 +130,7 @@ function FeedbackLensDemo() {
       {/* Analyzing indicator */}
       {current && (
         <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 flex items-start gap-3 animate-pulse">
-          <Brain size={16} className="text-accent mt-0.5 flex-shrink-0" />
+          <Activity size={16} className="text-accent mt-0.5 flex-shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-mono text-accent uppercase tracking-widest mb-1">Analyzing...</p>
             <p className="text-xs text-neutral-300 italic truncate">&ldquo;{current.text}&rdquo;</p>
@@ -191,8 +193,8 @@ function FeedbackLensDemo() {
           : "bg-accent text-black hover:bg-accent/90"
         }`}
       >
-        <Brain size={14} />
-        {analyzing ? "Analyzing feedback..." : done ? "▶ Re-analyze" : "▶ Analyze Demo Feedback"}
+        <Activity size={14} />
+        {analyzing ? "Analyzing feedback..." : done ? "Re-run review" : "Analyze Demo Feedback"}
       </button>
     </div>
   );
@@ -205,7 +207,7 @@ export default function LandingPage() {
       <nav className="fixed top-0 w-full z-50 glass border-b border-white/5">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
-            <img src="/devforge-logo-white.svg" alt="DevForge" className="h-6 w-auto" />
+            <Image src="/devforge-logo-white.svg" alt="DevForge" width={118} height={24} className="h-6 w-auto" priority />
             <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3 uppercase">
               Feedback<span className="text-accent">Lens</span>
             </span>
@@ -226,7 +228,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto w-full text-center relative z-10">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold mb-8 uppercase tracking-widest">
             <Activity size={12} />
-            <span>AI Feedback Engine Online</span>
+            <span>Local Feedback Engine Online</span>
           </div>
           
           <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-white/50 bg-clip-text text-transparent uppercase">
@@ -234,12 +236,12 @@ export default function LandingPage() {
             Really Think.
           </h1>
           <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto mb-6">
-            The world's first industrial-grade sentiment analysis engine for elite product teams. 
-            Transform thousands of reviews into actionable intelligence in seconds.
+            A production-ready feedback triage engine for product teams.
+            Transform reviews, tickets, and comments into sentiment, themes, and urgent issues.
           </p>
           <div className="text-sm text-neutral-400 space-y-3 mt-6 mb-12 max-w-2xl mx-auto border border-white/5 bg-white/[0.02] p-6 rounded-xl text-left">
             <p><strong className="text-white">The Problem:</strong> Tired of reading thousands of user reviews without finding the core issue?</p>
-            <p><strong className="text-white">The Solution:</strong> This tool extracts common complaints and sentiment using artificial intelligence.</p>
+            <p><strong className="text-white">The Solution:</strong> This tool extracts common complaints, sentiment, and near-duplicates with local rules and VADER scoring.</p>
             <p><strong className="text-white">Who is it for:</strong> Ideal for Product Managers, support teams, and SaaS founders.</p>
           </div>
 
@@ -272,10 +274,10 @@ export default function LandingPage() {
             </div>
             <div className="flex flex-col items-center">
               <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
-                <Brain className="text-accent" size={32} />
+                <Activity className="text-accent" size={32} />
               </div>
               <h4 className="text-xl font-bold mb-3">2. Analyze</h4>
-              <p className="text-neutral-400 text-sm">Our AI extracts core themes, sentiment intensity, and prioritizes urgent bug reports automatically.</p>
+              <p className="text-neutral-400 text-sm">Local sentiment scoring extracts themes, identifies duplicates, and prioritizes urgent bug reports automatically.</p>
             </div>
             <div className="flex flex-col items-center">
               <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6 border border-accent/20">
@@ -293,7 +295,7 @@ export default function LandingPage() {
         <div className="max-w-3xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-5xl font-bold mb-4">Actionable intelligence.</h2>
-            <p className="text-neutral-400">Premium analytics for data-driven product organizations.</p>
+            <p className="text-neutral-400">Practical analytics for data-driven product organizations.</p>
           </div>
 
           <div className="max-w-lg mx-auto">

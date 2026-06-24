@@ -26,6 +26,9 @@ interface FeedbackEntry {
   analyzed_at: string | null;
   created_at: string;
   status: string;
+  deduped?: boolean;
+  duplicate_of_id?: number;
+  analysis_engine?: string | null;
 }
 
 const sentimentConfig = {
@@ -53,6 +56,19 @@ interface WeeklySummary {
   };
 }
 
+interface DedupeSummary {
+  total_feedback: number;
+  duplicate_groups: number;
+  duplicate_candidates: number;
+  dedupe_rate: number;
+  groups: Array<{
+    canonical_id: number;
+    entry_ids: number[];
+    duplicate_ids: number[];
+    average_similarity: number;
+  }>;
+}
+
 export default function DashboardPage() {
   const [entries, setEntries]         = useState<FeedbackEntry[]>([]);
   const [text, setText]               = useState("");
@@ -64,10 +80,11 @@ export default function DashboardPage() {
   const [tab, setTab]                 = useState<Tab>("single");
   const [bulkText, setBulkText]       = useState("");
   const [bulkImporting, setBulkImporting] = useState(false);
-  const [bulkResult, setBulkResult]   = useState<{created: number} | null>(null);
+  const [bulkResult, setBulkResult]   = useState<{created: number; duplicates_skipped?: number; total_rows?: number} | null>(null);
   const [exportOpen, setExportOpen]   = useState(false);
   const [copiedReply, setCopiedReply] = useState<number | null>(null);
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(null);
+  const [dedupeSummary, setDedupeSummary] = useState<DedupeSummary | null>(null);
   const [loading, setLoading]         = useState(true);
   const [loadError, setLoadError]     = useState(false);
   const [toast, setToast]             = useState<DashboardToast | null>(null);
@@ -81,13 +98,15 @@ export default function DashboardPage() {
   const refreshFeedback = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
-    const [entriesResult, summaryResult] = await Promise.allSettled([
+    const [entriesResult, summaryResult, dedupeResult] = await Promise.allSettled([
       apiClient.get<FeedbackEntry[]>("/feedback/list"),
       apiClient.get<WeeklySummary>("/feedback/summary/weekly"),
+      apiClient.get<DedupeSummary>("/feedback/dedupe/summary"),
     ]);
     if (entriesResult.status === "fulfilled") setEntries(entriesResult.value.data);
     if (summaryResult.status === "fulfilled") setWeeklySummary(summaryResult.value.data);
-    if (entriesResult.status === "rejected" && summaryResult.status === "rejected") setLoadError(true);
+    if (dedupeResult.status === "fulfilled") setDedupeSummary(dedupeResult.value.data);
+    if (entriesResult.status === "rejected" && summaryResult.status === "rejected" && dedupeResult.status === "rejected") setLoadError(true);
     setLoading(false);
   }, []);
 
@@ -111,10 +130,16 @@ export default function DashboardPage() {
     trackEvent("feature_used", { feature_name: "add_feedback" });
     try {
       const { data } = await apiClient.post<FeedbackEntry>("/feedback", { text });
-      setEntries(prev => [data, ...prev]);
       setText("");
-      showToast({ tone: "success", message: "Feedback saved. We are finding what your user is saying." });
-      handleAnalyze(data.id);
+      if (data.deduped) {
+        setEntries(prev => prev.some(entry => entry.id === data.duplicate_of_id) ? prev : [data, ...prev]);
+        showToast({ tone: "success", message: "Duplicate matched existing feedback. Counts stay clean." });
+        refreshFeedback();
+      } else {
+        setEntries(prev => [data, ...prev]);
+        showToast({ tone: "success", message: "Feedback saved. We are finding what your user is saying." });
+        handleAnalyze(data.id);
+      }
     } catch {
       showToast({ tone: "error", message: "We could not save that feedback. Check the text and try again." });
     }
@@ -135,7 +160,6 @@ export default function DashboardPage() {
     finally { setAnalyzing(prev => { const s = new Set(prev); s.delete(id); return s; }); }
   };
 
-  // Draft Reply Generator — Skill: gemini-api-dev
   const handleDraftReply = async (id: number) => {
     setDraftingIds(prev => new Set(prev).add(id));
     trackEvent("feature_used", { feature_name: "draft_reply" });
@@ -164,13 +188,13 @@ export default function DashboardPage() {
     setBulkImporting(true);
     trackEvent("feature_used", { feature_name: "bulk_import_feedback" });
     try {
-      const { data } = await apiClient.post<{created: number}>("/feedback/bulk", { texts });
+      const { data } = await apiClient.post<{created: number; duplicates_skipped: number}>("/feedback/bulk", { texts });
       setBulkResult(data);
       setBulkText("");
       // Reload entries
       const { data: newEntries } = await apiClient.get<FeedbackEntry[]>("/feedback/list");
       setEntries(newEntries);
-      showToast({ tone: "success", message: `${data.created} feedback items imported.` });
+      showToast({ tone: "success", message: `${data.created} feedback items imported. ${data.duplicates_skipped} duplicates skipped.` });
     } catch {
       showToast({ tone: "error", message: "We could not import those feedback items. Keep one item per line and try again." });
     }
@@ -183,11 +207,11 @@ export default function DashboardPage() {
     const formData = new FormData();
     formData.append("file", file);
     try {
-      const { data } = await uploadFile<{ created: number }>("/feedback/bulk-csv", formData);
-      setBulkResult({ created: data.created });
+      const { data } = await uploadFile<{ created: number; duplicates_skipped: number; total_rows: number }>("/feedback/bulk-csv", formData);
+      setBulkResult(data);
       const { data: newEntries } = await apiClient.get<FeedbackEntry[]>("/feedback/list");
       setEntries(newEntries);
-      showToast({ tone: "success", message: `${data.created} feedback items imported from CSV.` });
+      showToast({ tone: "success", message: `${data.created} feedback items imported from CSV. ${data.duplicates_skipped} duplicates skipped.` });
     } catch {
       showToast({ tone: "error", message: "We could not read that CSV. Check that it has a text column." });
     }
@@ -333,6 +357,26 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {dedupeSummary && dedupeSummary.total_feedback > 0 && (
+          <div className="p-4 rounded-lg mb-6" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "var(--color-text-secondary)" }}>Data quality</p>
+                <p className="text-sm" style={{ color: "var(--color-text)" }}>
+                  {dedupeSummary.duplicate_groups} duplicate group{dedupeSummary.duplicate_groups === 1 ? "" : "s"} found across {dedupeSummary.total_feedback} feedback items.
+                </p>
+                <p className="text-xs mt-1" style={{ color: "var(--color-text-secondary)" }}>
+                  Near-duplicate detection keeps repeated complaints from inflating trend counts.
+                </p>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="text-xl font-mono font-bold text-[var(--color-accent)]">{Math.round(dedupeSummary.dedupe_rate * 100)}%</p>
+                <p className="text-[10px] uppercase opacity-50">matched</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Stats */}
         <div className="grid grid-cols-3 gap-4 mb-6">
           {[
@@ -404,7 +448,10 @@ export default function DashboardPage() {
               <div className="flex items-center gap-2 p-3 rounded-lg animate-in fade-in"
                 style={{ backgroundColor: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)" }}>
                 <Check size={14} className="text-emerald-500" />
-                <p className="text-sm font-medium text-emerald-500">{bulkResult.created} feedback items imported</p>
+                <p className="text-sm font-medium text-emerald-500">
+                  {bulkResult.created} feedback items imported
+                  {bulkResult.duplicates_skipped ? `, ${bulkResult.duplicates_skipped} duplicates skipped` : ""}
+                </p>
               </div>
             )}
           </div>
@@ -454,7 +501,6 @@ export default function DashboardPage() {
                       <span className="text-xs font-medium px-2 py-0.5 rounded-full"
                         style={{ backgroundColor: cfg.bg, color: cfg.color }}>{cfg.label}</span>
                     )}
-                    {/* Draft Reply button — Skill: gemini-api-dev */}
                     {entry.analyzed_at && !entry.draft_reply && (
                       <button onClick={e => { e.stopPropagation(); handleDraftReply(entry.id); }}
                         disabled={isDrafting}
@@ -525,7 +571,7 @@ export default function DashboardPage() {
                 <p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--color-text-secondary)" }}>
                   Reply draft
                 </p>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400">AI</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500">Local</span>
               </div>
               <div className="p-3 rounded-lg text-xs" style={{ backgroundColor: "var(--color-surface-raised)", color: "var(--color-text)" }}>
                 {selected.draft_reply}

@@ -29,7 +29,7 @@ replacements = {
 
     # FeedbackLens
     "¿Cansado de leer miles de reseñas de usuarios sin poder encontrar el problema principal?": "Tired of reading thousands of user reviews without finding the core issue?",
-    "Esta herramienta extrae quejas comunes y sentimiento utilizando inteligencia artificial.": "This tool extracts common complaints and sentiment using artificial intelligence.",
+    "Esta herramienta extrae quejas comunes, sentimiento y duplicados con analisis local.": "This tool extracts common complaints, sentiment, and duplicates locally.",
     "Ideal para Product Managers, equipos de soporte y SaaS founders.": "Ideal for Product Managers, support teams, and SaaS founders.",
 
     # Legal General

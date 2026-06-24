@@ -1,0 +1,2 @@
+"""FeedbackLens CLI package."""
+

@@ -49,7 +49,7 @@ PRODUCTS = [
         app_slug="feedbacklens",
         env_key="FEEDBACKLENS",
         name="Feedback Lens",
-        description="AI-powered sentiment analysis for customer feedback.",
+        description="Local sentiment analysis and deduped feedback triage.",
     ),
 ]
 

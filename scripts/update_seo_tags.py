@@ -35,11 +35,11 @@ apps = {
         "target": "Ideal para backend developers, integradores y equipos de DevOps."
     },
     "feedbacklens": {
-        "title": "FeedbackLens - AI-powered sentiment analysis",
-        "description": "Analyze customer feedback instantly. Extract complaints and sentiment with AI. Perfect for Product Managers.",
+        "title": "FeedbackLens - Local sentiment analysis",
+        "description": "Analyze customer feedback instantly. Extract complaints, sentiment, and duplicates locally. Perfect for Product Managers.",
         "domain": "feedbacklens.devforgeapp.pro",
         "problem": "¿Cansado de leer miles de reseñas de usuarios sin poder encontrar el problema principal?",
-        "solution": "Esta herramienta extrae quejas comunes y sentimiento utilizando inteligencia artificial.",
+        "solution": "Esta herramienta extrae quejas comunes, sentimiento y duplicados con analisis local.",
         "target": "Ideal para Product Managers, equipos de soporte y SaaS founders."
     }
 }

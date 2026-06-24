@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
@@ -24,7 +25,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <aside className="w-full md:w-56 md:flex-shrink-0 flex flex-col border-b md:border-b-0 md:border-r" style={{ backgroundColor: "var(--color-surface)", borderColor: "var(--color-border)" }}>
         <div className="h-16 flex items-center px-5 border-b" style={{ borderColor: "var(--color-border)" }}>
           <Link href="/" className="flex items-center gap-3">
-            <img src="/devforge-logo-white.svg" alt="DevForge" className="h-5 w-auto" />
+            <Image src="/devforge-logo-white.svg" alt="DevForge" width={98} height={20} className="h-5 w-auto" />
             <span className="text-base font-bold border-l border-white/10 pl-3">
               Feedback<span style={{ color: "var(--color-accent)" }}>Lens</span>
             </span>

@@ -80,3 +80,20 @@
   - `pnpm run lint` -> 9 tasks OK, warnings existentes.
   - `git diff --check -- PRODUCTION_SETUP.md FINAL-REPORT.md ROADMAP-PROGRESS.md` -> OK, solo warnings CRLF esperados en Windows.
 - Commit: `iter-5: polish-docs-final-report`.
+
+## Bloque FeedbackLens - Production Pipeline
+- Estado: completada en backend, CLI, copy y contrato frontend.
+- Cambios:
+  - Eliminada dependencia externa; analisis local con VADER y fallback keyword.
+  - Agregados modelos/campos para fuentes, source metadata, cluster slug y prioridad.
+  - Agregados `/sources`, `/feedback/ingest/email`, `/feedback/ingest/canny`, `/feedback/dedupe/summary`, `/clusters`, `/clusters/{id}/github-issue`, `/digest` y `/connect/github`.
+  - Agregado CLI `apps/feedbacklens/cli/feedbacklens.py`.
+  - Dashboard consume resumen de dedupe y maneja respuestas `deduped`.
+  - Landing/settings/product config ya no prometen IA.
+- Verificacion:
+  - `python -m unittest tests.test_feedbacklens_production_pipeline tests.test_feedbacklens_sources_clusters_cli tests.test_feedbacklens_dedupe_integration` -> 10 tests OK.
+  - `python -m unittest discover -s tests` -> 127 tests OK.
+  - `pnpm --filter feedbacklens lint` -> OK sin warnings.
+  - `pnpm --filter feedbacklens typecheck` -> OK.
+  - `RUST_BACKTRACE=1 pnpm --filter feedbacklens build` -> OK.
+  - `pnpm run typecheck` -> OK.

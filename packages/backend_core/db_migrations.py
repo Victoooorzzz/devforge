@@ -146,11 +146,24 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS is_urgent BOOLEAN DEFAULT FALSE",
     "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS draft_reply VARCHAR",
     "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS analysis_engine VARCHAR",
+    "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS source VARCHAR DEFAULT 'manual'",
+    "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS author VARCHAR DEFAULT ''",
+    "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS source_url VARCHAR DEFAULT ''",
+    "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS source_message_id VARCHAR DEFAULT ''",
+    "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS cluster_slug VARCHAR DEFAULT ''",
+    "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS priority VARCHAR DEFAULT 'low'",
     "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS alert_email VARCHAR DEFAULT ''",
     "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS weekly_summary_enabled BOOLEAN DEFAULT TRUE",
     "ALTER TABLE feedback_settings ALTER COLUMN negative_threshold TYPE DOUBLE PRECISION USING negative_threshold::double precision",
     "ALTER TABLE feedback_settings ALTER COLUMN negative_threshold SET DEFAULT 0.5",
     "UPDATE feedback_settings SET negative_threshold = 0.5 WHERE negative_threshold > 1",
+    (
+        "CREATE TABLE IF NOT EXISTS feedback_sources ("
+        "id SERIAL PRIMARY KEY, user_id INTEGER, source_type VARCHAR DEFAULT 'manual', display_name VARCHAR DEFAULT '', "
+        "handle VARCHAR DEFAULT '', status VARCHAR DEFAULT 'connected', access_token VARCHAR DEFAULT '', refresh_token VARCHAR DEFAULT '', "
+        "webhook_secret VARCHAR DEFAULT '', config_json TEXT DEFAULT '{}', forward_token VARCHAR DEFAULT '', "
+        "last_polled_at TIMESTAMP, created_at TIMESTAMP, updated_at TIMESTAMP)"
+    ),
     (
         "CREATE UNIQUE INDEX IF NOT EXISTS "
         "uq_user_product_access_user_app_idx "

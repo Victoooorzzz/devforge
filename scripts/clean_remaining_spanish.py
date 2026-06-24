@@ -12,7 +12,7 @@ replacements = {
     "Importar en masa": "Bulk import",
     "Pausar recordatorios (promesa de pago)": "Pause reminders (promise to pay)",
     "Error desconocido": "Unknown error",
-    "Error en análisis de IA": "AI analysis error",
+    "Error en análisis de IA": "Analysis error",
     "No se detectaron problemas — los datos parecen limpios.": "No issues detected — the data appears clean."
 }
 

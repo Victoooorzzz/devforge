@@ -101,7 +101,7 @@ async def test_filecleaner():
 async def test_feedbacklens():
     """
     FeedbackLens: Recibe texto → analiza sentimiento → devuelve
-    sentiment + score + keywords. Usa Gemini → VADER → keyword fallback.
+    sentiment + score + keywords. Usa VADER local -> keyword fallback.
     """
     print("\n" + "="*60)
     print("💬 FEEDBACKLENS — Análisis de Sentimiento")

@@ -251,23 +251,23 @@ export default function SettingsPage() {
           </SettingsSection>
 
           <SettingsSection
-            title="AI Analysis Preferences"
+            title="Local Analysis Preferences"
             description="Tune how feedback is classified and where weekly summaries are sent."
           >
             <form onSubmit={handleFeedbackSave} className="max-w-2xl space-y-6">
               <div>
                 <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
-                  Custom Prompt
+                  Theme Focus
                 </label>
                 <textarea
                   value={feedbackSettings.custom_prompt}
                   onChange={(event) => setFeedbackSettings({ ...feedbackSettings, custom_prompt: event.target.value })}
                   className="input-field h-32 w-full py-3"
-                  placeholder="Focus specifically on pricing complaints and feature requests..."
+                  placeholder="pricing complaints, checkout issues, feature requests..."
                   disabled={savingFeedback}
                 />
                 <p className="mt-1.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
-                  Additional instructions for Gemini when analyzing feedback.
+                  Optional terms the local analyzer should prioritize when extracting themes.
                 </p>
               </div>
 
@@ -349,7 +349,7 @@ export default function SettingsPage() {
               </div>
 
               <button type="submit" className="btn-primary" disabled={savingFeedback}>
-                {savingFeedback ? "Saving..." : "Save AI Preferences"}
+                {savingFeedback ? "Saving..." : "Save Analysis Preferences"}
               </button>
             </form>
           </SettingsSection>
