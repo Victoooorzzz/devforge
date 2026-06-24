@@ -67,7 +67,7 @@ function RegisterForm() {
         </div>
 
         <div className="badge mb-6 w-full justify-center text-center py-2 rounded-md" style={{ backgroundColor: "var(--color-accent-dim)", color: "var(--color-accent)" }}>
-          7-day free trial · Then $9.99/month · Cancel anytime
+          7-day free trial · Then $19/month · Cancel anytime
         </div>
 
         {/* Form */}

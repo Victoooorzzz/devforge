@@ -6,7 +6,7 @@ export const product = {
   accentColor: "#821346",
   keyword: "feedback sentiment analysis",
   seoTitle: "Feedback Lens - Local Sentiment Analysis for User Feedback | DevForge",
-  seoDescription: "Collect user feedback, classify sentiment locally, deduplicate repeated complaints, and spot the issues your team should handle next. Only $9.99/mo.",
+  seoDescription: "Collect user feedback, classify sentiment locally, deduplicate repeated complaints, and spot the issues your team should handle next. Pro starts at $19/mo.",
   navLinks: [{ label: "Features", href: "#features" }, { label: "Pricing", href: "#pricing" }],
   hero: {
     badge: "Local Analysis",
@@ -24,16 +24,16 @@ export const product = {
   ],
   pricing: {
     planName: "Pro",
-    price: 9.99,
-    description: "Unlimited feedback and local analysis",
+    price: 19,
+    description: "5000 feedback items per month with local analysis",
     polarProductId: process.env.NEXT_PUBLIC_POLAR_PRODUCT_ID || process.env.NEXT_PUBLIC_POLAR_PRODUCT_ID_FEEDBACKLENS || "",
     features: [
-      { text: "Unlimited feedback entries", included: true },
+      { text: "5000 feedback items/month", included: true },
       { text: "Local sentiment analysis", included: true },
       { text: "Theme detection", included: true },
       { text: "Near-duplicate detection", included: true },
       { text: "CSV import/export", included: true },
-      { text: "Slack integration", included: false },
+      { text: "GitHub, Canny, X, and Reddit sources", included: true },
     ],
   },
   testimonials: [

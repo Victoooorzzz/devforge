@@ -1,12 +1,15 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-import json, logging, io, re, unicodedata, uuid
+import base64, hashlib, hmac, json, logging, io, re, secrets, unicodedata, uuid
 from difflib import SequenceMatcher
+from urllib.parse import urlencode
 from urllib import error as url_error, request as url_request
-from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile, Query
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func
 from sqlmodel import Field, SQLModel, select
 from pydantic import BaseModel, Field as PydanticField
 from typing import Any, Optional, List, Literal
@@ -18,11 +21,18 @@ from backend_core import create_app, get_current_user, get_session, User, requir
 from backend_core.database import get_managed_session
 from backend_core.email_service import send_email
 from backend_core.outbox_models import SystemOutbox
+from backend_core.plan_limits import (
+    get_feedbacklens_limits,
+    reject_feedbacklens_feedback_count_if_needed,
+    reject_feedbacklens_source_if_needed,
+)
 from backend_core.worker import register_job_handler
 
 logger = logging.getLogger(__name__)
 DEDUPE_LOOKBACK_LIMIT = 500
 SEMANTIC_DUPLICATE_THRESHOLD = 0.75
+FEEDBACK_TEXT_LIMIT = 2000
+SPAM_TERMS = ("buy now", "click here", "free money", "casino", "viagra", "limited offer")
 FEEDBACK_STOPWORDS = {
     "a",
     "an",
@@ -109,6 +119,8 @@ class FeedbackSettings(SQLModel, table=True):
     negative_threshold: float = Field(default=0.5, ge=0, le=1)
     alert_email: str = Field(default="")
     weekly_summary_enabled: bool = Field(default=True)
+    timezone: str = Field(default="UTC")
+    last_weekly_digest_at: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------
@@ -129,12 +141,21 @@ class FeedbackSourceCreate(BaseModel):
     config: dict[str, Any] = PydanticField(default_factory=dict)
 
 
+class EmailAttachmentPayload(BaseModel):
+    filename: str = ""
+    content_type: str = ""
+    text: str = ""
+    content: str = ""
+    encoding: Literal["plain", "base64"] = "plain"
+
+
 class EmailIngestRequest(BaseModel):
     from_email: str
     subject: str = ""
     body: str
     message_id: str = ""
     source_url: str = ""
+    attachments: list[EmailAttachmentPayload] = PydanticField(default_factory=list)
 
 
 class CannyIngestRequest(BaseModel):
@@ -155,11 +176,24 @@ class GitHubConnectRequest(BaseModel):
     redirect_uri: str = ""
 
 
+class TwitterConnectRequest(BaseModel):
+    handle: str = ""
+    query: str = ""
+    redirect_uri: str = ""
+
+
+class RedditConnectRequest(BaseModel):
+    subreddit: str = ""
+    query: str = ""
+    redirect_uri: str = ""
+
+
 class FeedbackPrefsUpdate(BaseModel):
     custom_prompt: str = ""
     negative_threshold: float = PydanticField(default=0.5, ge=0, le=1)
     alert_email: str = ""
     weekly_summary_enabled: bool = True
+    timezone: str = "UTC"
 
 # ---------------------------------------------------------------------------
 # Analysis Engines (VADER -> keyword fallback)
@@ -325,6 +359,198 @@ def _source_poll_frequency_hours(source_type: str) -> int | None:
     }.get(source_type)
 
 
+def _is_spam_feedback(text: str) -> bool:
+    lowered = text.lower()
+    spam_hits = sum(1 for term in SPAM_TERMS if term in lowered)
+    url_count = len(re.findall(r"https?://", lowered))
+    return spam_hits >= 2 or (spam_hits >= 1 and url_count >= 2)
+
+
+def _sentence_split(text: str) -> list[str]:
+    return [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", text) if sentence.strip()]
+
+
+def _clean_feedback_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return ""
+    if _is_spam_feedback(normalized):
+        raise HTTPException(status_code=400, detail="Feedback rejected as spam")
+    if len(normalized) <= FEEDBACK_TEXT_LIMIT:
+        return normalized
+
+    key_terms = (
+        "bug", "broken", "crash", "refund", "payment", "billing", "checkout", "login",
+        "export", "csv", "urgent", "blocked", "error", "slow", "pricing", "feature",
+    )
+    sentences = _sentence_split(normalized)
+    selected: list[str] = []
+    for sentence in sentences[:3]:
+        if sentence not in selected:
+            selected.append(sentence)
+    for sentence in sentences:
+        lowered = sentence.lower()
+        if any(term in lowered for term in key_terms) and sentence not in selected:
+            selected.append(sentence)
+    compact = " ".join(selected).strip() or normalized[:FEEDBACK_TEXT_LIMIT]
+    if len(compact) > FEEDBACK_TEXT_LIMIT:
+        compact = compact[:FEEDBACK_TEXT_LIMIT].rsplit(" ", 1)[0].strip()
+    return compact
+
+
+def _extract_attachment_text(attachment: EmailAttachmentPayload) -> str:
+    text = attachment.text.strip()
+    if text:
+        return text
+
+    content_type = attachment.content_type.lower()
+    filename = attachment.filename.lower()
+    text_like = (
+        content_type.startswith("text/")
+        or content_type in {"application/json", "application/csv", "text/csv"}
+        or filename.endswith((".txt", ".csv", ".json", ".md", ".log"))
+    )
+    if not text_like or not attachment.content:
+        return ""
+
+    raw = attachment.content
+    if attachment.encoding == "base64":
+        try:
+            raw_bytes = base64.b64decode(raw, validate=True)
+            return raw_bytes.decode("utf-8", errors="replace").strip()
+        except Exception:
+            return ""
+    return raw.strip()
+
+
+def _combine_email_feedback_text(body: EmailIngestRequest) -> str:
+    pieces = [_combine_feedback_text(body.subject, body.body)]
+    for attachment in body.attachments:
+        extracted = _extract_attachment_text(attachment)
+        if extracted:
+            label = attachment.filename or "attachment"
+            pieces.append(f"Attachment {label}: {extracted}")
+    return "\n\n".join(piece for piece in pieces if piece.strip())
+
+
+def _http_json(url: str, *, method: str = "GET", headers: dict[str, str] | None = None, payload: dict | None = None) -> dict:
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = url_request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "DevForge-FeedbackLens",
+            **(headers or {}),
+        },
+    )
+    try:
+        with url_request.urlopen(req, timeout=30) as response:
+            raw = response.read().decode("utf-8")
+    except url_error.HTTPError as exc:
+        raw = exc.read().decode("utf-8")
+        raise HTTPException(status_code=502, detail=f"Source request failed: {raw}") from exc
+    return json.loads(raw) if raw else {}
+
+
+def _http_form_json(
+    url: str,
+    *,
+    payload: dict[str, str],
+    headers: dict[str, str] | None = None,
+    basic_auth: tuple[str, str] | None = None,
+) -> dict:
+    request_headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "DevForge-FeedbackLens",
+        **(headers or {}),
+    }
+    if basic_auth:
+        token = base64.b64encode(f"{basic_auth[0]}:{basic_auth[1]}".encode("utf-8")).decode("ascii")
+        request_headers["Authorization"] = f"Basic {token}"
+
+    req = url_request.Request(
+        url,
+        data=urlencode(payload).encode("utf-8"),
+        method="POST",
+        headers=request_headers,
+    )
+    try:
+        with url_request.urlopen(req, timeout=30) as response:
+            raw = response.read().decode("utf-8")
+    except url_error.HTTPError as exc:
+        raw = exc.read().decode("utf-8")
+        raise HTTPException(status_code=502, detail=f"OAuth token exchange failed: {raw}") from exc
+    return json.loads(raw) if raw else {}
+
+
+def _source_config(source: FeedbackSource) -> dict:
+    try:
+        return json.loads(source.config_json or "{}")
+    except Exception:
+        return {}
+
+
+def _pkce_pair() -> tuple[str, str]:
+    verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii").rstrip("=")
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
+    return verifier, challenge
+
+
+def _feedbacklens_plan(user: User):
+    return get_feedbacklens_limits(user)
+
+
+def _count_from_result(result: Any) -> int:
+    if hasattr(result, "scalar_one"):
+        return int(result.scalar_one() or 0)
+    if hasattr(result, "scalar"):
+        value = result.scalar
+        if isinstance(value, int):
+            return value
+    rows = getattr(result, "rows", None)
+    if rows is not None:
+        return len(rows)
+    return 0
+
+
+async def _feedback_source_count(user_id: int, session: AsyncSession) -> int:
+    result = await session.execute(
+        select(func.count()).select_from(FeedbackSource).where(
+            FeedbackSource.user_id == user_id,
+            FeedbackSource.status != "deleted",
+        )
+    )
+    return _count_from_result(result)
+
+
+async def _monthly_feedback_count(user_id: int, session: AsyncSession) -> int:
+    month_start = _utc_now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    result = await session.execute(
+        select(func.count()).select_from(FeedbackEntry).where(
+            FeedbackEntry.user_id == user_id,
+            FeedbackEntry.created_at >= month_start,
+        )
+    )
+    return _count_from_result(result)
+
+
+async def _enforce_source_limit(user: User, source_type: str, session: AsyncSession) -> None:
+    plan, limits = _feedbacklens_plan(user)
+    source_count = await _feedback_source_count(user.id, session)
+    reject_feedbacklens_source_if_needed(plan, limits, source_type, source_count)
+
+
+async def _enforce_feedback_limit(user: User, incoming_count: int, session: AsyncSession) -> None:
+    plan, limits = _feedbacklens_plan(user)
+    monthly_count = await _monthly_feedback_count(user.id, session)
+    reject_feedbacklens_feedback_count_if_needed(plan, limits, monthly_count, incoming_count)
+
+
 def _serialize(entry: FeedbackEntry) -> dict:
     analyzed_at = entry.created_at.isoformat() if entry.sentiment else None
     return {
@@ -400,12 +626,21 @@ def _find_semantic_duplicate(text: str, candidates: list[FeedbackEntry]) -> Feed
     best_match = None
     best_score = 0.0
     for candidate in candidates:
-        score = _semantic_similarity(text, candidate.text)
+        score = _semantic_similarity(text, getattr(candidate, "text", "") or "")
         if score > best_score:
             best_score = score
             best_match = candidate
     if best_match and best_score >= SEMANTIC_DUPLICATE_THRESHOLD:
         return best_match
+    return None
+
+
+def _find_source_message_duplicate(source: str, source_message_id: str, candidates: list[FeedbackEntry]) -> FeedbackEntry | None:
+    if not source_message_id:
+        return None
+    for candidate in candidates:
+        if getattr(candidate, "source", "") == source and getattr(candidate, "source_message_id", "") == source_message_id:
+            return candidate
     return None
 
 
@@ -594,6 +829,158 @@ def _post_github_issue(repo: str, token: str, payload: dict) -> dict:
     return json.loads(raw) if raw else {}
 
 
+async def _poll_twitter_source(source: FeedbackSource) -> list[dict]:
+    config = _source_config(source)
+    query = config.get("query") or source.handle or source.display_name
+    if not source.access_token or not query:
+        return []
+    params = urlencode({"query": query, "max_results": 10, "tweet.fields": "author_id,created_at"})
+    data = _http_json(
+        f"https://api.twitter.com/2/tweets/search/recent?{params}",
+        headers={"Authorization": f"Bearer {source.access_token}"},
+    )
+    items = []
+    for tweet in data.get("data", []):
+        tweet_id = str(tweet.get("id", ""))
+        items.append({
+            "text": tweet.get("text", ""),
+            "author": str(tweet.get("author_id", "")),
+            "source_url": f"https://x.com/i/web/status/{tweet_id}" if tweet_id else "",
+            "source_message_id": tweet_id,
+        })
+    return items
+
+
+async def _poll_reddit_source(source: FeedbackSource) -> list[dict]:
+    config = _source_config(source)
+    query = config.get("query") or source.handle or source.display_name
+    subreddit = config.get("subreddit", "")
+    if not source.access_token or not query:
+        return []
+    base = f"https://oauth.reddit.com/r/{subreddit}/search" if subreddit else "https://oauth.reddit.com/search"
+    params = urlencode({"q": query, "sort": "new", "limit": 10, "restrict_sr": bool(subreddit)})
+    data = _http_json(
+        f"{base}?{params}",
+        headers={"Authorization": f"Bearer {source.access_token}"},
+    )
+    items = []
+    for child in data.get("data", {}).get("children", []):
+        post = child.get("data", {})
+        post_id = str(post.get("id", ""))
+        text = _combine_feedback_text(post.get("title", ""), post.get("selftext", ""))
+        items.append({
+            "text": text,
+            "author": post.get("author", ""),
+            "source_url": f"https://reddit.com{post.get('permalink', '')}" if post.get("permalink") else "",
+            "source_message_id": post_id,
+        })
+    return items
+
+
+async def _poll_github_source(source: FeedbackSource) -> list[dict]:
+    config = _source_config(source)
+    repo = config.get("repo", "")
+    if not source.access_token or not repo:
+        return []
+    params = urlencode({"state": "open", "per_page": 20})
+    data = _http_json(
+        f"https://api.github.com/repos/{repo}/issues?{params}",
+        headers={
+            "Authorization": f"Bearer {source.access_token}",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    if not isinstance(data, list):
+        return []
+    items = []
+    for issue in data:
+        if issue.get("pull_request"):
+            continue
+        issue_id = str(issue.get("id", ""))
+        text = _combine_feedback_text(issue.get("title", ""), issue.get("body", ""))
+        items.append({
+            "text": text,
+            "author": (issue.get("user") or {}).get("login", ""),
+            "source_url": issue.get("html_url", ""),
+            "source_message_id": issue_id,
+        })
+    return items
+
+
+async def _poll_source_feedback(source: FeedbackSource) -> list[dict]:
+    if source.source_type == "twitter":
+        return await _poll_twitter_source(source)
+    if source.source_type == "reddit":
+        return await _poll_reddit_source(source)
+    if source.source_type == "github":
+        return await _poll_github_source(source)
+    return []
+
+
+def _source_is_due(source: FeedbackSource, now: datetime | None = None) -> bool:
+    frequency = _source_poll_frequency_hours(source.source_type)
+    if frequency is None or source.status != "connected":
+        return False
+    if not source.access_token:
+        return False
+    if not source.last_polled_at:
+        return True
+    current = now or _utc_now()
+    return source.last_polled_at <= current - timedelta(hours=frequency)
+
+
+async def poll_feedback_sources() -> dict:
+    async with get_managed_session() as session:
+        result = await session.execute(
+            select(FeedbackSource).where(
+                FeedbackSource.status == "connected",
+                FeedbackSource.source_type.in_(["twitter", "reddit", "github"]),
+            )
+        )
+        sources = list(result.scalars().all())
+        now = _utc_now()
+        ingested = 0
+        skipped_duplicates = 0
+        failed: list[dict] = []
+        for source in sources:
+            if not _source_is_due(source, now):
+                continue
+            try:
+                items = await _poll_source_feedback(source)
+                for item in items:
+                    try:
+                        created = await _create_processed_feedback(
+                            user_id=source.user_id,
+                            text=item.get("text", ""),
+                            source=source.source_type,
+                            author=item.get("author", ""),
+                            source_url=item.get("source_url", ""),
+                            source_message_id=item.get("source_message_id", ""),
+                            session=session,
+                        )
+                        if created.get("deduped"):
+                            skipped_duplicates += 1
+                        else:
+                            ingested += 1
+                    except HTTPException as exc:
+                        if exc.status_code != 400:
+                            raise
+                source.last_polled_at = now
+                source.updated_at = now
+                session.add(source)
+            except Exception as exc:
+                logger.warning("Feedback source polling failed for %s: %s", source.id, exc)
+                failed.append({"source_id": source.id, "source_type": source.source_type, "error": str(exc)})
+        await session.commit()
+        return {
+            "status": "success",
+            "sources_checked": len(sources),
+            "ingested": ingested,
+            "duplicates_skipped": skipped_duplicates,
+            "failed": failed,
+        }
+
+
 async def _load_dedupe_candidates(user_id: int, session: AsyncSession) -> list[FeedbackEntry]:
     result = await session.execute(
         select(FeedbackEntry)
@@ -614,6 +1001,7 @@ clusters_router = APIRouter(prefix="/clusters", tags=["clusters"], dependencies=
 connect_router = APIRouter(prefix="/connect", tags=["connectors"], dependencies=[Depends(require_product_access("feedbacklens"))])
 digest_router = APIRouter(tags=["digest"], dependencies=[Depends(require_product_access("feedbacklens"))])
 cron_router = APIRouter(prefix="/feedback", tags=["cron"])
+public_ingest_router = APIRouter(prefix="/feedback", tags=["ingest"])
 
 
 @settings_router.get("/feedback-prefs")
@@ -629,6 +1017,8 @@ async def get_feedback_prefs(user: User = Depends(get_current_user), session: As
         "negative_threshold": prefs.negative_threshold,
         "alert_email": prefs.alert_email,
         "weekly_summary_enabled": prefs.weekly_summary_enabled,
+        "timezone": prefs.timezone,
+        "last_weekly_digest_at": prefs.last_weekly_digest_at.isoformat() if prefs.last_weekly_digest_at else None,
     }
 
 
@@ -642,6 +1032,7 @@ async def update_feedback_prefs(body: FeedbackPrefsUpdate, user: User = Depends(
     prefs.negative_threshold = body.negative_threshold
     prefs.alert_email = body.alert_email
     prefs.weekly_summary_enabled = body.weekly_summary_enabled
+    prefs.timezone = body.timezone or "UTC"
     session.add(prefs)
     await session.flush()
     return {"ok": True}
@@ -680,6 +1071,7 @@ async def list_sources(user: User = Depends(get_current_user), session: AsyncSes
 
 @sources_router.post("")
 async def create_source(body: FeedbackSourceCreate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    await _enforce_source_limit(user, body.source_type, session)
     config = dict(body.config or {})
     if body.repo:
         config["repo"] = body.repo
@@ -702,6 +1094,27 @@ async def create_source(body: FeedbackSourceCreate, user: User = Depends(get_cur
     return _serialize_source(source)
 
 
+@sources_router.delete("/{source_id}")
+async def delete_source(source_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    result = await session.execute(
+        select(FeedbackSource).where(FeedbackSource.id == source_id, FeedbackSource.user_id == user.id)
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Feedback source not found")
+
+    source.status = "deleted"
+    source.access_token = ""
+    source.refresh_token = ""
+    source.webhook_secret = ""
+    source.updated_at = _utc_now()
+    session.add(source)
+    await session.flush()
+    payload = _serialize_source(source)
+    payload["feedback_retention"] = "kept"
+    return payload
+
+
 async def _create_processed_feedback(
     *,
     user_id: int,
@@ -712,11 +1125,14 @@ async def _create_processed_feedback(
     source_message_id: str = "",
     session: AsyncSession,
 ) -> dict:
-    cleaned = text.strip()
+    cleaned = _clean_feedback_text(text)
     if not cleaned:
         raise HTTPException(status_code=400, detail="Feedback text is required")
 
     candidates = await _load_dedupe_candidates(user_id, session)
+    external_duplicate = _find_source_message_duplicate(source, source_message_id, candidates)
+    if external_duplicate:
+        return _serialize_duplicate(external_duplicate)
     duplicate = _find_semantic_duplicate(cleaned, candidates)
     if duplicate:
         return _serialize_duplicate(duplicate)
@@ -733,30 +1149,66 @@ async def _create_processed_feedback(
     session.add(entry)
     await session.flush()
     await session.refresh(entry)
+    await _queue_urgent_feedback_alert(entry, session)
     return _serialize(entry)
+
+
+def _entry_from_payload(payload: dict, user_id: int) -> FeedbackEntry:
+    return FeedbackEntry(
+        id=payload.get("id"),
+        user_id=user_id,
+        text=payload.get("text", ""),
+        sentiment=payload.get("sentiment"),
+        confidence=payload.get("confidence"),
+        themes_json=json.dumps(payload.get("themes", [])),
+        is_urgent=bool(payload.get("is_urgent")),
+        source=payload.get("source", "manual"),
+        author=payload.get("author", ""),
+        source_url=payload.get("source_url", ""),
+        source_message_id=payload.get("source_message_id", ""),
+        cluster_slug=payload.get("cluster_slug", ""),
+        priority=payload.get("priority", "low"),
+    )
+
+
+async def _queue_urgent_feedback_alert(entry: FeedbackEntry, session: AsyncSession) -> None:
+    if not entry.is_urgent:
+        return
+    prefs_result = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == entry.user_id))
+    prefs = prefs_result.scalar_one_or_none()
+    alert_email = getattr(prefs, "alert_email", "") if prefs else ""
+    if not alert_email:
+        return
+    preview = entry.text[:500]
+    session.add(SystemOutbox(
+        app_name="feedbacklens",
+        job_type="send_email",
+        payload={
+            "to": alert_email,
+            "subject": f"Urgent feedback detected: {entry.cluster_slug or 'review needed'}",
+            "html_body": (
+                "<div style=\"font-family:sans-serif;max-width:640px;margin:0 auto;\">"
+                "<h2>Urgent feedback detected</h2>"
+                f"<p><strong>Source:</strong> {entry.source}</p>"
+                f"<p><strong>Author:</strong> {entry.author or 'Unknown'}</p>"
+                f"<p>{preview}</p>"
+                "</div>"
+            ),
+        },
+        priority=2,
+    ))
 
 
 @feedback_router.post("")
 async def create_feedback(body: FeedbackCreate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    text = body.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Feedback text is required")
-
-    candidates = await _load_dedupe_candidates(user.id, session)
-    duplicate = _find_semantic_duplicate(text, candidates)
-    if duplicate:
-        return _serialize_duplicate(duplicate)
-
-    entry = FeedbackEntry(user_id=user.id, text=text)
-    session.add(entry)
-    await session.flush()
-    await session.refresh(entry)
-    return _serialize(entry)
+    await _enforce_feedback_limit(user, 1, session)
+    return await _create_processed_feedback(user_id=user.id, text=body.text, source="manual", session=session)
 
 
 @feedback_router.post("/ingest/email")
 async def ingest_email_feedback(body: EmailIngestRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    text = _combine_feedback_text(body.subject, body.body)
+    await _enforce_feedback_limit(user, 1, session)
+    text = _combine_email_feedback_text(body)
     return await _create_processed_feedback(
         user_id=user.id,
         text=text,
@@ -770,6 +1222,7 @@ async def ingest_email_feedback(body: EmailIngestRequest, user: User = Depends(g
 
 @feedback_router.post("/ingest/canny")
 async def ingest_canny_feedback(body: CannyIngestRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    await _enforce_feedback_limit(user, 1, session)
     text = _combine_feedback_text(body.title, body.body)
     return await _create_processed_feedback(
         user_id=user.id,
@@ -782,13 +1235,48 @@ async def ingest_canny_feedback(body: CannyIngestRequest, user: User = Depends(g
     )
 
 
-@feedback_router.get("/list")
-async def list_feedback(
-    priority: str = Query(default=""),
-    source: str = Query(default=""),
-    user: User = Depends(get_current_user),
+def _verify_github_signature(secret: str, raw_body: bytes, signature_header: str | None) -> None:
+    if not secret:
+        return
+    if not signature_header or not signature_header.startswith("sha256="):
+        raise HTTPException(status_code=401, detail="Missing GitHub signature")
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    received = signature_header.split("=", 1)[1]
+    if not hmac.compare_digest(expected, received):
+        raise HTTPException(status_code=401, detail="Invalid GitHub signature")
+
+
+@public_ingest_router.post("/ingest/github")
+async def ingest_github_issue_webhook(
+    request: Request,
+    source_id: int = Query(...),
     session: AsyncSession = Depends(get_session),
 ):
+    source_result = await session.execute(select(FeedbackSource).where(FeedbackSource.id == source_id))
+    source = source_result.scalar_one_or_none()
+    if not source or source.source_type != "github":
+        raise HTTPException(status_code=404, detail="GitHub source not found")
+
+    raw_body = await request.body()
+    _verify_github_signature(source.webhook_secret, raw_body, request.headers.get("x-hub-signature-256"))
+    payload = json.loads(raw_body.decode("utf-8"))
+    action = payload.get("action", "")
+    issue = payload.get("issue") or {}
+    if action not in {"opened", "edited", "reopened"} or not issue:
+        return {"status": "ignored", "action": action}
+    text = _combine_feedback_text(issue.get("title", ""), issue.get("body", ""))
+    return await _create_processed_feedback(
+        user_id=source.user_id,
+        text=text,
+        source="github",
+        author=(issue.get("user") or {}).get("login", ""),
+        source_url=issue.get("html_url", ""),
+        source_message_id=str(issue.get("id", "")),
+        session=session,
+    )
+
+
+async def _list_feedback_payload(priority: str, source: str, user: User, session: AsyncSession) -> list[dict]:
     query = select(FeedbackEntry).where(FeedbackEntry.user_id == user.id)
     if priority:
         query = query.where(FeedbackEntry.priority == priority)
@@ -796,6 +1284,26 @@ async def list_feedback(
         query = query.where(FeedbackEntry.source == source)
     result = await session.execute(query.order_by(FeedbackEntry.created_at.desc()).limit(100))
     return [_serialize(e) for e in result.scalars().all()]
+
+
+@feedback_router.get("")
+async def list_feedback_root(
+    priority: str = Query(default=""),
+    source: str = Query(default=""),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await _list_feedback_payload(priority, source, user, session)
+
+
+@feedback_router.get("/list")
+async def list_feedback(
+    priority: str = Query(default=""),
+    source: str = Query(default=""),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await _list_feedback_payload(priority, source, user, session)
 
 
 @feedback_router.get("/dedupe/summary")
@@ -904,8 +1412,108 @@ async def get_digest(days: int = Query(default=7, ge=1, le=90), user: User = Dep
     return payload
 
 
+def _twitter_client_id() -> str:
+    return os.getenv("FEEDBACKLENS_TWITTER_CLIENT_ID") or os.getenv("FEEDBACKLENS_X_CLIENT_ID", "")
+
+
+def _twitter_client_secret() -> str:
+    return os.getenv("FEEDBACKLENS_TWITTER_CLIENT_SECRET") or os.getenv("FEEDBACKLENS_X_CLIENT_SECRET", "")
+
+
+def _reddit_client_id() -> str:
+    return os.getenv("FEEDBACKLENS_REDDIT_CLIENT_ID", "")
+
+
+def _reddit_client_secret() -> str:
+    return os.getenv("FEEDBACKLENS_REDDIT_CLIENT_SECRET", "")
+
+
+@connect_router.post("/twitter")
+async def connect_twitter(body: TwitterConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    await _enforce_source_limit(user, "twitter", session)
+    client_id = _twitter_client_id()
+    redirect_uri = body.redirect_uri or os.getenv("FEEDBACKLENS_TWITTER_REDIRECT_URI", "")
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Twitter/X OAuth client is not configured.")
+    state = uuid.uuid4().hex
+    code_verifier, code_challenge = _pkce_pair()
+    query = body.query or body.handle
+    config = {
+        "query": query,
+        "handle": body.handle,
+        "oauth_state": state,
+        "redirect_uri": redirect_uri,
+        "code_verifier": code_verifier,
+    }
+    source = FeedbackSource(
+        user_id=user.id,
+        source_type="twitter",
+        display_name=body.handle or "Twitter/X",
+        handle=body.handle,
+        status="pending_oauth",
+        config_json=json.dumps(config),
+    )
+    session.add(source)
+    await session.flush()
+    params = urlencode({
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": "tweet.read users.read offline.access",
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+    })
+    return {
+        "authorization_url": f"https://x.com/i/oauth2/authorize?{params}",
+        "state": state,
+        "source_id": source.id,
+    }
+
+
+@connect_router.post("/reddit")
+async def connect_reddit(body: RedditConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    await _enforce_source_limit(user, "reddit", session)
+    client_id = _reddit_client_id()
+    redirect_uri = body.redirect_uri or os.getenv("FEEDBACKLENS_REDDIT_REDIRECT_URI", "")
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Reddit OAuth client is not configured.")
+    state = uuid.uuid4().hex
+    query = body.query or body.subreddit
+    config = {
+        "query": query,
+        "subreddit": body.subreddit,
+        "oauth_state": state,
+        "redirect_uri": redirect_uri,
+    }
+    source = FeedbackSource(
+        user_id=user.id,
+        source_type="reddit",
+        display_name=body.subreddit or "Reddit",
+        handle=body.subreddit,
+        status="pending_oauth",
+        config_json=json.dumps(config),
+    )
+    session.add(source)
+    await session.flush()
+    params = urlencode({
+        "client_id": client_id,
+        "response_type": "code",
+        "state": state,
+        "redirect_uri": redirect_uri,
+        "duration": "permanent",
+        "scope": "read",
+    })
+    return {
+        "authorization_url": f"https://www.reddit.com/api/v1/authorize?{params}",
+        "state": state,
+        "source_id": source.id,
+    }
+
+
 @connect_router.post("/github")
 async def connect_github(body: GitHubConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    await _enforce_source_limit(user, "github", session)
     client_id = os.getenv("FEEDBACKLENS_GITHUB_CLIENT_ID") or os.getenv("GITHUB_CLIENT_ID")
     redirect_uri = body.redirect_uri or os.getenv("FEEDBACKLENS_GITHUB_REDIRECT_URI", "")
     if not client_id:
@@ -925,6 +1533,126 @@ async def connect_github(body: GitHubConnectRequest, user: User = Depends(get_cu
     redirect_param = f"&redirect_uri={redirect_uri}" if redirect_uri else ""
     auth_url = f"https://github.com/login/oauth/authorize?client_id={client_id}&scope={scope}&state={state}{redirect_param}"
     return {"authorization_url": auth_url, "state": state, "source_id": source.id}
+
+
+def _exchange_oauth_code(provider: str, code: str, redirect_uri: str = "", code_verifier: str = "") -> dict:
+    if provider == "github":
+        client_id = os.getenv("FEEDBACKLENS_GITHUB_CLIENT_ID") or os.getenv("GITHUB_CLIENT_ID", "")
+        client_secret = os.getenv("FEEDBACKLENS_GITHUB_CLIENT_SECRET") or os.getenv("GITHUB_CLIENT_SECRET", "")
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=500, detail="GitHub OAuth client is not configured.")
+        payload = {"client_id": client_id, "client_secret": client_secret, "code": code}
+        if redirect_uri:
+            payload["redirect_uri"] = redirect_uri
+        return _http_form_json("https://github.com/login/oauth/access_token", payload=payload)
+
+    if provider == "twitter":
+        client_id = _twitter_client_id()
+        if not client_id or not redirect_uri or not code_verifier:
+            raise HTTPException(status_code=500, detail="Twitter/X OAuth client is not configured.")
+        payload = {
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "code_verifier": code_verifier,
+        }
+        secret = _twitter_client_secret()
+        return _http_form_json(
+            "https://api.x.com/2/oauth2/token",
+            payload=payload,
+            basic_auth=(client_id, secret) if secret else None,
+        )
+
+    if provider == "reddit":
+        client_id = _reddit_client_id()
+        client_secret = _reddit_client_secret()
+        if not client_id or not client_secret or not redirect_uri:
+            raise HTTPException(status_code=500, detail="Reddit OAuth client is not configured.")
+        return _http_form_json(
+            "https://www.reddit.com/api/v1/access_token",
+            payload={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri},
+            basic_auth=(client_id, client_secret),
+        )
+
+    raise HTTPException(status_code=400, detail="Unsupported OAuth provider")
+
+
+async def _complete_oauth_callback(
+    provider: Literal["github", "twitter", "reddit"],
+    state: str,
+    code: str,
+    user: User,
+    session: AsyncSession,
+) -> dict:
+    result = await session.execute(
+        select(FeedbackSource).where(
+            FeedbackSource.user_id == user.id,
+            FeedbackSource.source_type == provider,
+            FeedbackSource.status == "pending_oauth",
+        )
+    )
+    sources = list(result.scalars().all())
+    source = None
+    config: dict[str, Any] = {}
+    for candidate in sources:
+        candidate_config = _source_config(candidate)
+        if candidate_config.get("oauth_state") == state:
+            source = candidate
+            config = candidate_config
+            break
+    if not source:
+        raise HTTPException(status_code=400, detail=f"Invalid {provider} OAuth state.")
+
+    token_payload = _exchange_oauth_code(
+        provider,
+        code,
+        config.get("redirect_uri", ""),
+        config.get("code_verifier", ""),
+    )
+    access_token = token_payload.get("access_token", "")
+    if not access_token:
+        raise HTTPException(status_code=502, detail=f"{provider.title()} OAuth did not return an access token.")
+    source.access_token = access_token
+    source.refresh_token = token_payload.get("refresh_token", "")
+    source.status = "connected"
+    source.updated_at = _utc_now()
+    session.add(source)
+    await session.flush()
+    return {"status": "connected", "source_id": source.id, "source_type": provider, "config": config}
+
+
+@connect_router.get("/github/callback")
+async def connect_github_callback(
+    state: str,
+    code: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    payload = await _complete_oauth_callback("github", state, code, user, session)
+    return {"status": payload["status"], "source_id": payload["source_id"], "repo": payload["config"].get("repo", "")}
+
+
+@connect_router.get("/twitter/callback")
+async def connect_twitter_callback(
+    state: str,
+    code: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    payload = await _complete_oauth_callback("twitter", state, code, user, session)
+    return {"status": payload["status"], "source_id": payload["source_id"], "query": payload["config"].get("query", "")}
+
+
+@connect_router.get("/reddit/callback")
+async def connect_reddit_callback(
+    state: str,
+    code: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    payload = await _complete_oauth_callback("reddit", state, code, user, session)
+    return {"status": payload["status"], "source_id": payload["source_id"], "query": payload["config"].get("query", "")}
 
 
 @feedback_router.post("/{entry_id}/analyze")
@@ -994,10 +1722,22 @@ async def process_feedback_analysis(payload: dict):
 register_job_handler("feedbacklens", "analyze_feedback", process_feedback_analysis)
 
 
+async def handle_feedback_email(payload: dict):
+    send_email(
+        to=payload["to"],
+        subject=payload["subject"],
+        html_body=payload["html_body"],
+    )
+    return {"status": "sent", "to": payload["to"]}
+
+
+register_job_handler("feedbacklens", "send_email", handle_feedback_email)
+
+
 @feedback_router.get("/summary/weekly")
 async def get_weekly_summary(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     """Returns a structured weekly digest for the dashboard."""
-    now = datetime.utcnow()
+    now = _utc_now()
     one_week_ago = now - timedelta(days=7)
     two_weeks_ago = now - timedelta(days=14)
     result = await session.execute(
@@ -1077,18 +1817,49 @@ async def get_weekly_summary(user: User = Depends(get_current_user), session: As
     }
 
 
-async def weekly_summary_cron():
+def _aware_utc(now: datetime | None = None) -> datetime:
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        return current.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc)
+
+
+def _user_timezone(name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(name or "UTC")
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
+def _should_send_weekly_digest(prefs: FeedbackSettings, now: datetime | None = None) -> bool:
+    current_utc = _aware_utc(now)
+    local_now = current_utc.astimezone(_user_timezone(getattr(prefs, "timezone", "UTC")))
+    if local_now.weekday() != 0 or local_now.hour != 9:
+        return False
+
+    last_sent = getattr(prefs, "last_weekly_digest_at", None)
+    if last_sent:
+        last_local = _aware_utc(last_sent).astimezone(local_now.tzinfo)
+        if last_local.date() == local_now.date():
+            return False
+    return True
+
+
+async def weekly_summary_cron(now: datetime | None = None):
     """Cron: sends weekly digest emails to all users who enabled it."""
+    current_utc = _aware_utc(now)
     async with get_managed_session() as session:
         prefs_result = await session.execute(
             select(FeedbackSettings).where(FeedbackSettings.weekly_summary_enabled == True)  # noqa: E712
         )
         all_prefs = prefs_result.scalars().all()
 
-        one_week_ago = datetime.utcnow() - timedelta(days=7)
+        one_week_ago = _utc_now() - timedelta(days=7)
 
         for prefs in all_prefs:
             if not prefs.alert_email:
+                continue
+            if not _should_send_weekly_digest(prefs, current_utc):
                 continue
 
             entries_result = await session.execute(
@@ -1124,6 +1895,8 @@ async def weekly_summary_cron():
             """
             try:
                 send_email(to=prefs.alert_email, subject="📊 Your Weekly Feedback Digest", html_body=html)
+                prefs.last_weekly_digest_at = current_utc.replace(tzinfo=None)
+                session.add(prefs)
             except Exception as e:
                 logger.error(f"Failed to send weekly digest to {prefs.alert_email}: {e}")
 
@@ -1136,6 +1909,14 @@ async def cron_feedback_summary(authorization: str | None = Header(default=None)
         raise HTTPException(status_code=401, detail="Unauthorized")
     await weekly_summary_cron()
     return {"status": "success", "task": "weekly_summary"}
+
+
+@cron_router.post("/cron/poll", tags=["cron"])
+async def cron_poll_feedback_sources(authorization: str | None = Header(default=None)):
+    expected = os.getenv("CRON_SECRET")
+    if expected and authorization != f"Bearer {expected}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return await poll_feedback_sources()
 
 
 # ---------------------------------------------------------------------------
@@ -1200,27 +1981,51 @@ async def bulk_import_feedback(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Import multiple feedback texts at once. Each text becomes a FeedbackEntry pending analysis."""
+    """Import multiple feedback texts and process each through the production pipeline."""
     if len(body.texts) > 500:
         raise HTTPException(status_code=400, detail="Max 500 items per bulk import")
-    created_ids = []
+    non_empty = [text for text in body.texts if text and text.strip()]
+    await _enforce_feedback_limit(user, len(non_empty), session)
+    created_items: list[dict] = []
+    batch_candidates: list[FeedbackEntry] = []
     duplicates_skipped = 0
-    candidates = await _load_dedupe_candidates(user.id, session)
-    for text in body.texts:
-        text = text.strip()
-        if not text:
-            continue
-        duplicate = _find_semantic_duplicate(text, candidates)
-        if duplicate:
+    spam_rejected = 0
+    for text in non_empty:
+        try:
+            cleaned = _clean_feedback_text(text)
+        except HTTPException as exc:
+            if exc.status_code == 400 and "spam" in str(exc.detail).lower():
+                spam_rejected += 1
+                continue
+            raise
+        if _find_semantic_duplicate(cleaned, batch_candidates):
             duplicates_skipped += 1
             continue
-        entry = FeedbackEntry(user_id=user.id, text=text)
-        session.add(entry)
-        await session.flush()  # get id
-        created_ids.append(entry.id)
-        candidates.append(entry)
+        try:
+            created = await _create_processed_feedback(
+                user_id=user.id,
+                text=cleaned,
+                source="manual",
+                session=session,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 400 and "spam" in str(exc.detail).lower():
+                spam_rejected += 1
+                continue
+            raise
+        if created.get("deduped"):
+            duplicates_skipped += 1
+            continue
+        created_items.append(created)
+        batch_candidates.append(_entry_from_payload(created, user.id))
     await session.commit()
-    return {"created": len(created_ids), "ids": created_ids, "duplicates_skipped": duplicates_skipped}
+    return {
+        "created": len(created_items),
+        "ids": [item["id"] for item in created_items],
+        "items": created_items,
+        "duplicates_skipped": duplicates_skipped,
+        "spam_rejected": spam_rejected,
+    }
 
 
 @feedback_router.post("/bulk-csv")
@@ -1241,28 +2046,47 @@ async def bulk_import_csv(
     if column not in df.columns:
         raise HTTPException(status_code=400, detail=f"Column '{column}' not found. Available: {list(df.columns)}")
 
-    texts = df[column].dropna().astype(str).tolist()
-    created_ids = []
+    texts = [text for text in df[column].dropna().astype(str).tolist() if text.strip()]
+    await _enforce_feedback_limit(user, len(texts), session)
+    created_items: list[dict] = []
+    batch_candidates: list[FeedbackEntry] = []
     duplicates_skipped = 0
-    candidates = await _load_dedupe_candidates(user.id, session)
+    spam_rejected = 0
     for text in texts[:500]:
-        text = text.strip()
-        if not text:
-            continue
-        duplicate = _find_semantic_duplicate(text, candidates)
-        if duplicate:
+        try:
+            cleaned = _clean_feedback_text(text)
+        except HTTPException as exc:
+            if exc.status_code == 400 and "spam" in str(exc.detail).lower():
+                spam_rejected += 1
+                continue
+            raise
+        if _find_semantic_duplicate(cleaned, batch_candidates):
             duplicates_skipped += 1
             continue
-        entry = FeedbackEntry(user_id=user.id, text=text)
-        session.add(entry)
-        await session.flush()
-        created_ids.append(entry.id)
-        candidates.append(entry)
+        try:
+            created = await _create_processed_feedback(
+                user_id=user.id,
+                text=cleaned,
+                source="manual",
+                session=session,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 400 and "spam" in str(exc.detail).lower():
+                spam_rejected += 1
+                continue
+            raise
+        if created.get("deduped"):
+            duplicates_skipped += 1
+            continue
+        created_items.append(created)
+        batch_candidates.append(_entry_from_payload(created, user.id))
     await session.commit()
     return {
-        "created": len(created_ids),
-        "ids": created_ids,
+        "created": len(created_items),
+        "ids": [item["id"] for item in created_items],
+        "items": created_items,
         "duplicates_skipped": duplicates_skipped,
+        "spam_rejected": spam_rejected,
         "total_rows": len(df),
     }
 
@@ -1311,6 +2135,7 @@ app = create_app(
         clusters_router,
         connect_router,
         digest_router,
+        public_ingest_router,
         cron_router,
     ]
 )

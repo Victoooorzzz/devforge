@@ -13,8 +13,8 @@ export default function RefundsPage() {
         
         <div>
           <h2 className="text-2xl font-semibold mt-6 mb-2 text-white">Trial Period & Charges</h2>
-          <p>To ensure user satisfaction, FeedbackLens offers a 7-day free trial. During this time, you have full access to our platform's enterprise-grade infrastructure features, allowing you to evaluate if it meets your needs.</p>
-          <p className="mt-2">Once the 7-day trial has elapsed, the recurring monthly charge of $9.99 will be processed automatically.</p>
+          <p>To ensure user satisfaction, FeedbackLens offers a 7-day free trial. During this time, you have access to the Pro limits so you can evaluate whether it meets your needs.</p>
+          <p className="mt-2">Once the 7-day trial has elapsed, the recurring monthly charge of $19 will be processed automatically.</p>
         </div>
 
         <div>

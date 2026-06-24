@@ -25,11 +25,13 @@ from apps.feedbacklens.backend.main import (
     clusters_router as fl_clusters_router,
     connect_router as fl_connect_router,
     digest_router as fl_digest_router,
+    public_ingest_router as fl_public_ingest_router,
     cron_router as fl_cron_router,
     FeedbackEntry,
     FeedbackSource,
     FeedbackSettings,
     weekly_summary_cron,
+    poll_feedback_sources,
 )
 
 # FileCleaner
@@ -93,6 +95,7 @@ all_domain_routers = [
     fl_clusters_router,
     fl_connect_router,
     fl_digest_router,
+    fl_public_ingest_router,
     fl_cron_router,
     # FileCleaner
     file_router,
@@ -157,10 +160,11 @@ async def enqueue_periodic_tasks(authenticated: bool = Depends(verify_cron_secre
     except Exception as e:
         results["invoicefollow"] = f"error: {str(e)}"
         
-    # 3. FeedbackLens: Send weekly summaries (internally checks day of week)
+    # 3. FeedbackLens: poll connected sources and send due weekly summaries.
     try:
+        source_polling = await poll_feedback_sources()
         await weekly_summary_cron()
-        results["feedbacklens"] = "enqueued"
+        results["feedbacklens"] = {"source_polling": source_polling, "weekly_digest": "checked"}
     except Exception as e:
         results["feedbacklens"] = f"error: {str(e)}"
 

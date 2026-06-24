@@ -41,6 +41,16 @@ class InvoiceFollowLimits:
     weekly_digest_enabled: bool
 
 
+@dataclass(frozen=True)
+class FeedbackLensLimits:
+    max_feedback_per_month: int
+    max_sources: int
+    allowed_sources: frozenset[str]
+    github_issue_enabled: bool
+    weekly_digest_enabled: bool
+    history_retention_days: int
+
+
 PRICETRACKR_LIMITS: dict[PlanName, PriceTrackrLimits] = {
     "trial": PriceTrackrLimits(max_active_trackers=5, min_check_frequency_hours=24),
     "paid": PriceTrackrLimits(max_active_trackers=100, min_check_frequency_hours=1),
@@ -62,6 +72,34 @@ WEBHOOKMONITOR_LIMITS: dict[PlanName, WebhookMonitorLimits] = {
         replay_enabled=True,
         diff_enabled=True,
         search_enabled=True,
+    ),
+}
+
+
+FEEDBACKLENS_LIMITS: dict[str, FeedbackLensLimits] = {
+    "free": FeedbackLensLimits(
+        max_feedback_per_month=100,
+        max_sources=2,
+        allowed_sources=frozenset({"manual", "email"}),
+        github_issue_enabled=False,
+        weekly_digest_enabled=False,
+        history_retention_days=30,
+    ),
+    "pro": FeedbackLensLimits(
+        max_feedback_per_month=5_000,
+        max_sources=10,
+        allowed_sources=frozenset({"manual", "email", "github", "canny", "twitter", "reddit"}),
+        github_issue_enabled=True,
+        weekly_digest_enabled=True,
+        history_retention_days=180,
+    ),
+    "team": FeedbackLensLimits(
+        max_feedback_per_month=25_000,
+        max_sources=50,
+        allowed_sources=frozenset({"manual", "email", "github", "canny", "twitter", "reddit"}),
+        github_issue_enabled=True,
+        weekly_digest_enabled=True,
+        history_retention_days=365,
     ),
 }
 
@@ -152,6 +190,11 @@ async def get_invoicefollow_limits(user: User, session: AsyncSession) -> tuple[s
     return plan, INVOICEFOLLOW_LIMITS[plan]
 
 
+def get_feedbacklens_limits(user: User) -> tuple[str, FeedbackLensLimits]:
+    plan = "pro" if user.is_active else "free"
+    return plan, FEEDBACKLENS_LIMITS[plan]
+
+
 def reject_price_frequency_if_needed(plan: PlanName, limits: PriceTrackrLimits, requested_hours: int) -> None:
     if requested_hours < limits.min_check_frequency_hours:
         raise HTTPException(
@@ -192,5 +235,36 @@ def reject_webhook_endpoint_count_if_needed(plan: PlanName, limits: WebhookMonit
             detail=(
                 f"{_plan_label(plan)} plan is limited to "
                 f"{limits.max_endpoints} webhook endpoint{'s' if limits.max_endpoints != 1 else ''}."
+            ),
+        )
+
+
+def reject_feedbacklens_source_if_needed(plan: str, limits: FeedbackLensLimits, source_type: str, source_count: int) -> None:
+    label = plan.title()
+    if source_type not in limits.allowed_sources:
+        allowed = ", ".join(sorted(limits.allowed_sources))
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"{label} plan supports only these FeedbackLens sources: {allowed}.",
+        )
+    if source_count >= limits.max_sources:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"{label} plan is limited to {limits.max_sources} FeedbackLens sources.",
+        )
+
+
+def reject_feedbacklens_feedback_count_if_needed(
+    plan: str,
+    limits: FeedbackLensLimits,
+    monthly_count: int,
+    incoming_count: int = 1,
+) -> None:
+    if monthly_count + incoming_count > limits.max_feedback_per_month:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"{plan.title()} plan is limited to "
+                f"{limits.max_feedback_per_month} FeedbackLens items per month."
             ),
         )

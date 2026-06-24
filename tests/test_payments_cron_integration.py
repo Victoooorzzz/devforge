@@ -219,6 +219,7 @@ class CronIntegrationTests(unittest.TestCase):
         originals = {
             "run_price_updates": universal_main.run_price_updates,
             "enqueue_overdue_reminders": universal_main.enqueue_overdue_reminders,
+            "poll_feedback_sources": universal_main.poll_feedback_sources,
             "weekly_summary_cron": universal_main.weekly_summary_cron,
             "check_webhook_silences": universal_main.check_webhook_silences,
             "cleanup_old_logs": universal_main.cleanup_old_logs,
@@ -232,7 +233,8 @@ class CronIntegrationTests(unittest.TestCase):
 
         universal_main.run_price_updates = lambda: fake_job("pricetrackr")
         universal_main.enqueue_overdue_reminders = lambda: fake_job("invoicefollow")
-        universal_main.weekly_summary_cron = lambda: fake_job("feedbacklens")
+        universal_main.poll_feedback_sources = lambda: fake_job("feedbacklens_poll", {"status": "success"})
+        universal_main.weekly_summary_cron = lambda: fake_job("feedbacklens_digest")
         universal_main.check_webhook_silences = lambda: fake_job("webhookmonitor_silence")
         universal_main.cleanup_old_logs = lambda: fake_job("webhookmonitor_cleanup")
         universal_main.cron_cleanup_files = lambda: fake_job("filecleaner", 3)
@@ -253,7 +255,8 @@ class CronIntegrationTests(unittest.TestCase):
             [
                 "pricetrackr",
                 "invoicefollow",
-                "feedbacklens",
+                "feedbacklens_poll",
+                "feedbacklens_digest",
                 "webhookmonitor_silence",
                 "webhookmonitor_cleanup",
                 "filecleaner",

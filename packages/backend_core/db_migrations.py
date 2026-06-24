@@ -154,6 +154,8 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS priority VARCHAR DEFAULT 'low'",
     "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS alert_email VARCHAR DEFAULT ''",
     "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS weekly_summary_enabled BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS timezone VARCHAR DEFAULT 'UTC'",
+    "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS last_weekly_digest_at TIMESTAMP",
     "ALTER TABLE feedback_settings ALTER COLUMN negative_threshold TYPE DOUBLE PRECISION USING negative_threshold::double precision",
     "ALTER TABLE feedback_settings ALTER COLUMN negative_threshold SET DEFAULT 0.5",
     "UPDATE feedback_settings SET negative_threshold = 0.5 WHERE negative_threshold > 1",
@@ -164,6 +166,11 @@ MIGRATION_STATEMENTS = [
         "webhook_secret VARCHAR DEFAULT '', config_json TEXT DEFAULT '{}', forward_token VARCHAR DEFAULT '', "
         "last_polled_at TIMESTAMP, created_at TIMESTAMP, updated_at TIMESTAMP)"
     ),
+    "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS access_token TEXT DEFAULT ''",
+    "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS refresh_token TEXT DEFAULT ''",
+    "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS webhook_secret TEXT DEFAULT ''",
+    "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS config_json TEXT DEFAULT '{}'",
+    "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'connected'",
     (
         "CREATE UNIQUE INDEX IF NOT EXISTS "
         "uq_user_product_access_user_app_idx "

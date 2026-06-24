@@ -144,6 +144,21 @@ class FeedbackLensProductionPipelineTests(unittest.TestCase):
         self.assertIn("/feedback/dedupe/summary", contract.read_text(encoding="utf-8"))
         self.assertIn("Local sentiment analysis", pipeline.read_text(encoding="utf-8"))
 
+    def test_pricing_copy_matches_feedbacklens_limits(self):
+        files = [
+            ROOT / "apps" / "feedbacklens" / "frontend" / "src" / "config" / "product.ts",
+            ROOT / "apps" / "feedbacklens" / "frontend" / "src" / "app" / "page.tsx",
+            ROOT / "apps" / "feedbacklens" / "frontend" / "src" / "app" / "register" / "page.tsx",
+            ROOT / "apps" / "feedbacklens" / "frontend" / "src" / "app" / "terms" / "page.tsx",
+            ROOT / "apps" / "feedbacklens" / "frontend" / "src" / "app" / "refunds" / "page.tsx",
+        ]
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in files)
+
+        self.assertIn("$19", combined)
+        self.assertIn("5000", combined)
+        self.assertNotIn("$9.99", combined)
+        self.assertNotIn("Unlimited", combined)
+
 
 if __name__ == "__main__":
     unittest.main()

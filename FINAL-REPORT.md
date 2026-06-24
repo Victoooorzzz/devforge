@@ -42,17 +42,18 @@ El roadmap solicitado quedo ejecutado en `main` sin worktree. Se auditaron los 5
 - Summary semanal ahora compara contra la semana anterior con deltas de volumen, negativos y urgentes.
 - Eliminada dependencia externa; el analisis ahora es local con VADER y fallback keyword.
 - Agregados `/sources`, `/feedback/ingest/email`, `/feedback/ingest/canny`, `/clusters`, `/clusters/{id}/github-issue`, `/digest` y `/feedback/dedupe/summary`.
+- Agregados polling cron de Twitter/Reddit/GitHub, webhook GitHub firmado, OAuth GitHub/Twitter/Reddit, limpieza anti-spam/truncado util, attachments de email text-like, alertas urgentes via outbox, borrado seguro de fuentes y limites por plan.
 - Agregado CLI `feedbacklens` para login, sources, feedback list, clusters list y crear GitHub issue.
-- Dashboard y copy actualizados para prometer analisis local, dedupe y calidad de datos.
+- Dashboard y copy actualizados para prometer analisis local, dedupe, calidad de datos y limites Pro reales sin "unlimited".
 
 ## Metricas
 
 - Productos auditados: 5/5.
 - Artefactos de auditoria: 11 archivos en `audit/`.
 - Commits creados: 12 (`audit`, iteraciones 1 a 5, Polar/env, hardening/features por producto).
-- Tests Python: 17 base -> 127 finales.
+- Tests Python: 17 base -> 142 finales.
 - Typecheck frontend real: core + los 5 frontends de producto.
-- Endpoints nuevos acumulados: `/files/summary`, `/files/utility`, `/invoices/summary`, `/invoices/import-csv`, `/trackers/summary`, `/trackers/health`, `/webhooks/summary`, `/feedback/dedupe/summary`, `/sources`, `/clusters`, `/digest`.
+- Endpoints nuevos acumulados: `/files/summary`, `/files/utility`, `/invoices/summary`, `/invoices/import-csv`, `/trackers/summary`, `/trackers/health`, `/webhooks/summary`, `/feedback/dedupe/summary`, `/sources`, `/sources/{id}`, `/clusters`, `/digest`, `/feedback/cron/poll`, `/feedback/ingest/github`, `/connect/twitter`, `/connect/twitter/callback`, `/connect/reddit`, `/connect/reddit/callback`.
 - Dashboards con paneles/controles nuevos: 5/5.
 - Helpers compartidos nuevos: `product_insights`, `sensitive_data`, `data_limits`, `file_utilities`, API upload/download helpers.
 

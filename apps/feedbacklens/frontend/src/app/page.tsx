@@ -301,26 +301,26 @@ export default function LandingPage() {
           <div className="max-w-lg mx-auto">
             <div className="glass p-10 rounded-3xl border-2 border-accent relative flex flex-col overflow-hidden shadow-[0_0_50px_rgba(130,19,70,0.2)]">
               <div className="absolute top-0 right-0 bg-accent text-black text-[10px] font-bold px-4 py-1.5 uppercase tracking-widest rounded-bl-xl">
-                Unlimited
+                Pro
               </div>
               <div className="mb-8">
                 <h3 className="text-2xl font-bold mb-2">Lens Pro</h3>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-5xl font-bold">$9.99</span>
+                  <span className="text-5xl font-bold">$19</span>
                   <span className="text-neutral-400">/mo</span>
                 </div>
                 <p className="text-sm text-neutral-400 mt-4 leading-relaxed">
-                  Full access to the sentiment engine and theme clustering. Includes a 7-day free trial.
+                  5000 feedback items per month with local sentiment, clustering, external sources, and a 7-day free trial.
                 </p>
               </div>
               <ul className="space-y-4 mb-10">
                 {[
-                  "Unlimited Feedback Processing",
+                  "5000 Feedback Items/Month",
                   "Advanced Theme Extraction",
                   "Urgency & Bug Detection",
                   "Weekly Summary Reports",
                   "Draft Reply Generator",
-                  "Priority 24/7 Support"
+                  "GitHub, Canny, X, and Reddit Sources"
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-3 text-sm text-neutral-300">
                     <Check size={18} className="text-accent" /> {item}
@@ -351,7 +351,7 @@ export default function LandingPage() {
           <div className="text-xs space-y-2">
             <p><strong>Soporte:</strong> <a href="mailto:support@devforgeapp.pro" className="hover:text-white transition-colors">support@devforgeapp.pro</a></p>
             <p><strong>Ubicación:</strong> Lima, Perú</p>
-            <p><strong>Refunds:</strong> You have a 7-day free trial. Once the $9.99 monthly charge is processed, all sales are final and no refunds are issued.</p>
+            <p><strong>Refunds:</strong> You have a 7-day free trial. Once the $19 monthly charge is processed, all sales are final and no refunds are issued.</p>
           </div>
           <p className="mt-4">&copy; 2024 FeedbackLens. Part of the DevForge ecosystem.</p>
         </div>

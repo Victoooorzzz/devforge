@@ -88,11 +88,15 @@
   - Agregados modelos/campos para fuentes, source metadata, cluster slug y prioridad.
   - Agregados `/sources`, `/feedback/ingest/email`, `/feedback/ingest/canny`, `/feedback/dedupe/summary`, `/clusters`, `/clusters/{id}/github-issue`, `/digest` y `/connect/github`.
   - Agregado CLI `apps/feedbacklens/cli/feedbacklens.py`.
+  - Agregados polling cron para fuentes externas, webhook GitHub firmado, OAuth GitHub/Twitter/Reddit, limpieza anti-spam/truncado util, attachments text-like en email, alertas urgentes via outbox, borrado seguro de fuentes y limites por plan.
+  - Bulk textarea/CSV ahora pasan por el pipeline completo: spam, dedupe, analisis local, cluster, prioridad y alertas.
+  - Weekly digest ahora respeta lunes 9am por timezone de usuario y el cron maestro tambien ejecuta polling de fuentes.
+  - Pricing/copy de FeedbackLens queda alineado a Pro $19 y 5000 feedback/mes, sin promesa "Unlimited".
   - Dashboard consume resumen de dedupe y maneja respuestas `deduped`.
   - Landing/settings/product config ya no prometen IA.
 - Verificacion:
-  - `python -m unittest tests.test_feedbacklens_production_pipeline tests.test_feedbacklens_sources_clusters_cli tests.test_feedbacklens_dedupe_integration` -> 10 tests OK.
-  - `python -m unittest discover -s tests` -> 127 tests OK.
+  - `python -m unittest tests.test_feedbacklens_collection_pipeline tests.test_feedbacklens_production_pipeline tests.test_feedbacklens_sources_clusters_cli tests.test_feedbacklens_dedupe_integration tests.test_feedback_settings_contract` -> 28 tests OK.
+  - `python -m unittest discover -s tests` -> 142 tests OK.
   - `pnpm --filter feedbacklens lint` -> OK sin warnings.
   - `pnpm --filter feedbacklens typecheck` -> OK.
   - `RUST_BACKTRACE=1 pnpm --filter feedbacklens build` -> OK.
