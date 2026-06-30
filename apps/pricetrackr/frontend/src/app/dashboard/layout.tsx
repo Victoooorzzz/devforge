@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { auth } from "@devforge/core";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { Home, Settings, LogOut } from "lucide-react";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -24,7 +25,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Sidebar */}
       <aside className="w-full md:w-64 border-b md:border-b-0 md:border-r border-white/5 p-4 md:p-6 flex flex-col md:min-h-screen">
         <Link href="/" className="flex items-center gap-3 mb-4 md:mb-8">
-          <img src="/devforge-logo-white.svg" alt="DevForge" className="h-5 w-auto" />
+          <Image src="/devforge-logo-white.svg" alt="DevForge" width={110} height={20} className="h-5 w-auto" />
           <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3">
             Price<span className="text-accent">Trackr</span>
           </span>
@@ -39,8 +40,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </Link>
         </nav>
 
-        <button 
-          onClick={() => { auth.logout(); router.push("/login"); }}
+        <button
+          onClick={async () => {
+            try {
+              await fetch("/api/auth", { method: "DELETE" });
+            } catch (e) {
+              console.error("Failed to delete auth cookie:", e);
+            }
+            auth.logout();
+            router.push("/login");
+          }}
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-neutral-400 hover:text-red-400 hover:bg-red-400/5 text-sm font-medium mt-3 md:mt-auto w-fit md:w-auto"
         >
           <LogOut size={18} /> Logout

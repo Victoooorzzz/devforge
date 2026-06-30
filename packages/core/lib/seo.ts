@@ -11,6 +11,7 @@ interface SEOConfig {
   productName?: string;
   price?: number;
   jsonLd?: Record<string, unknown>;
+  tldr?: string;
 }
 
 export function generateMetadata(config: SEOConfig): Metadata {
@@ -66,6 +67,9 @@ export function generateMetadata(config: SEOConfig): Metadata {
     },
     other: {
       "author": "DevForge",
+      "ai-friendly": "true",
+      "generative-engine-optimization": "true",
+      ...(config.tldr ? { "tldr": config.tldr } : { "tldr": description }),
     },
   };
 }

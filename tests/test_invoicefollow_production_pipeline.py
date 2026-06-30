@@ -380,8 +380,8 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(integration.gmail_connected)
-        self.assertEqual(integration.gmail_access_token, "access-token")
-        self.assertEqual(integration.gmail_refresh_token, "refresh-token")
+        self.assertEqual(invoice_main.decrypt_val(integration.gmail_access_token), "access-token")
+        self.assertEqual(invoice_main.decrypt_val(integration.gmail_refresh_token), "refresh-token")
         self.assertEqual(integration.gmail_email, "owner@example.com")
 
     def test_reply_and_payment_crons_call_real_pollers(self):
@@ -397,15 +397,22 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
             calls.append("payments")
             return {"processed_payments": 3, "matched_payments": 2}
 
+        import os
+        old_secret = os.environ.get("CRON_SECRET")
+        os.environ["CRON_SECRET"] = "cron-test-secret"
         invoice_main.poll_reply_threads = fake_replies
         invoice_main.poll_payment_providers = fake_payments
         try:
             client = _client()
-            replies = client.post("/invoices/cron/replies/poll")
-            payments = client.post("/invoices/cron/payments/poll")
+            replies = client.post("/invoices/cron/replies/poll?sync=true", headers={"Authorization": "Bearer cron-test-secret"})
+            payments = client.post("/invoices/cron/payments/poll?sync=true", headers={"Authorization": "Bearer cron-test-secret"})
         finally:
             invoice_main.poll_reply_threads = original_replies
             invoice_main.poll_payment_providers = original_payments
+            if old_secret is None:
+                os.environ.pop("CRON_SECRET", None)
+            else:
+                os.environ["CRON_SECRET"] = old_secret
 
         self.assertEqual(replies.status_code, 200)
         self.assertEqual(payments.status_code, 200)

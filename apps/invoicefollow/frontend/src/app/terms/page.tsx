@@ -19,7 +19,7 @@ export default function TermsPage() {
 
         <div>
           <h2 className="text-2xl font-semibold mt-6 mb-2 text-white">2. Payments & Subscriptions</h2>
-          <p>InvoiceFollow offers a free plan and a $19/mo Pro plan. You can cancel future renewals from the billing portal.</p>
+          <p>InvoiceFollow offers Free, Pro at $9.99/month, and Team at $49/month. You can cancel future renewals from the billing portal.</p>
         </div>
 
         <div>

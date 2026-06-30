@@ -6,16 +6,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from .auth import User
+from .config import get_settings
 from .product_access import UserProductAccess
-from .product_catalog import normalize_app_slug
+from .product_catalog import normalize_app_slug, resolve_product_id_for_app
 
-PlanName = Literal["trial", "paid"]
+PlanName = Literal["free", "pro", "team"]
+
+
+@dataclass(frozen=True)
+class FileCleanerLimits:
+    max_file_size_bytes: int
+    normalization_rules_enabled: bool
+    anomaly_detection_enabled: bool
+    fuzzy_max_rows: int
+    schema_max_rules: int
+    image_max_size_bytes: int
+    retention_days: int
+    parallel_batch_enabled: bool
 
 
 @dataclass(frozen=True)
 class PriceTrackrLimits:
     max_active_trackers: int
-    min_check_frequency_hours: int
+    min_check_frequency_hours: float
 
 
 @dataclass(frozen=True)
@@ -51,13 +64,48 @@ class FeedbackLensLimits:
     history_retention_days: int
 
 
+FILECLEANER_LIMITS: dict[PlanName, FileCleanerLimits] = {
+    "free": FileCleanerLimits(
+        max_file_size_bytes=10 * 1024 * 1024,  # 10MB
+        normalization_rules_enabled=False,
+        anomaly_detection_enabled=False,
+        fuzzy_max_rows=0,
+        schema_max_rules=0,
+        image_max_size_bytes=5 * 1024 * 1024,  # 5MB
+        retention_days=1,
+        parallel_batch_enabled=False,
+    ),
+    "pro": FileCleanerLimits(
+        max_file_size_bytes=100 * 1024 * 1024,  # 100MB
+        normalization_rules_enabled=True,
+        anomaly_detection_enabled=True,
+        fuzzy_max_rows=1000,
+        schema_max_rules=5,
+        image_max_size_bytes=50 * 1024 * 1024,  # 50MB
+        retention_days=2,
+        parallel_batch_enabled=False,
+    ),
+    "team": FileCleanerLimits(
+        max_file_size_bytes=500 * 1024 * 1024,  # 500MB
+        normalization_rules_enabled=True,
+        anomaly_detection_enabled=True,
+        fuzzy_max_rows=10000,
+        schema_max_rules=10000,
+        image_max_size_bytes=150 * 1024 * 1024,  # 150MB
+        retention_days=7,
+        parallel_batch_enabled=True,
+    ),
+}
+
+
 PRICETRACKR_LIMITS: dict[PlanName, PriceTrackrLimits] = {
-    "trial": PriceTrackrLimits(max_active_trackers=5, min_check_frequency_hours=24),
-    "paid": PriceTrackrLimits(max_active_trackers=100, min_check_frequency_hours=1),
+    "free": PriceTrackrLimits(max_active_trackers=5, min_check_frequency_hours=24.0),
+    "pro": PriceTrackrLimits(max_active_trackers=100, min_check_frequency_hours=1.0),
+    "team": PriceTrackrLimits(max_active_trackers=500, min_check_frequency_hours=0.16),  # 10 minutes
 }
 
 WEBHOOKMONITOR_LIMITS: dict[PlanName, WebhookMonitorLimits] = {
-    "trial": WebhookMonitorLimits(
+    "free": WebhookMonitorLimits(
         max_endpoints=1,
         events_per_day=100,
         retention_days=7,
@@ -65,7 +113,7 @@ WEBHOOKMONITOR_LIMITS: dict[PlanName, WebhookMonitorLimits] = {
         diff_enabled=False,
         search_enabled=False,
     ),
-    "paid": WebhookMonitorLimits(
+    "pro": WebhookMonitorLimits(
         max_endpoints=10,
         events_per_day=10_000,
         retention_days=30,
@@ -73,10 +121,18 @@ WEBHOOKMONITOR_LIMITS: dict[PlanName, WebhookMonitorLimits] = {
         diff_enabled=True,
         search_enabled=True,
     ),
+    "team": WebhookMonitorLimits(
+        max_endpoints=50,
+        events_per_day=50_000,
+        retention_days=90,
+        replay_enabled=True,
+        diff_enabled=True,
+        search_enabled=True,
+    ),
 }
 
 
-FEEDBACKLENS_LIMITS: dict[str, FeedbackLensLimits] = {
+FEEDBACKLENS_LIMITS: dict[PlanName, FeedbackLensLimits] = {
     "free": FeedbackLensLimits(
         max_feedback_per_month=100,
         max_sources=2,
@@ -104,7 +160,7 @@ FEEDBACKLENS_LIMITS: dict[str, FeedbackLensLimits] = {
 }
 
 
-INVOICEFOLLOW_LIMITS: dict[str, InvoiceFollowLimits] = {
+INVOICEFOLLOW_LIMITS: dict[PlanName, InvoiceFollowLimits] = {
     "free": InvoiceFollowLimits(
         max_active_invoices=5,
         monthly_emails=25,
@@ -142,11 +198,17 @@ INVOICEFOLLOW_LIMITS: dict[str, InvoiceFollowLimits] = {
 
 
 def _plan_label(plan: PlanName) -> str:
-    return "Trial" if plan == "trial" else "Paid"
+    if plan == "free":
+        return "Free"
+    if plan == "pro":
+        return "Pro"
+    return "Team"
 
 
 async def resolve_user_plan(user: User, session: AsyncSession, app_name: str) -> PlanName:
     app_slug = normalize_app_slug(app_name)
+    if not user.is_active:
+        return "free"
     if app_slug:
         access_result = await session.execute(
             select(UserProductAccess).where(
@@ -155,20 +217,29 @@ async def resolve_user_plan(user: User, session: AsyncSession, app_name: str) ->
                 UserProductAccess.is_active == True,  # noqa: E712
             )
         )
-        if access_result.scalar_one_or_none() is not None:
-            return "paid"
+        access = access_result.scalar_one_or_none()
+        if access is not None:
+            team_product_id = resolve_product_id_for_app(get_settings(), app_slug, "team")
+            if team_product_id and getattr(access, "polar_product_id", None) == team_product_id:
+                return "team"
+            return "pro"
+        any_access_result = await session.execute(
+            select(UserProductAccess).where(
+                UserProductAccess.user_id == user.id,
+                UserProductAccess.is_active == True,  # noqa: E712
+            )
+        )
+        if any_access_result.scalar_one_or_none() is not None:
+            return "free"
 
-    if not app_slug and user.is_active:
-        return "paid"
-
-    return "trial"
+    return "pro"
 
 
 async def resolve_user_plan_by_id(session: AsyncSession, user_id: int, app_name: str) -> PlanName:
     user_result = await session.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one_or_none()
     if user is None:
-        return "trial"
+        return "free"
     return await resolve_user_plan(user, session, app_name)
 
 
@@ -185,14 +256,21 @@ async def get_webhookmonitor_limits_for_user_id(
     return plan, WEBHOOKMONITOR_LIMITS[plan]
 
 
-async def get_invoicefollow_limits(user: User, session: AsyncSession) -> tuple[str, InvoiceFollowLimits]:
-    plan = "pro" if await resolve_user_plan(user, session, "invoicefollow") == "paid" else "free"
+async def get_invoicefollow_limits(user: User, session: AsyncSession) -> tuple[PlanName, InvoiceFollowLimits]:
+    plan = await resolve_user_plan(user, session, "invoicefollow")
     return plan, INVOICEFOLLOW_LIMITS[plan]
 
 
-def get_feedbacklens_limits(user: User) -> tuple[str, FeedbackLensLimits]:
-    plan = "pro" if user.is_active else "free"
+async def get_feedbacklens_limits(user: User, session: AsyncSession) -> tuple[PlanName, FeedbackLensLimits]:
+    plan = await resolve_user_plan(user, session, "feedbacklens")
     return plan, FEEDBACKLENS_LIMITS[plan]
+
+
+async def get_filecleaner_limits(user: User, session: AsyncSession) -> tuple[PlanName, FileCleanerLimits]:
+    plan = await resolve_user_plan(user, session, "filecleaner")
+    return plan, FILECLEANER_LIMITS[plan]
+
+
 
 
 def reject_price_frequency_if_needed(plan: PlanName, limits: PriceTrackrLimits, requested_hours: int) -> None:

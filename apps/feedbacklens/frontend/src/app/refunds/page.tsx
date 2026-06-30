@@ -14,7 +14,7 @@ export default function RefundsPage() {
         <div>
           <h2 className="text-2xl font-semibold mt-6 mb-2 text-white">Trial Period & Charges</h2>
           <p>To ensure user satisfaction, FeedbackLens offers a 7-day free trial. During this time, you have access to the Pro limits so you can evaluate whether it meets your needs.</p>
-          <p className="mt-2">Once the 7-day trial has elapsed, the recurring monthly charge of $19 will be processed automatically.</p>
+          <p className="mt-2">The Pro plan is billed at $19/month and the Team plan is billed at $79/month when selected from the billing flow.</p>
         </div>
 
         <div>

@@ -11,6 +11,8 @@ APP_SLUGS = (
     "feedbacklens",
 )
 
+PLAN_SLUGS = ("pro", "team")
+
 _APP_ALIASES = {
     "filecleaner": "filecleaner",
     "filecleanerpro": "filecleaner",
@@ -41,42 +43,72 @@ def app_slug_from_url(value: str | None) -> str | None:
     return normalize_app_slug(subdomain)
 
 
-def product_id_map(settings: Any) -> dict[str, str]:
-    return {
-        "filecleaner": (
-            getattr(settings, "polar_product_id_filecleaner", "")
-            or getattr(settings, "next_public_polar_product_id_filecleaner", "")
-        ),
-        "invoicefollow": (
-            getattr(settings, "polar_product_id_invoicefollow", "")
-            or getattr(settings, "next_public_polar_product_id_invoicefollow", "")
-        ),
-        "pricetrackr": (
-            getattr(settings, "polar_product_id_pricetrackr", "")
-            or getattr(settings, "next_public_polar_product_id_pricetrackr", "")
-        ),
-        "webhookmonitor": (
-            getattr(settings, "polar_product_id_webhookmonitor", "")
-            or getattr(settings, "next_public_polar_product_id_webhookmonitor", "")
-        ),
-        "feedbacklens": (
-            getattr(settings, "polar_product_id_feedbacklens", "")
-            or getattr(settings, "next_public_polar_product_id_feedbacklens", "")
-        ),
-    }
+def normalize_plan_slug(value: str | None) -> str | None:
+    if not value:
+        return "pro"
+    compact = re.sub(r"[^a-z0-9]", "", value.lower())
+    if compact in {"pro", "paid"}:
+        return "pro"
+    if compact == "team":
+        return "team"
+    return None
 
 
-def resolve_product_id_for_app(settings: Any, app_name: str | None) -> str | None:
+def _first_setting(settings: Any, *names: str) -> str:
+    for name in names:
+        value = getattr(settings, name, "")
+        if value:
+            return value
+    return ""
+
+
+def product_id_map(settings: Any, plan: str | None = "pro") -> dict[str, str]:
+    plan_slug = normalize_plan_slug(plan)
+    if plan_slug == "team":
+        return {
+            app_slug: _first_setting(
+                settings,
+                f"polar_product_id_{app_slug}_team",
+                f"next_public_polar_product_id_{app_slug}_team",
+            )
+            for app_slug in APP_SLUGS
+        }
+    if plan_slug == "pro":
+        return {
+            app_slug: _first_setting(
+                settings,
+                f"polar_product_id_{app_slug}_pro",
+                f"next_public_polar_product_id_{app_slug}_pro",
+                f"polar_product_id_{app_slug}",
+                f"next_public_polar_product_id_{app_slug}",
+            )
+            for app_slug in APP_SLUGS
+        }
+    return {app_slug: "" for app_slug in APP_SLUGS}
+
+
+def resolve_product_id_for_app(settings: Any, app_name: str | None, plan: str | None = "pro") -> str | None:
     app_slug = normalize_app_slug(app_name)
     if not app_slug:
         return None
-    return product_id_map(settings).get(app_slug) or None
+    return product_id_map(settings, plan).get(app_slug) or None
 
 
 def resolve_app_from_product_id(settings: Any, product_id: str | None) -> str | None:
     if not product_id:
         return None
-    for app_slug, configured_product_id in product_id_map(settings).items():
-        if configured_product_id and configured_product_id == product_id:
-            return app_slug
+    for plan_slug in PLAN_SLUGS:
+        for app_slug, configured_product_id in product_id_map(settings, plan_slug).items():
+            if configured_product_id and configured_product_id == product_id:
+                return app_slug
+    return None
+
+
+def resolve_plan_from_product_id(settings: Any, product_id: str | None) -> str | None:
+    if not product_id:
+        return None
+    for plan_slug in PLAN_SLUGS:
+        for configured_product_id in product_id_map(settings, plan_slug).values():
+            if configured_product_id and configured_product_id == product_id:
+                return plan_slug
     return None

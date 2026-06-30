@@ -20,7 +20,7 @@ from .polar_utils import (
     verify_standard_webhook_signature,
 )
 from .product_access import set_user_product_access
-from .product_catalog import resolve_app_from_product_id, resolve_product_id_for_app
+from .product_catalog import normalize_plan_slug, resolve_app_from_product_id, resolve_product_id_for_app
 
 
 settings = get_settings()
@@ -33,6 +33,7 @@ webhook_router = APIRouter(tags=["webhooks"])
 class PolarCheckoutRequest(BaseModel):
     app_name: str | None = None
     product_id: str | None = None
+    plan: str | None = "pro"
 
 
 class PolarCheckoutResponse(BaseModel):
@@ -102,7 +103,10 @@ async def create_checkout(
     user: User = Depends(get_current_user),
 ):
     app_name = body.app_name
-    product_id = resolve_product_id_for_app(settings, app_name)
+    plan = normalize_plan_slug(body.plan)
+    if not plan:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+    product_id = resolve_product_id_for_app(settings, app_name, plan)
 
     if not product_id and body.product_id:
         app_name = resolve_app_from_product_id(settings, body.product_id)
@@ -142,6 +146,16 @@ async def handle_polar_webhook(
     session: AsyncSession = Depends(get_session),
 ):
     payload = await request.body()
+
+    if not settings.polar_webhook_secret:
+        if not settings.debug:
+            logger.error("Polar webhook secret is missing in production!")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Polar webhook secret is not configured",
+            )
+        else:
+            logger.warning("Polar webhook secret is not set. Bypassing verification in debug mode.")
 
     is_valid = verify_standard_webhook_signature(
         payload=payload,

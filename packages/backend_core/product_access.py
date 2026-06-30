@@ -30,17 +30,9 @@ async def user_has_product_access(user: User, app_name: str, session: AsyncSessi
     app_slug = normalize_app_slug(app_name)
     if not app_slug:
         return False
-    if user.is_on_trial:
-        return True
-
-    result = await session.execute(
-        select(UserProductAccess).where(
-            UserProductAccess.user_id == user.id,
-            UserProductAccess.app_name == app_slug,
-            UserProductAccess.is_active == True,  # noqa: E712
-        )
-    )
-    return result.scalar_one_or_none() is not None
+    # Every authenticated user has base Free access. Paid product rows only
+    # upgrade limits/features to Pro or Team.
+    return True
 
 
 def require_product_access(app_name: str):
@@ -52,7 +44,7 @@ def require_product_access(app_name: str):
             return user
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="Active subscription or trial required for this product.",
+            detail="Authenticated Free, Pro, or Team access required for this product.",
         )
 
     return dependency

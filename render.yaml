@@ -34,6 +34,26 @@ services:
         sync: false
       - key: POLAR_PRODUCT_ID_FEEDBACKLENS
         sync: false
+      - key: POLAR_PRODUCT_ID_FILECLEANER_PRO
+        sync: false
+      - key: POLAR_PRODUCT_ID_INVOICEFOLLOW_PRO
+        sync: false
+      - key: POLAR_PRODUCT_ID_PRICETRACKR_PRO
+        sync: false
+      - key: POLAR_PRODUCT_ID_WEBHOOKMONITOR_PRO
+        sync: false
+      - key: POLAR_PRODUCT_ID_FEEDBACKLENS_PRO
+        sync: false
+      - key: POLAR_PRODUCT_ID_FILECLEANER_TEAM
+        sync: false
+      - key: POLAR_PRODUCT_ID_INVOICEFOLLOW_TEAM
+        sync: false
+      - key: POLAR_PRODUCT_ID_PRICETRACKR_TEAM
+        sync: false
+      - key: POLAR_PRODUCT_ID_WEBHOOKMONITOR_TEAM
+        sync: false
+      - key: POLAR_PRODUCT_ID_FEEDBACKLENS_TEAM
+        sync: false
       - key: FRONTEND_URL
         sync: false
       - key: ALLOWED_ORIGINS

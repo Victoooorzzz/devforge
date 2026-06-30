@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Image from "next/image";
 
 interface NavItem {
   label: string;
@@ -43,7 +44,7 @@ export function DashboardShell({
         <div className="flex flex-col h-full">
           {/* Logo */}
           <div className="flex items-center h-16 px-6 gap-3">
-            {logoSrc && <img src={logoSrc} alt="DevForge" className="h-5 w-auto" />}
+            {logoSrc && <Image src={logoSrc} alt="DevForge" width={110} height={20} className="h-5 w-auto" />}
             <a
               href="/dashboard"
               className={`text-lg font-bold tracking-tight ${logoSrc ? 'border-l border-white/10 pl-3' : ''}`}

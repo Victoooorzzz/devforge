@@ -39,6 +39,7 @@ from apps.filecleaner.backend.main import (
     file_router,
     ProcessedFile,
     cron_cleanup_files,
+    cron_router as fc_cron_router,
 )
 
 # InvoiceFollow
@@ -62,6 +63,7 @@ from apps.pricetrackr.backend.main import (
     tracker_router,
     settings_router as pt_settings_router,
     cron_router as pt_cron_router,
+    public_router as pt_public_router,
     TrackedUrl,
     PriceHistory,
     TrackerSettings,
@@ -99,6 +101,7 @@ all_domain_routers = [
     fl_cron_router,
     # FileCleaner
     file_router,
+    fc_cron_router,
     # InvoiceFollow
     invoice_router,
     iv_settings_router,
@@ -111,6 +114,7 @@ all_domain_routers = [
     tracker_router,
     pt_settings_router,
     pt_cron_router,
+    pt_public_router,
     # WebhookMonitor
     wm_router,
     ingestion_router,

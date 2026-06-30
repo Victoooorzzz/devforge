@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiClient, downloadFile, trackEvent, uploadFile } from "@devforge/core";
+import { apiClient, downloadFile, getProduct, trackEvent, uploadFile } from "@devforge/core";
 import {
   ActionToast,
+  DashboardPlanPanel,
   DashboardEmptyState,
   DashboardSkeleton,
   InlineErrorState,
@@ -24,6 +25,8 @@ import {
   Plus,
   Upload,
 } from "lucide-react";
+
+const dashboardProduct = getProduct("invoicefollow");
 
 type InvoiceStatus = "pending" | "paid" | "overdue" | "paused" | "in_sequence" | "finalized";
 
@@ -66,6 +69,37 @@ interface DigestSummary {
     pending_amount: number;
     recovery_rate: number;
   };
+}
+
+interface ClientScore {
+  client_email: string;
+  client_name: string;
+  total_invoices: number;
+  paid: number;
+  overdue: number;
+  avg_reminders: number;
+  risk_score: number;
+  risk_label: "alto" | "medio" | "bajo";
+}
+
+interface InvoiceSettingsSummary {
+  forward_address: string;
+  connections: Record<"gmail" | "outlook" | "stripe" | "paypal", boolean>;
+}
+
+interface DetectedInvoiceDraft {
+  status: string;
+  draft_id?: number;
+  requires_user_confirmation?: boolean;
+  client_name?: string;
+  client_email?: string;
+  amount?: number;
+  currency?: string;
+  due_date?: string;
+  issued_date?: string | null;
+  invoice_number?: string;
+  confidence?: number;
+  reason?: string;
 }
 
 interface TimelineResponse {
@@ -111,6 +145,17 @@ export default function DashboardPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [metrics, setMetrics] = useState<MetricSummary | null>(null);
   const [digest, setDigest] = useState<DigestSummary | null>(null);
+  const [clientScores, setClientScores] = useState<ClientScore[]>([]);
+  const [settings, setSettings] = useState<InvoiceSettingsSummary | null>(null);
+  const [emailDraftInput, setEmailDraftInput] = useState({
+    subject: "",
+    body: "",
+    sender_email: "",
+    sender_name: "",
+  });
+  const [detectedDraft, setDetectedDraft] = useState<DetectedInvoiceDraft | null>(null);
+  const [detectingEmail, setDetectingEmail] = useState(false);
+  const [confirmingDraft, setConfirmingDraft] = useState(false);
   const [selected, setSelected] = useState<Invoice | null>(null);
   const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -141,15 +186,25 @@ export default function DashboardPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
-    const [invoiceResult, metricResult, digestResult] = await Promise.allSettled([
+    const [invoiceResult, metricResult, digestResult, scoreResult, settingsResult] = await Promise.allSettled([
       apiClient.get<Invoice[]>("/invoices"),
       apiClient.get<MetricSummary>("/metrics"),
       apiClient.get<DigestSummary>("/digest"),
+      apiClient.get<ClientScore[]>("/invoices/client-scores"),
+      apiClient.get<InvoiceSettingsSummary>("/settings"),
     ]);
     if (invoiceResult.status === "fulfilled") setInvoices(invoiceResult.value.data);
     if (metricResult.status === "fulfilled") setMetrics(metricResult.value.data);
     if (digestResult.status === "fulfilled") setDigest(digestResult.value.data);
-    if (invoiceResult.status === "rejected" && metricResult.status === "rejected" && digestResult.status === "rejected") {
+    if (scoreResult.status === "fulfilled") setClientScores(scoreResult.value.data);
+    if (settingsResult.status === "fulfilled") setSettings(settingsResult.value.data);
+    if (
+      invoiceResult.status === "rejected" &&
+      metricResult.status === "rejected" &&
+      digestResult.status === "rejected" &&
+      scoreResult.status === "rejected" &&
+      settingsResult.status === "rejected"
+    ) {
       setLoadError(true);
     }
     setLoading(false);
@@ -262,6 +317,53 @@ export default function DashboardPage() {
     }
   };
 
+  const detectInvoiceEmail = async () => {
+    setDetectingEmail(true);
+    setDetectedDraft(null);
+    trackEvent("feature_used", { feature_name: "invoicefollow_detect_email" });
+    try {
+      const { data } = await apiClient.post<DetectedInvoiceDraft>("/invoices/detect-email", {
+        ...emailDraftInput,
+        source: "forward",
+      });
+      setDetectedDraft(data);
+      showToast({
+        tone: data.status === "detected" ? "success" : "info",
+        message: data.status === "detected" ? "Invoice draft detected. Review before confirming." : data.reason || "No invoice details detected.",
+      });
+    } catch (error: any) {
+      showToast({ tone: "error", message: error.response?.data?.detail || "Email detection failed." });
+    } finally {
+      setDetectingEmail(false);
+    }
+  };
+
+  const confirmDetectedDraft = async () => {
+    if (!detectedDraft?.draft_id || !detectedDraft.due_date) return;
+    setConfirmingDraft(true);
+    trackEvent("feature_used", { feature_name: "invoicefollow_confirm_detected_draft" });
+    try {
+      const { data } = await apiClient.post<{ invoice: Invoice }>(`/invoices/drafts/${detectedDraft.draft_id}/confirm`, {
+        client_name: detectedDraft.client_name,
+        client_email: detectedDraft.client_email,
+        amount: detectedDraft.amount,
+        currency: detectedDraft.currency,
+        due_date: detectedDraft.due_date,
+        issued_date: detectedDraft.issued_date || null,
+        invoice_number: detectedDraft.invoice_number,
+        notes: "Detected from pasted email in dashboard.",
+      });
+      setInvoices((current) => [data.invoice, ...current]);
+      setDetectedDraft(null);
+      showToast({ tone: "success", message: "Detected invoice is now tracked." });
+      refresh();
+    } catch (error: any) {
+      showToast({ tone: "error", message: error.response?.data?.detail || "Could not confirm detected invoice." });
+    } finally {
+      setConfirmingDraft(false);
+    }
+  };
+
   return (
     <>
       <ActionToast toast={toast} onDismiss={() => setToast(null)} />
@@ -300,6 +402,15 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
+
+        <DashboardPlanPanel
+          product={dashboardProduct}
+          quotas={[
+            { label: "Active invoices", used: invoices.filter((invoice) => invoice.status !== "paid").length, limit: 5, caption: "Free active invoice quota." },
+            { label: "Emails this month", used: digest?.reminders_sent ?? 0, limit: 25, caption: "Free monthly reminder quota." },
+            { label: "NLP reply analyses", used: digest?.valid_excuses_pending ?? 0, limit: 10, caption: "Free reply classification quota." },
+          ]}
+        />
 
         {loadError ? (
           <InlineErrorState
@@ -369,6 +480,89 @@ export default function DashboardPage() {
             <p className="text-sm" style={{ color: "var(--color-text)" }}><strong>{digest.invoices_at_risk}</strong> invoices at risk</p>
           </div>
         ) : null}
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <section className="rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold" style={{ color: "var(--color-text)" }}>Connections</h2>
+                <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Gmail/Outlook ingestion and Stripe/PayPal reconciliation.</p>
+              </div>
+              <a href="/dashboard/settings" className="text-xs font-bold text-[var(--color-accent)]">Manage</a>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(["gmail", "outlook", "stripe", "paypal"] as const).map((provider) => {
+                const connected = Boolean(settings?.connections?.[provider]);
+                return (
+                  <div key={provider} className="rounded-lg p-3" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                    <p className="text-xs font-semibold capitalize" style={{ color: "var(--color-text)" }}>{provider}</p>
+                    <p className={`mt-1 text-[11px] font-bold ${connected ? "text-emerald-500" : "text-amber-500"}`}>
+                      {connected ? "Connected" : "Not connected"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+            {settings?.forward_address ? (
+              <div className="mt-3 rounded-lg p-3" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                <p className="text-[10px] uppercase opacity-50">Forward invoices to</p>
+                <p className="break-all font-mono text-xs" style={{ color: "var(--color-text)" }}>{settings.forward_address}</p>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <h2 className="text-sm font-bold" style={{ color: "var(--color-text)" }}>Client risk scores</h2>
+            <p className="mb-3 text-xs" style={{ color: "var(--color-text-secondary)" }}>Risk comes from overdue count, reminders, and payment history.</p>
+            <div className="space-y-2">
+              {clientScores.slice(0, 4).map((score) => (
+                <div key={score.client_email} className="rounded-lg p-3" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold" style={{ color: "var(--color-text)" }}>{score.client_name}</p>
+                      <p className="text-[11px]" style={{ color: "var(--color-text-secondary)" }}>{score.overdue} overdue · {score.avg_reminders} avg reminders</p>
+                    </div>
+                    <span className={`font-mono text-sm font-bold ${score.risk_score >= 60 ? "text-red-500" : score.risk_score >= 30 ? "text-amber-500" : "text-emerald-500"}`}>
+                      {score.risk_score}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {clientScores.length === 0 ? <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Client scores appear after tracked invoices exist.</p> : null}
+            </div>
+          </section>
+
+          <section className="rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <h2 className="text-sm font-bold" style={{ color: "var(--color-text)" }}>Email invoice detection</h2>
+            <p className="mb-3 text-xs" style={{ color: "var(--color-text-secondary)" }}>Paste a forwarded invoice email to create a reviewable draft.</p>
+            <div className="space-y-2">
+              <input className="input-field w-full text-xs" placeholder="Subject" value={emailDraftInput.subject} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, subject: event.target.value })} />
+              <input className="input-field w-full text-xs" type="email" placeholder="Sender email" value={emailDraftInput.sender_email} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, sender_email: event.target.value })} />
+              <input className="input-field w-full text-xs" placeholder="Sender name" value={emailDraftInput.sender_name} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, sender_name: event.target.value })} />
+              <textarea className="input-field min-h-24 w-full resize-y text-xs" placeholder="Email body" value={emailDraftInput.body} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, body: event.target.value })} />
+              <button type="button" onClick={detectInvoiceEmail} disabled={detectingEmail || !emailDraftInput.sender_email || !emailDraftInput.body} className="btn-secondary w-full justify-center text-xs">
+                {detectingEmail ? <InlineSpinner /> : null}
+                Detect invoice draft
+              </button>
+            </div>
+            {detectedDraft ? (
+              <div className="mt-3 rounded-lg p-3 text-xs" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                {detectedDraft.status === "detected" ? (
+                  <>
+                    <p className="font-semibold" style={{ color: "var(--color-text)" }}>{detectedDraft.client_name} · {money(detectedDraft.amount ?? 0, detectedDraft.currency || "USD")}</p>
+                    <p style={{ color: "var(--color-text-secondary)" }}>Due {detectedDraft.due_date || "unknown"} · confidence {Math.round((detectedDraft.confidence ?? 0) * 100)}%</p>
+                    <button type="button" onClick={confirmDetectedDraft} disabled={confirmingDraft || !detectedDraft.draft_id || !detectedDraft.due_date} className="btn-primary mt-2 w-full justify-center text-xs">
+                      {confirmingDraft ? <InlineSpinner /> : null}
+                      Confirm and track
+                    </button>
+                  </>
+                ) : (
+                  <p style={{ color: "var(--color-text-secondary)" }}>{detectedDraft.reason || "No invoice detected."}</p>
+                )}
+              </div>
+            ) : null}
+          </section>
+        </div>
 
         <div className="overflow-hidden rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
           {invoices.length === 0 ? (

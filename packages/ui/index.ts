@@ -10,6 +10,25 @@ export { DataTable } from "./components/DataTable";
 export { ProductCard } from "./components/ProductCard";
 export type { ProductInfo } from "./components/ProductCard";
 export { ProductGrid } from "./components/ProductGrid";
+export { ActivityTimeline } from "./components/ActivityTimeline";
+export type { ActivityTimelineItem } from "./components/ActivityTimeline";
+export { DashboardPlanPanel } from "./components/DashboardPlanPanel";
+export type { DashboardQuota } from "./components/DashboardPlanPanel";
+export { DemoDataTable, TableStatus } from "./components/DemoDataTable";
+export type { DemoTableColumn } from "./components/DemoDataTable";
+export { FeatureComparison } from "./components/FeatureComparison";
+export { IntegrationCard } from "./components/IntegrationCard";
+export { JsonViewer } from "./components/JsonViewer";
+export { MetricCard } from "./components/MetricCard";
+export { PriceChart } from "./components/PriceChart";
+export { PricingTable } from "./components/PricingTable";
+export { ProductDemoShell } from "./components/ProductDemoShell";
+export { ProductLandingPage } from "./components/ProductLandingPage";
+export { StatusBadge } from "./components/StatusBadge";
+export type { StatusBadgeTone } from "./components/StatusBadge";
+export { SuiteHomePage } from "./components/SuiteHomePage";
+export { UpgradePrompt } from "./components/UpgradePrompt";
+export { UsageQuotaCard } from "./components/UsageQuotaCard";
 export { VerifyEmail } from "./components/VerifyEmail";
 export {
   ActionToast,

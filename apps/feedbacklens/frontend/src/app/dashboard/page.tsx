@@ -1,8 +1,9 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { apiClient, downloadFile, trackEvent, uploadFile } from "@devforge/core";
+import { apiClient, downloadFile, getProduct, trackEvent, uploadFile } from "@devforge/core";
 import {
   ActionToast,
+  DashboardPlanPanel,
   DashboardEmptyState,
   DashboardSkeleton,
   InlineErrorState,
@@ -14,6 +15,8 @@ import {
   Sparkles, MessageSquare, Download, Upload, ChevronDown,
   Copy, Check, X, FileText, AlertCircle, Loader2
 } from "lucide-react";
+
+const dashboardProduct = getProduct("feedbacklens");
 
 interface FeedbackEntry {
   id: number;
@@ -69,6 +72,50 @@ interface DedupeSummary {
   }>;
 }
 
+interface FeedbackSource {
+  id: number;
+  source_type: string;
+  display_name: string;
+  status: string;
+  poll_frequency_hours: number;
+  last_polled_at?: string | null;
+  forward_address?: string;
+  webhook_path?: string;
+  config?: Record<string, unknown>;
+}
+
+interface FeedbackCluster {
+  id: string;
+  label: string;
+  priority: "urgent" | "high" | "medium" | "low";
+  mention_count: number;
+  status?: string;
+  sample_quotes: Array<{ text: string; source?: string; author?: string }>;
+  source_counts: Record<string, number>;
+  sentiment_counts: Record<string, number>;
+  top_themes: string[];
+}
+
+interface ClusterResponse {
+  clusters: FeedbackCluster[];
+  total: number;
+  days: number;
+}
+
+interface DigestPayload {
+  days: number;
+  summary: {
+    total_feedback: number;
+    clusters_active: number;
+    urgent_clusters: number;
+    high_clusters: number;
+    low_clusters: number;
+  };
+  urgent: FeedbackCluster[];
+  high: FeedbackCluster[];
+  low: FeedbackCluster[];
+}
+
 export default function DashboardPage() {
   const [entries, setEntries]         = useState<FeedbackEntry[]>([]);
   const [text, setText]               = useState("");
@@ -85,6 +132,10 @@ export default function DashboardPage() {
   const [copiedReply, setCopiedReply] = useState<number | null>(null);
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(null);
   const [dedupeSummary, setDedupeSummary] = useState<DedupeSummary | null>(null);
+  const [sources, setSources]       = useState<FeedbackSource[]>([]);
+  const [clusters, setClusters]     = useState<FeedbackCluster[]>([]);
+  const [digest, setDigest]         = useState<DigestPayload | null>(null);
+  const [githubIssueClusterId, setGithubIssueClusterId] = useState<string | null>(null);
   const [loading, setLoading]         = useState(true);
   const [loadError, setLoadError]     = useState(false);
   const [toast, setToast]             = useState<DashboardToast | null>(null);
@@ -98,15 +149,28 @@ export default function DashboardPage() {
   const refreshFeedback = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
-    const [entriesResult, summaryResult, dedupeResult] = await Promise.allSettled([
+    const [entriesResult, summaryResult, dedupeResult, sourcesResult, clustersResult, digestResult] = await Promise.allSettled([
       apiClient.get<FeedbackEntry[]>("/feedback/list"),
       apiClient.get<WeeklySummary>("/feedback/summary/weekly"),
       apiClient.get<DedupeSummary>("/feedback/dedupe/summary"),
+      apiClient.get<FeedbackSource[]>("/sources"),
+      apiClient.get<ClusterResponse>("/clusters?days=30"),
+      apiClient.get<DigestPayload>("/digest?days=7"),
     ]);
     if (entriesResult.status === "fulfilled") setEntries(entriesResult.value.data);
     if (summaryResult.status === "fulfilled") setWeeklySummary(summaryResult.value.data);
     if (dedupeResult.status === "fulfilled") setDedupeSummary(dedupeResult.value.data);
-    if (entriesResult.status === "rejected" && summaryResult.status === "rejected" && dedupeResult.status === "rejected") setLoadError(true);
+    if (sourcesResult.status === "fulfilled") setSources(sourcesResult.value.data);
+    if (clustersResult.status === "fulfilled") setClusters(clustersResult.value.data.clusters);
+    if (digestResult.status === "fulfilled") setDigest(digestResult.value.data);
+    if (
+      entriesResult.status === "rejected" &&
+      summaryResult.status === "rejected" &&
+      dedupeResult.status === "rejected" &&
+      sourcesResult.status === "rejected" &&
+      clustersResult.status === "rejected" &&
+      digestResult.status === "rejected"
+    ) setLoadError(true);
     setLoading(false);
   }, []);
 
@@ -179,6 +243,28 @@ export default function DashboardPage() {
     setCopiedReply(id);
     showToast({ tone: "success", message: "Reply draft copied." });
     setTimeout(() => setCopiedReply(null), 2000);
+  };
+
+  const handleCreateGitHubIssue = async (cluster: FeedbackCluster) => {
+    setGithubIssueClusterId(cluster.id);
+    trackEvent("feature_used", { feature_name: "feedbacklens_create_github_issue", cluster_id: cluster.id });
+    try {
+      const { data } = await apiClient.post<{ issue_url?: string; issue_number?: number }>(
+        `/clusters/${cluster.id}/github-issue`,
+        { labels: ["feedbacklens", cluster.priority] },
+      );
+      showToast({
+        tone: "success",
+        message: data.issue_number ? `GitHub issue #${data.issue_number} created.` : "GitHub issue created.",
+      });
+    } catch (error: any) {
+      showToast({
+        tone: "error",
+        message: error.response?.data?.detail || "Connect GitHub in sources before creating issues.",
+      });
+    } finally {
+      setGithubIssueClusterId(null);
+    }
   };
 
   // Bulk Import — Skill: react-patterns
@@ -273,6 +359,17 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
+        </div>
+
+        <div className="mb-6">
+          <DashboardPlanPanel
+            product={dashboardProduct}
+            quotas={[
+              { label: "Feedback this month", used: entries.length, limit: 100, caption: "Free monthly analysis quota." },
+              { label: "Sources", used: sources.length, limit: 2, caption: "Free supports manual and email sources." },
+              { label: "Duplicate groups", used: dedupeSummary?.duplicate_groups ?? 0, limit: 10, caption: "Dedupe stays visible before Pro source expansion." },
+            ]}
+          />
         </div>
 
         {loadError && (
@@ -376,6 +473,82 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+          <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--color-text-secondary)" }}>Sources</p>
+                <p className="text-sm" style={{ color: "var(--color-text)" }}>{sources.length} connected or staged channels</p>
+              </div>
+              <a href="/dashboard/settings" className="text-xs font-bold text-[var(--color-accent)]">Manage</a>
+            </div>
+            <div className="space-y-2">
+              {sources.length === 0 ? (
+                <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Connect email, GitHub, Canny, Reddit, or X/Twitter from settings.</p>
+              ) : sources.slice(0, 5).map(source => (
+                <div key={source.id} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold" style={{ color: "var(--color-text)" }}>{source.display_name}</p>
+                    <p className="text-[11px]" style={{ color: "var(--color-text-secondary)" }}>
+                      {source.source_type} · every {source.poll_frequency_hours}h
+                    </p>
+                  </div>
+                  <span className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${source.status === "connected" ? "text-emerald-500 bg-emerald-500/10" : "text-amber-500 bg-amber-500/10"}`}>
+                    {source.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "var(--color-text-secondary)" }}>Weekly digest</p>
+            <p className="text-sm mb-3" style={{ color: "var(--color-text)" }}>
+              {digest ? `${digest.summary.clusters_active} active clusters from ${digest.summary.total_feedback} feedback items.` : "Digest endpoint is ready once feedback arrives."}
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: "Urgent", value: digest?.summary.urgent_clusters ?? 0, tone: "text-red-500" },
+                { label: "High", value: digest?.summary.high_clusters ?? 0, tone: "text-amber-500" },
+                { label: "Low", value: digest?.summary.low_clusters ?? 0, tone: "text-emerald-500" },
+              ].map(item => (
+                <div key={item.label} className="rounded-lg p-2 text-center" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                  <p className={`text-lg font-mono font-bold ${item.tone}`}>{item.value}</p>
+                  <p className="text-[10px] uppercase opacity-50">{item.label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "var(--color-text-secondary)" }}>GitHub action queue</p>
+            <p className="text-sm mb-3" style={{ color: "var(--color-text)" }}>{clusters.length} topic clusters ready for triage.</p>
+            <div className="space-y-2">
+              {clusters.slice(0, 3).map(cluster => (
+                <div key={cluster.id} className="rounded-lg p-3" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold" style={{ color: "var(--color-text)" }}>{cluster.label}</p>
+                      <p className="text-[11px]" style={{ color: "var(--color-text-secondary)" }}>
+                        {cluster.mention_count} mentions · {cluster.top_themes.slice(0, 2).join(", ") || "unlabeled"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCreateGitHubIssue(cluster)}
+                      disabled={githubIssueClusterId === cluster.id}
+                      className="rounded-md px-2 py-1 text-[10px] font-bold text-[var(--color-accent)] transition-colors hover:bg-black/10 disabled:opacity-60"
+                    >
+                      {githubIssueClusterId === cluster.id ? "Creating" : "GitHub Issue"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {clusters.length === 0 ? <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Analyze feedback to generate clusters.</p> : null}
+            </div>
+          </div>
+        </div>
 
         {/* Stats */}
         <div className="grid grid-cols-3 gap-4 mb-6">

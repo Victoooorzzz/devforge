@@ -501,8 +501,8 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def _feedbacklens_plan(user: User):
-    return get_feedbacklens_limits(user)
+async def _feedbacklens_plan(user: User, session: AsyncSession):
+    return await get_feedbacklens_limits(user, session)
 
 
 def _count_from_result(result: Any) -> int:
@@ -540,13 +540,13 @@ async def _monthly_feedback_count(user_id: int, session: AsyncSession) -> int:
 
 
 async def _enforce_source_limit(user: User, source_type: str, session: AsyncSession) -> None:
-    plan, limits = _feedbacklens_plan(user)
+    plan, limits = await _feedbacklens_plan(user, session)
     source_count = await _feedback_source_count(user.id, session)
     reject_feedbacklens_source_if_needed(plan, limits, source_type, source_count)
 
 
 async def _enforce_feedback_limit(user: User, incoming_count: int, session: AsyncSession) -> None:
-    plan, limits = _feedbacklens_plan(user)
+    plan, limits = await _feedbacklens_plan(user, session)
     monthly_count = await _monthly_feedback_count(user.id, session)
     reject_feedbacklens_feedback_count_if_needed(plan, limits, monthly_count, incoming_count)
 

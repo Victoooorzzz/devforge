@@ -101,11 +101,13 @@ class PaymentIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.original_async_client = polar_handler.httpx.AsyncClient
         self.original_settings = {
+            "debug": polar_handler.settings.debug,
             "polar_server": polar_handler.settings.polar_server,
             "polar_api_url": polar_handler.settings.polar_api_url,
             "polar_access_token": polar_handler.settings.polar_access_token,
             "polar_webhook_secret": polar_handler.settings.polar_webhook_secret,
             "polar_product_id_filecleaner": polar_handler.settings.polar_product_id_filecleaner,
+            "polar_product_id_filecleaner_team": polar_handler.settings.polar_product_id_filecleaner_team,
             "allowed_origins": polar_handler.settings.allowed_origins,
             "frontend_url": polar_handler.settings.frontend_url,
         }
@@ -115,7 +117,9 @@ class PaymentIntegrationTests(unittest.TestCase):
         polar_handler.settings.polar_api_url = ""
         polar_handler.settings.polar_access_token = "polar_test_token"
         polar_handler.settings.polar_webhook_secret = ""
+        polar_handler.settings.debug = True
         polar_handler.settings.polar_product_id_filecleaner = "prod_filecleaner"
+        polar_handler.settings.polar_product_id_filecleaner_team = "prod_filecleaner_team"
         polar_handler.settings.allowed_origins = "https://filecleaner.devforgeapp.pro"
         polar_handler.settings.frontend_url = "https://fallback.devforgeapp.pro"
 
@@ -149,6 +153,19 @@ class PaymentIntegrationTests(unittest.TestCase):
             request["json"]["success_url"],
             "https://filecleaner.devforgeapp.pro/dashboard?checkout_id={CHECKOUT_ID}",
         )
+
+    def test_polar_checkout_uses_team_product_when_plan_is_team(self):
+        file_app.dependency_overrides[get_current_user] = _trial_user
+
+        response = TestClient(file_app).post(
+            "/polar/checkout",
+            headers={"origin": "https://filecleaner.devforgeapp.pro"},
+            json={"app_name": "filecleaner", "plan": "team"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(_FakePolarAsyncClient.requests), 1)
+        self.assertEqual(_FakePolarAsyncClient.requests[0]["json"]["product_id"], "prod_filecleaner_team")
 
     def test_polar_webhook_activates_product_access(self):
         user = User(

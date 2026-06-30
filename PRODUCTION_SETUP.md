@@ -23,13 +23,18 @@ Set these in Render:
 |---|---|
 | `POLAR_ACCESS_TOKEN` | Polar organization access token used server-side. |
 | `POLAR_WEBHOOK_SECRET` | Polar webhook signing secret. |
-| `POLAR_PRODUCT_ID_FILECLEANER` | FileCleaner product ID. |
-| `POLAR_PRODUCT_ID_INVOICEFOLLOW` | InvoiceFollow product ID. |
-| `POLAR_PRODUCT_ID_PRICETRACKR` | PriceTrackr product ID. |
-| `POLAR_PRODUCT_ID_WEBHOOKMONITOR` | WebhookMonitor product ID. |
-| `POLAR_PRODUCT_ID_FEEDBACKLENS` | FeedbackLens product ID. |
+| `POLAR_PRODUCT_ID_FILECLEANER_PRO` | FileCleaner Pro product ID. Falls back to `POLAR_PRODUCT_ID_FILECLEANER` for legacy deploys. |
+| `POLAR_PRODUCT_ID_INVOICEFOLLOW_PRO` | InvoiceFollow Pro product ID. Falls back to `POLAR_PRODUCT_ID_INVOICEFOLLOW` for legacy deploys. |
+| `POLAR_PRODUCT_ID_PRICETRACKR_PRO` | PriceTrackr Pro product ID. Falls back to `POLAR_PRODUCT_ID_PRICETRACKR` for legacy deploys. |
+| `POLAR_PRODUCT_ID_WEBHOOKMONITOR_PRO` | WebhookMonitor Pro product ID. Falls back to `POLAR_PRODUCT_ID_WEBHOOKMONITOR` for legacy deploys. |
+| `POLAR_PRODUCT_ID_FEEDBACKLENS_PRO` | FeedbackLens Pro product ID. Falls back to `POLAR_PRODUCT_ID_FEEDBACKLENS` for legacy deploys. |
+| `POLAR_PRODUCT_ID_FILECLEANER_TEAM` | FileCleaner Team product ID. |
+| `POLAR_PRODUCT_ID_INVOICEFOLLOW_TEAM` | InvoiceFollow Team product ID. |
+| `POLAR_PRODUCT_ID_PRICETRACKR_TEAM` | PriceTrackr Team product ID. |
+| `POLAR_PRODUCT_ID_WEBHOOKMONITOR_TEAM` | WebhookMonitor Team product ID. |
+| `POLAR_PRODUCT_ID_FEEDBACKLENS_TEAM` | FeedbackLens Team product ID. |
 
-The backend maps `app_name` to a configured product ID server-side. Do not trust product IDs sent directly from the client.
+The backend maps `app_name` and `plan` to a configured product ID server-side. Do not trust product IDs sent directly from the client.
 
 ## Polar Webhook
 
@@ -56,6 +61,14 @@ Add these jobs in cron-job.org and send `Authorization: Bearer <CRON_SECRET>`:
 | `POST` | `https://devforge-universal-backend.onrender.com/worker/cleanup` | Daily | Remove old completed or failed jobs. |
 
 App-specific cron routes can stay as diagnostics, but production should use the worker routes above.
+
+Use the repository script to audit, create/update, and test cron-job.org jobs:
+
+```bash
+python scripts/sync_cron_jobs.py all
+```
+
+`CRON_SECRET` must match exactly between Render and the `Authorization` header configured in cron-job.org. `CRONJOB_API_KEY` is the cron-job.org API key used by the script; if it is not set, the script falls back to `CRON_SECRET` for backwards compatibility.
 
 ## Database Migrations
 

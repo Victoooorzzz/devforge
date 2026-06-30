@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "backend_core"))
@@ -14,6 +15,7 @@ from polar_utils import (
     should_deactivate_for_polar_event,
 )
 from create_polar_products import build_product_payload
+from product_catalog import resolve_app_from_product_id, resolve_plan_from_product_id, resolve_product_id_for_app
 
 
 class PolarCheckoutPayloadTests(unittest.TestCase):
@@ -74,6 +76,34 @@ class PolarWebhookTests(unittest.TestCase):
         self.assertFalse(should_activate_for_polar_event("subscription.revoked"))
         self.assertTrue(should_deactivate_for_polar_event("subscription.revoked"))
         self.assertTrue(should_deactivate_for_polar_event("subscription.canceled"))
+
+
+class ProductCatalogTests(unittest.TestCase):
+    def test_resolves_pro_product_id_from_explicit_pro_then_legacy_base_name(self):
+        settings = SimpleNamespace(
+            polar_product_id_filecleaner_pro="prod_filecleaner_pro",
+            next_public_polar_product_id_filecleaner_pro="",
+            polar_product_id_filecleaner="prod_filecleaner_legacy",
+            next_public_polar_product_id_filecleaner="",
+        )
+
+        self.assertEqual(resolve_product_id_for_app(settings, "filecleaner", "pro"), "prod_filecleaner_pro")
+
+        settings.polar_product_id_filecleaner_pro = ""
+        self.assertEqual(resolve_product_id_for_app(settings, "filecleaner", "pro"), "prod_filecleaner_legacy")
+
+    def test_resolves_team_product_id_and_plan_from_product_id(self):
+        settings = SimpleNamespace(
+            polar_product_id_filecleaner="prod_filecleaner_pro",
+            next_public_polar_product_id_filecleaner="",
+            polar_product_id_filecleaner_team="prod_filecleaner_team",
+            next_public_polar_product_id_filecleaner_team="",
+        )
+
+        self.assertEqual(resolve_product_id_for_app(settings, "filecleaner", "team"), "prod_filecleaner_team")
+        self.assertEqual(resolve_app_from_product_id(settings, "prod_filecleaner_team"), "filecleaner")
+        self.assertEqual(resolve_plan_from_product_id(settings, "prod_filecleaner_team"), "team")
+        self.assertEqual(resolve_plan_from_product_id(settings, "prod_filecleaner_pro"), "pro")
 
 
 class PolarCatalogPayloadTests(unittest.TestCase):

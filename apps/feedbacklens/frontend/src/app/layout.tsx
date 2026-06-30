@@ -1,20 +1,35 @@
 import type { Metadata } from "next";
-import { generateMetadata as seoMetadata } from "@devforge/core";
+import { generateMetadata as seoMetadata, generateSoftwareAppJsonLd, getProduct } from "@devforge/core";
 import "@devforge/ui/styles/globals.css";
 
+const product = getProduct("feedbacklens");
+
 export const metadata: Metadata = seoMetadata({
-  title: "FeedbackLens - Local Sentiment Analysis for Your Product",
-  description: "Analyze customer feedback locally. Detect sentiment, extract themes, deduplicate repeats, and understand your users better. Start free, no credit card required.",
-  url: "https://feedbacklens.devforgeapp.pro",
-  productName: "FeedbackLens",
-  keywords: ["feedback analysis", "sentiment analysis", "customer insights", "feedback triage", "saas"],
+  title: product.seoTitle,
+  description: product.seoDescription,
+  url: product.url,
+  productName: product.name,
+  keywords: product.keywords,
+  tldr: product.description,
 });
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const jsonLd = generateSoftwareAppJsonLd({
+    name: product.name,
+    description: product.seoDescription,
+    url: product.url,
+    price: product.plans.find((plan) => plan.slug === "pro")?.price || 9.99,
+    category: "DeveloperApplication",
+  });
+
   return (
     <html lang="en">
       <head>
-        <style dangerouslySetInnerHTML={{ __html: `:root { --color-accent: #10B981; --color-accent-dim: #10B98126; --color-accent-glow: #10B98114; }` }} />
+        <style dangerouslySetInnerHTML={{ __html: `:root { --color-accent: ${product.accentColor}; --color-accent-dim: ${product.accentColor}26; --color-accent-glow: ${product.accentColor}14; }` }} />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
       </head>
       <body className="font-sans antialiased">{children}</body>
     </html>

@@ -172,15 +172,15 @@ class FileCleanerProductionPipelineTests(unittest.TestCase):
         self.assertIn("amount_currency", result.dataframe.columns)
         self.assertEqual(result.report["normalization"]["countries_normalized"], 3)
 
-    def test_upload_rejects_free_and_pro_files_over_100mb(self):
-        with patch.object(file_main, "MAX_FILE_SIZE", 8):
-            response = _client(_FakeSession()).post(
-                "/files/upload",
-                files={"file": ("large.csv", b"123456789", "text/csv")},
-            )
+    def test_upload_rejects_free_files_over_plan_limit(self):
+        oversized_free_file = b"0" * (10 * 1024 * 1024 + 1)
+        response = _client(_FakeSession()).post(
+            "/files/upload",
+            files={"file": ("large.csv", oversized_free_file, "text/csv")},
+        )
 
         self.assertEqual(response.status_code, 413)
-        self.assertIn("100MB", response.json()["detail"])
+        self.assertIn("10MB", response.json()["detail"])
 
     def test_cancel_pending_job_marks_canceled_and_deletes_temp_objects(self):
         record = ProcessedFile(

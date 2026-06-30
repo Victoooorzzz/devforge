@@ -1,20 +1,29 @@
 "use client";
-import { useState } from "react";
+
+import { Suspense, useState } from "react";
 import Link from "next/link";
 import { auth, trackEvent } from "@devforge/core";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
-import { product } from "@/config/product";
 
-// RegisterResponse removed, using auth.register types
+type PlanSlug = "free" | "pro" | "team";
+
+const planOptions: Array<{ slug: PlanSlug; label: string; detail: string }> = [
+  { slug: "free", label: "Free", detail: "$0" },
+  { slug: "pro", label: "Pro", detail: "$19/mo" },
+  { slug: "team", label: "Team", detail: "$79/mo" },
+];
+
+function normalizePlan(value: string | null): PlanSlug {
+  return value === "free" || value === "team" ? value : "pro";
+}
 
 function RegisterForm() {
   const router = useRouter();
-  const plan = "pro";
-
+  const searchParams = useSearchParams();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [plan, setPlan] = useState<PlanSlug>(() => normalizePlan(searchParams.get("plan")));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -28,10 +37,13 @@ function RegisterForm() {
         email,
         password,
         app_name: "feedbacklens",
-        plan: "pro",
+        plan,
+        trial: plan !== "free",
       });
 
       if (success) {
+        trackEvent("user_signup", { plan, trial: plan !== "free" });
+
         if (checkoutUrl) {
           window.location.href = checkoutUrl;
           return;
@@ -41,12 +53,12 @@ function RegisterForm() {
           router.push("/verify");
           return;
         }
-        
+
         router.push("/dashboard");
       } else {
         setError(authError || "Registration failed");
       }
-    } catch (err: any) {
+    } catch {
       setError("Could not create account. Try again.");
     } finally {
       setLoading(false);
@@ -54,68 +66,64 @@ function RegisterForm() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: "var(--color-bg)" }}>
+    <div className="min-h-screen flex items-center justify-center px-4 py-8" style={{ backgroundColor: "var(--color-bg)" }}>
       <div className="w-full max-w-sm">
-        {/* Logo */}
         <div className="text-center mb-8">
           <Link href="/" className="text-2xl font-bold" style={{ color: "var(--color-accent)" }}>
             FeedbackLens
           </Link>
           <p className="text-sm mt-2" style={{ color: "var(--color-text-secondary)" }}>
-            Start your 7-day free Pro trial
+            {plan === "free" ? "Create your free workspace" : `Start ${planOptions.find((item) => item.slug === plan)?.label} checkout`}
           </p>
         </div>
 
         <div className="badge mb-6 w-full justify-center text-center py-2 rounded-md" style={{ backgroundColor: "var(--color-accent-dim)", color: "var(--color-accent)" }}>
-          7-day free trial · Then $19/month · Cancel anytime
+          Free $0 | Pro $19/month | Team $79/month
         </div>
 
-        {/* Form */}
         <div className="surface-card p-8 rounded-lg" style={{ border: "1px solid var(--color-border)" }}>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <input type="hidden" name="plan" value="pro" />
             <div>
               <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-text)" }}>
                 Name
               </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="input-field"
-                placeholder="Your name"
-                required
-                autoComplete="name"
-              />
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="input-field" placeholder="Your name" required autoComplete="name" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-text)" }}>
                 Email
               </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="input-field"
-                placeholder="you@example.com"
-                required
-                autoComplete="email"
-              />
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-field" placeholder="you@example.com" required autoComplete="email" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-text)" }}>
                 Password
               </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="input-field"
-                placeholder="At least 8 characters"
-                required
-                minLength={8}
-                autoComplete="new-password"
-              />
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-field" placeholder="At least 8 characters" required minLength={8} autoComplete="new-password" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2" style={{ color: "var(--color-text)" }}>
+                Plan
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {planOptions.map((option) => (
+                  <button
+                    key={option.slug}
+                    type="button"
+                    onClick={() => setPlan(option.slug)}
+                    className="rounded-md border px-3 py-2 text-left text-xs transition"
+                    style={{
+                      borderColor: plan === option.slug ? "var(--color-accent)" : "var(--color-border)",
+                      backgroundColor: plan === option.slug ? "var(--color-accent-dim)" : "rgba(255,255,255,0.04)",
+                      color: plan === option.slug ? "var(--color-text)" : "var(--color-text-secondary)",
+                    }}
+                  >
+                    <span className="block font-semibold">{option.label}</span>
+                    <span>{option.detail}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {error && (
@@ -125,7 +133,7 @@ function RegisterForm() {
             )}
 
             <button type="submit" disabled={loading} className="btn-primary w-full justify-center mt-2 disabled:opacity-60">
-              {loading ? "Creating account..." : "Start 7-Day Free Trial"}
+              {loading ? "Creating account..." : plan === "free" ? "Create Free Account" : `Continue with ${plan}`}
             </button>
           </form>
         </div>
@@ -146,7 +154,7 @@ function RegisterForm() {
 
 export default function RegisterPage() {
   return (
-    <Suspense>
+    <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center"><p style={{ color: "var(--color-text-secondary)" }}>Loading...</p></div>}>
       <RegisterForm />
     </Suspense>
   );

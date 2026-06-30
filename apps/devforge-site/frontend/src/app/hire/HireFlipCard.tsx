@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 
 const experience = [
   "Creator of DevForge, a 5-product micro-SaaS monorepo",
@@ -89,9 +90,11 @@ export function HireFlipCard() {
         >
           <span className="relative flex h-[300px] shrink-0 items-center justify-center overflow-hidden bg-black p-4">
             {!imageFailed ? (
-              <img
+              <Image
                 src="/hire-profile.jpg"
                 alt="DevForge developer portrait"
+                width={520}
+                height={300}
                 className="h-full w-full object-contain grayscale"
                 onError={() => setImageFailed(true)}
               />

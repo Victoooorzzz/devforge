@@ -93,8 +93,7 @@ $apps = @(
     @{ Name = "invoicefollow"; Root = "apps/invoicefollow/frontend" },
     @{ Name = "pricetrackr"; Root = "apps/pricetrackr/frontend" },
     @{ Name = "webhookmonitor"; Root = "apps/webhookmonitor/frontend" },
-    @{ Name = "feedbacklens"; Root = "apps/feedbacklens/frontend" },
-    @{ Name = "template"; Root = "apps/template/frontend" }
+    @{ Name = "feedbacklens"; Root = "apps/feedbacklens/frontend" }
 )
 
 if ($AppName -ne "") {
@@ -191,6 +190,15 @@ foreach ($app in $apps) {
     if ($polarProductValue) {
         Set-VercelEnvVar -ProjectId $project.id -Key $polarProductKey -Value $polarProductValue
         Set-VercelEnvVar -ProjectId $project.id -Key "NEXT_PUBLIC_$polarProductKey" -Value $polarProductValue
+    }
+
+    if ($app.Name -eq "pricetrackr") {
+        foreach ($databaseKey in @("DATABASE_URL", "DATABASE_POOLED_URL")) {
+            $databaseValue = [Environment]::GetEnvironmentVariable($databaseKey, "Process")
+            if ($databaseValue) {
+                Set-VercelEnvVar -ProjectId $project.id -Key $databaseKey -Value $databaseValue
+            }
+        }
     }
 
     # Paso 2 - Inyectar .vercel/project.json

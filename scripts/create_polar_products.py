@@ -32,6 +32,7 @@ PRODUCTS = [
         env_key="INVOICEFOLLOW",
         name="Invoice Follow-up",
         description="Track invoices and automate payment reminders.",
+        price_cents=1900,
     ),
     DevForgeProduct(
         app_slug="pricetrackr",
@@ -50,6 +51,7 @@ PRODUCTS = [
         env_key="FEEDBACKLENS",
         name="Feedback Lens",
         description="Local sentiment analysis and deduped feedback triage.",
+        price_cents=1900,
     ),
 ]
 

@@ -23,6 +23,15 @@ export default function LoginPage() {
           router.push("/verify");
           return;
         }
+        // Save JWT to local HTTP-only cookie for server-side Neon reads
+        const token = auth.getToken();
+        if (token) {
+          await fetch("/api/auth", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+          });
+        }
         trackEvent("user_login", { method: "email" });
         router.push("/dashboard");
       } else {

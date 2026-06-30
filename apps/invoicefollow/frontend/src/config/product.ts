@@ -6,7 +6,7 @@ export const product = {
   accentColor: "#821346",
   keyword: "invoice follow up tool",
   seoTitle: "Invoice Follow-up - Automated Payment Recovery | DevForge",
-  seoDescription: "Stop chasing payments manually. Track existing invoices, detect payments, classify replies, and automate follow-ups via email. Pro starts at $19/mo.",
+  seoDescription: "Stop chasing payments manually. Track existing invoices, detect payments, classify replies, and automate follow-ups via email. Pro starts at $9.99/mo.",
   navLinks: [{ label: "Features", href: "#features" }, { label: "Pricing", href: "#pricing" }],
   hero: {
     badge: "Get Paid Faster",
@@ -24,7 +24,7 @@ export const product = {
   ],
   pricing: {
     planName: "Pro",
-    price: 19,
+    price: 9.99,
     description: "50 active invoices, payment detection, custom templates, and weekly digest",
     polarProductId: process.env.NEXT_PUBLIC_POLAR_PRODUCT_ID || process.env.NEXT_PUBLIC_POLAR_PRODUCT_ID_INVOICEFOLLOW || "",
     features: [

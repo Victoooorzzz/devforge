@@ -1,6 +1,19 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalDependencies": ["**/.env.*local"],
+  "globalEnv": [
+    "DATABASE_POOLED_URL",
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "NEXT_PUBLIC_API_URL",
+    "NEXT_PUBLIC_POLAR_PRODUCT_ID",
+    "NEXT_PUBLIC_POLAR_PRODUCT_ID_FEEDBACKLENS",
+    "NEXT_PUBLIC_POLAR_PRODUCT_ID_FILECLEANER",
+    "NEXT_PUBLIC_POLAR_PRODUCT_ID_INVOICEFOLLOW",
+    "NEXT_PUBLIC_POLAR_PRODUCT_ID_PRICETRACKR",
+    "NEXT_PUBLIC_POLAR_PRODUCT_ID_WEBHOOKMONITOR",
+    "REVALIDATE_SECRET"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

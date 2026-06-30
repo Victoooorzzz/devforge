@@ -1,5 +1,6 @@
 // packages/ui/components/Layout.tsx
 import React from "react";
+import Image from "next/image";
 
 interface NavLink {
   label: string;
@@ -37,7 +38,7 @@ export function Layout({
             style={{ color: "var(--color-text)" }}
           >
             {logoSrc ? (
-              <img src={logoSrc} alt={logoAlt || productName} className="h-6 w-auto" />
+              <Image src={logoSrc} alt={logoAlt || productName} width={132} height={24} className="h-6 w-auto" />
             ) : null}
             {!logoSrc && productName}
           </a>

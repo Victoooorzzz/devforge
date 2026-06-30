@@ -1,24 +1,29 @@
 import type { Metadata } from "next";
-import { generateMetadata as seoMetadata, generateOrganizationJsonLd } from "@devforge/core";
+import { DEVFORGE_SUITE, generateMetadata as seoMetadata, generateOrganizationJsonLd } from "@devforge/core";
+import { Chakra_Petch, Inter, Oxanium } from "next/font/google";
 import "@devforge/ui/styles/globals.css";
 
+const inter = Inter({ subsets: ["latin"], weight: ["300", "400", "500"], variable: "--font-inter" });
+const oxanium = Oxanium({ subsets: ["latin"], weight: ["300", "400", "600", "700", "800"], variable: "--font-oxanium" });
+const chakra = Chakra_Petch({ subsets: ["latin"], weight: ["300", "400", "600", "700"], variable: "--font-chakra" });
+
 export const metadata: Metadata = seoMetadata({
-  title: "DevForge — Indie SaaS Tools for Developers & Freelancers",
-  description: "5 micro-SaaS tools to solve real developer problems: File management, invoice tracking, webhook debugging & AI analysis. Built for indie makers and teams.",
-  url: "https://devforgeapp.pro",
-  productName: "DevForge",
-  keywords: ["saas tools", "developer tools", "micro saas", "indie maker", "devforge"],
+  title: "DevForge - Five micro-SaaS tools for developers and operators",
+  description: DEVFORGE_SUITE.description,
+  url: DEVFORGE_SUITE.url,
+  productName: DEVFORGE_SUITE.name,
+  keywords: ["micro saas tools", "developer tools", "file cleaner", "webhook monitor", "feedback analysis", "price tracker", "invoice reminders"],
+  tldr: DEVFORGE_SUITE.headline,
 });
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${inter.variable} ${oxanium.variable} ${chakra.variable}`}>
       <head>
-        <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;600;700;800&family=Chakra+Petch:wght@300;400;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
         <style dangerouslySetInnerHTML={{ __html: `
-          :root { 
-            --color-accent: #821346; 
-            --color-accent-dim: #82134626; 
+          :root {
+            --color-accent: #821346;
+            --color-accent-dim: #82134626;
             --color-accent-glow: #82134614;
             --color-bg: #0E0C0D;
             --color-surface: #191718;
@@ -31,10 +36,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             --radius-md: 4px;
             --radius-lg: 6px;
           }
-          body { font-family: 'Inter', sans-serif; font-size: 15px; line-height: 1.6; }
-          h1, h2, h3, h4, h5, h6, .heading-display, .heading-section { font-family: 'Oxanium', sans-serif; letter-spacing: 0.05em; text-transform: uppercase; }
-          .badge, .font-mono { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.15em; text-transform: uppercase; }
-          button, .btn-primary, .btn-secondary, .btn-ghost { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.15em; text-transform: uppercase; border-radius: 2px; }
+          body { font-family: var(--font-inter), sans-serif; font-size: 15px; line-height: 1.6; }
+          h1, h2, h3, h4, h5, h6, .heading-display, .heading-section { font-family: var(--font-oxanium), sans-serif; letter-spacing: 0.05em; text-transform: uppercase; }
+          .badge, .font-mono { font-family: var(--font-chakra), sans-serif; letter-spacing: 0.15em; text-transform: uppercase; }
+          button, .btn-primary, .btn-secondary, .btn-ghost { font-family: var(--font-chakra), sans-serif; letter-spacing: 0.15em; text-transform: uppercase; border-radius: 2px; }
         ` }} />
         <script defer data-domain="devforgeapp.pro" src="https://plausible.io/js/script.js" />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(generateOrganizationJsonLd()) }} />

@@ -1,8 +1,9 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { apiClient, downloadFile, trackEvent } from "@devforge/core";
+import { apiClient, downloadFile, getProduct, trackEvent } from "@devforge/core";
 import {
   ActionToast,
+  DashboardPlanPanel,
   DashboardEmptyState,
   DashboardSkeleton,
   InlineErrorState,
@@ -14,6 +15,8 @@ import {
   Activity, Trash2, RefreshCcw, Copy, Check, Search, Code,
   Database, X, ChevronRight, Send, AlertCircle, Download, ChevronDown
 } from "lucide-react";
+
+const dashboardProduct = getProduct("webhookmonitor");
 
 interface WebhookRequest {
   id: number;
@@ -36,6 +39,16 @@ interface WebhookRequest {
   replay_target_url?: string;
   replay_status?: string;
   auto_retry_enabled: boolean;
+}
+
+interface WebhookEndpoint {
+  id: number;
+  uuid: string;
+  name: string;
+  endpoint_url: string;
+  methods: string[];
+  created_at?: string | null;
+  is_active: boolean;
 }
 
 const methodColors: Record<string, string> = {
@@ -93,8 +106,12 @@ interface ReplayResponse {
 
 export default function DashboardPage() {
   const [requests, setRequests]       = useState<WebhookRequest[]>([]);
+  const [endpoints, setEndpoints]     = useState<WebhookEndpoint[]>([]);
   const [selected, setSelected]       = useState<WebhookRequest | null>(null);
   const [endpointUrl, setEndpointUrl] = useState("");
+  const [endpointForm, setEndpointForm] = useState({ name: "", methods: "POST" });
+  const [creatingEndpoint, setCreatingEndpoint] = useState(false);
+  const [deletingEndpointId, setDeletingEndpointId] = useState<number | null>(null);
   const [search, setSearch]           = useState("");
   const [jsonSearchPath, setJsonSearchPath] = useState("");
   const [jsonSearchEquals, setJsonSearchEquals] = useState("");
@@ -135,16 +152,23 @@ export default function DashboardPage() {
   const refreshWebhooks = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
     setLoadError(false);
-    const [configResult, summaryResult, logsResult] = await Promise.allSettled([
+    const [configResult, endpointResult, summaryResult, logsResult] = await Promise.allSettled([
       apiClient.get<{ endpoint_url: string }>("/webhooks/config"),
+      apiClient.get<WebhookEndpoint[]>("/webhooks/endpoints"),
       apiClient.get<WebhookSummary>("/webhooks/summary"),
       apiClient.get<WebhookRequest[]>(`/webhooks/logs?status=${logStatus}`),
     ]);
 
     if (configResult.status === "fulfilled") setEndpointUrl(configResult.value.data.endpoint_url);
+    if (endpointResult.status === "fulfilled") setEndpoints(endpointResult.value.data);
     if (summaryResult.status === "fulfilled") setSummary(summaryResult.value.data);
     if (logsResult.status === "fulfilled") setRequests(logsResult.value.data);
-    if (configResult.status === "rejected" && summaryResult.status === "rejected" && logsResult.status === "rejected") {
+    if (
+      configResult.status === "rejected" &&
+      endpointResult.status === "rejected" &&
+      summaryResult.status === "rejected" &&
+      logsResult.status === "rejected"
+    ) {
       setLoadError(true);
     }
     if (showLoading) setLoading(false);
@@ -202,6 +226,40 @@ export default function DashboardPage() {
     setCopied(true);
     showToast({ tone: "success", message: "Your connection URL was copied." });
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleCreateEndpoint = async () => {
+    setCreatingEndpoint(true);
+    trackEvent("feature_used", { feature_name: "webhook_create_endpoint" });
+    try {
+      const methods = endpointForm.methods.split(",").map(method => method.trim().toUpperCase()).filter(Boolean);
+      const { data } = await apiClient.post<WebhookEndpoint>("/webhooks/endpoints", {
+        name: endpointForm.name || "Production endpoint",
+        methods,
+      });
+      setEndpoints(current => [data, ...current]);
+      setEndpointForm({ name: "", methods: "POST" });
+      showToast({ tone: "success", message: "Endpoint created. Copy its URL into your provider." });
+    } catch (error: any) {
+      showToast({ tone: "error", message: error.response?.data?.detail || "Endpoint could not be created." });
+    } finally {
+      setCreatingEndpoint(false);
+    }
+  };
+
+  const handleDeleteEndpoint = async (endpoint: WebhookEndpoint) => {
+    setDeletingEndpointId(endpoint.id);
+    trackEvent("feature_used", { feature_name: "webhook_delete_endpoint" });
+    try {
+      await apiClient.delete(`/webhooks/endpoints/${endpoint.id}`);
+      setEndpoints(current => current.filter(item => item.id !== endpoint.id));
+      if (endpoint.endpoint_url === endpointUrl) setEndpointUrl("");
+      showToast({ tone: "success", message: "Endpoint and its events were deleted." });
+    } catch (error: any) {
+      showToast({ tone: "error", message: error.response?.data?.detail || "Endpoint could not be deleted." });
+    } finally {
+      setDeletingEndpointId(null);
+    }
   };
 
   const handleRetry = async () => {
@@ -452,6 +510,99 @@ export default function DashboardPage() {
             <span>Clear history</span>
           </button>
         </div>
+      </div>
+
+      <div className="mb-6 px-4">
+        <DashboardPlanPanel
+          product={dashboardProduct}
+          quotas={[
+            { label: "Events today", used: summary?.recent_24h ?? requests.length, limit: 100, caption: "Free daily delivery quota." },
+            { label: "Endpoints", used: endpoints.length, limit: 1, caption: "Pro unlocks 10 endpoints; Team unlocks 50." },
+            { label: "Retention", used: 7, limit: 7, unit: " days", caption: "Pro keeps 30 days; Team keeps 90 days." },
+          ]}
+        />
+      </div>
+
+      <div className="mb-6 grid grid-cols-1 gap-4 px-4 xl:grid-cols-[1fr_360px]">
+        <section className="rounded-xl p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+          <div className="mb-3 flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-bold" style={{ color: "var(--color-text)" }}>Endpoints</h2>
+              <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                Create provider-specific webhook URLs, choose allowed methods, and inspect events per endpoint.
+              </p>
+            </div>
+            <span className="rounded px-2 py-1 font-mono text-xs text-[var(--color-accent)] bg-black/10">
+              {endpoints.length}/1 Free
+            </span>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {endpoints.map(endpoint => (
+              <div key={endpoint.id} className="rounded-lg p-3" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                <div className="mb-2 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold" style={{ color: "var(--color-text)" }}>{endpoint.name}</p>
+                    <p className="text-[11px]" style={{ color: "var(--color-text-secondary)" }}>
+                      {endpoint.methods.join(", ")} · {endpoint.is_active ? "active" : "inactive"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteEndpoint(endpoint)}
+                    disabled={deletingEndpointId === endpoint.id}
+                    className="rounded-md px-2 py-1 text-[10px] font-bold text-red-500 transition-colors hover:bg-red-500/10 disabled:opacity-60"
+                  >
+                    {deletingEndpointId === endpoint.id ? "Deleting" : "Delete"}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 rounded bg-black/10 p-2">
+                  <code className="min-w-0 flex-1 truncate text-[11px]" style={{ color: "var(--color-text)" }}>{endpoint.endpoint_url}</code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(endpoint.endpoint_url);
+                      showToast({ tone: "success", message: "Endpoint URL copied." });
+                    }}
+                    className="rounded px-2 py-1 text-[10px] font-bold text-[var(--color-accent)] hover:bg-black/10"
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+            ))}
+            {endpoints.length === 0 ? (
+              <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>No endpoints yet. Creating config will provision the default endpoint automatically.</p>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="rounded-xl p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+          <h2 className="text-sm font-bold" style={{ color: "var(--color-text)" }}>New endpoint</h2>
+          <p className="mb-3 text-xs" style={{ color: "var(--color-text-secondary)" }}>Use a descriptive name per provider or environment.</p>
+          <div className="space-y-2">
+            <input
+              value={endpointForm.name}
+              onChange={event => setEndpointForm(current => ({ ...current, name: event.target.value }))}
+              className="input-field w-full text-xs"
+              placeholder="Stripe production"
+            />
+            <input
+              value={endpointForm.methods}
+              onChange={event => setEndpointForm(current => ({ ...current, methods: event.target.value }))}
+              className="input-field w-full text-xs font-mono"
+              placeholder="POST, PUT"
+            />
+            <button
+              type="button"
+              onClick={handleCreateEndpoint}
+              disabled={creatingEndpoint}
+              className="btn-primary w-full justify-center text-xs"
+            >
+              {creatingEndpoint ? <InlineSpinner /> : null}
+              Create endpoint
+            </button>
+          </div>
+        </section>
       </div>
 
       {loadError && (

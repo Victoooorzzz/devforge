@@ -1,3 +1,11 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+asyncpg
+bcrypt
+PyJWT
+boto3
+pandas
+openpyxl
 beautifulsoup4
-httpx
 lxml

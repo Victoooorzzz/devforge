@@ -15,7 +15,7 @@ import random
 from .config import get_settings
 from .email_service import send_email
 from .database import get_session
-from .product_catalog import app_slug_from_url, resolve_product_id_for_app
+from .product_catalog import app_slug_from_url, normalize_plan_slug, resolve_product_id_for_app
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -72,9 +72,11 @@ class User(SQLModel, table=True):
 # --- Schemas ---
 
 class RegisterRequest(BaseModel):
+    name: Optional[str] = None
     email: EmailStr
     password: str
     app_name: Optional[str] = None # filecleaner, invoicefollow, etc.
+    plan: Optional[str] = "pro"
 
 
 class LoginRequest(BaseModel):
@@ -234,6 +236,7 @@ async def register(body: RegisterRequest, background_tasks: BackgroundTasks, res
     v_code = str(random.randint(100000, 999999))
     
     user = User(
+        name=body.name.strip() if body.name and body.name.strip() else None,
         email=body.email,
         hashed_password=hash_password(body.password),
         is_active=False,
@@ -269,7 +272,7 @@ async def register(body: RegisterRequest, background_tasks: BackgroundTasks, res
     checkout_url = None
     if body.app_name:
         from .polar_handler import create_polar_checkout
-        product_id = resolve_product_id_for_app(settings, body.app_name)
+        product_id = resolve_product_id_for_app(settings, body.app_name, normalize_plan_slug(body.plan))
         
         if product_id:
             try:

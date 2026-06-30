@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 
 import apps.pricetrackr.backend.main as tracker_main
 import apps.webhookmonitor.backend.main as webhook_main
+from backend_core.plan_limits import resolve_user_plan
 from backend_core.auth import User, get_current_user
 from backend_core.database import get_session
 
@@ -156,7 +158,7 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
             tracker_main.app.dependency_overrides.clear()
         return response, calls
 
-    def test_pricetrackr_trial_rejects_hourly_check_frequency(self):
+    def test_pricetrackr_free_rejects_hourly_check_frequency(self):
         response, calls = self._post_tracker(
             user=_trial_user(),
             session=_QueryAwareSession(),
@@ -164,7 +166,7 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 429)
-        self.assertIn("Trial plan", response.json()["detail"])
+        self.assertIn("Free plan", response.json()["detail"])
         self.assertEqual(calls, {"price": 0, "stock": 0})
 
     def test_pricetrackr_trial_rejects_tracker_count_over_limit(self):
@@ -175,7 +177,7 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
         self.assertIn("5 active trackers", response.json()["detail"])
         self.assertEqual(calls, {"price": 0, "stock": 0})
 
-    def test_webhookmonitor_trial_rejects_ingest_above_daily_limit(self):
+    def test_webhookmonitor_free_rejects_ingest_above_daily_limit(self):
         endpoint = SimpleNamespace(id=10, user_id=77, slug="trial-slug")
         session = _QueryAwareSession(
             user=_trial_user(77),
@@ -191,7 +193,7 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
         response = TestClient(webhook_main.app).post("/in/trial-slug", json={"ok": True})
 
         self.assertEqual(response.status_code, 429)
-        self.assertIn("Trial plan", response.json()["detail"])
+        self.assertIn("Free plan", response.json()["detail"])
         self.assertIn("100 events per day", response.json()["detail"])
 
     def test_webhookmonitor_paid_allows_above_legacy_sixty_per_minute(self):
@@ -225,6 +227,13 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
         self.assertEqual(persisted[0]["user_id"], 77)
         self.assertEqual(persisted[0]["query_params"], {})
         self.assertTrue(persisted[0]["ip_address"])
+
+    def test_legacy_active_user_without_product_access_resolves_to_pro(self):
+        session = _QueryAwareSession(user=_paid_user(77), product_access_rows=[])
+
+        plan = asyncio.run(resolve_user_plan(_paid_user(77), session, "feedbacklens"))
+
+        self.assertEqual(plan, "pro")
 
 
 if __name__ == "__main__":

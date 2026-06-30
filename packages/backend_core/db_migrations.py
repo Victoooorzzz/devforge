@@ -176,7 +176,45 @@ MIGRATION_STATEMENTS = [
         "uq_user_product_access_user_app_idx "
         "ON user_product_access (user_id, app_name)"
     ),
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS selector_1 VARCHAR",
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS selector_2 VARCHAR",
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS selector_3 VARCHAR",
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS last_text VARCHAR",
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS slack_webhook_url VARCHAR",
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS discord_webhook_url VARCHAR",
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS slug VARCHAR",
+    "ALTER TABLE price_history ADD COLUMN IF NOT EXISTS text_content VARCHAR",
+    "ALTER TABLE price_history ADD COLUMN IF NOT EXISTS metadata_json VARCHAR DEFAULT '{}'",
+    (
+        "CREATE TABLE IF NOT EXISTS scrape_logs ("
+        "id SERIAL PRIMARY KEY, tracker_id INTEGER, timestamp TIMESTAMP, "
+        "user_agent VARCHAR, status_code INTEGER, retry BOOLEAN)"
+    ),
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS pending_price DOUBLE PRECISION",
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS pending_stock BOOLEAN",
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS pending_text VARCHAR",
+    (
+        "CREATE TABLE IF NOT EXISTS scrape_control ("
+        "id INTEGER PRIMARY KEY DEFAULT 1, locked_at TIMESTAMP, "
+        "consecutive_high_pressure INTEGER DEFAULT 0)"
+    ),
+    (
+        "CREATE TABLE IF NOT EXISTS pt_export_jobs ("
+        "id UUID PRIMARY KEY, user_id INTEGER, status VARCHAR(20) DEFAULT 'pending', "
+        "format VARCHAR(10) DEFAULT 'csv', r2_url VARCHAR, error_message VARCHAR, "
+        "created_at TIMESTAMP, completed_at TIMESTAMP)"
+    ),
+    (
+        "CREATE TABLE IF NOT EXISTS pt_alert_logs ("
+        "id SERIAL PRIMARY KEY, tracker_id INTEGER NOT NULL, "
+        "change_type VARCHAR(20) NOT NULL, direction VARCHAR(20) NOT NULL, "
+        "sent_at TIMESTAMP NOT NULL DEFAULT NOW())"
+    ),
+    "CREATE INDEX IF NOT EXISTS idx_invoices_cron_paused ON invoices (cron_paused)",
+    "ALTER TABLE webhook_settings ADD COLUMN IF NOT EXISTS last_silence_alert_sent_at TIMESTAMP",
 ]
+
 
 
 async def run_lightweight_migrations(conn: AsyncConnection) -> None:

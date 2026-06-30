@@ -1,8 +1,9 @@
 "use client";
 import { useState, useCallback, useEffect, useRef } from "react";
-import { trackEvent, apiClient, downloadFile, getApiUrl, uploadAndDownloadFile, uploadFile } from "@devforge/core";
+import { trackEvent, apiClient, downloadFile, getApiUrl, getProduct, uploadAndDownloadFile, uploadFile } from "@devforge/core";
 import {
   ActionToast,
+  DashboardPlanPanel,
   DashboardEmptyState,
   DashboardSkeleton,
   InlineErrorState,
@@ -14,6 +15,8 @@ import {
   FileText, Download, Trash2, CheckCircle, Clock, AlertCircle, Info,
   ChevronDown, ChevronUp, Sparkles, RefreshCw, TrendingDown, Zap, Brain, X, Copy, Check, Image as ImageIcon,
 } from "lucide-react";
+
+const dashboardProduct = getProduct("filecleaner");
 
 interface FileReport {
   rows_original: number;
@@ -481,6 +484,17 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
+      </div>
+
+      <div className="mb-8">
+        <DashboardPlanPanel
+          product={dashboardProduct}
+          quotas={[
+            { label: "Files in history", used: summary?.total_files ?? files.length, limit: 10, caption: "Free workspace visibility before Pro/Team retention." },
+            { label: "Max upload size", used: 10, limit: 10, unit: " MB", caption: "Pro raises this to 100 MB; Team raises it to 500 MB." },
+            { label: "Retention", used: 1, limit: 1, unit: " day", caption: "Pro keeps files for 2 days; Team keeps them for 7 days." },
+          ]}
+        />
       </div>
 
       {loadError && (
