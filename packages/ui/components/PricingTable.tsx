@@ -22,8 +22,13 @@ export function PricingTable({ product, currentPlan, compact = false }: PricingT
         return (
           <div
             key={plan.slug}
-            className={`surface-card-raised flex flex-col border p-5 ${plan.slug === "pro" ? "border-[color:var(--color-accent)]" : "border-white/10"}`}
+            className={`surface-card-raised flex flex-col border p-5 transition ${plan.slug === "pro" ? "relative -translate-y-1 border-[color:var(--color-accent)] shadow-[0_18px_42px_rgba(0,0,0,0.28)]" : "border-white/10"}`}
           >
+            {plan.slug === "pro" ? (
+              <div className="mb-4 w-fit rounded-md border px-2.5 py-1 text-[0.68rem] font-bold uppercase tracking-normal" style={{ color: "var(--color-accent)", borderColor: "color-mix(in srgb, var(--color-accent) 42%, transparent)", backgroundColor: "var(--color-accent-dim)" }}>
+                Recommended
+              </div>
+            ) : null}
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-lg font-semibold" style={{ color: "var(--color-text)" }}>
@@ -56,7 +61,7 @@ export function PricingTable({ product, currentPlan, compact = false }: PricingT
               ))}
             </ul>
 
-            <a href={href} className={`mt-6 w-full ${plan.slug === "pro" ? "btn-primary" : "btn-secondary"}`}>
+            <a href={href} className={`mt-6 w-full ${plan.slug === "pro" ? "btn-primary" : "btn-outline"}`}>
               {plan.cta}
             </a>
           </div>

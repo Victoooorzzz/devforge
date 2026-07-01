@@ -38,7 +38,7 @@ export function Layout({
             style={{ color: "var(--color-text)" }}
           >
             {logoSrc ? (
-              <Image src={logoSrc} alt={logoAlt || productName} width={132} height={24} className="h-6 w-auto" style={{ width: "auto", height: "auto" }} priority />
+              <Image src={logoSrc} alt={logoAlt || productName} width={109} height={24} priority />
             ) : null}
             {!logoSrc && productName}
           </a>

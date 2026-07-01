@@ -13,6 +13,8 @@ export function ProductGrid({
   title = "Our Products",
   subtitle,
 }: ProductGridProps) {
+  const needsPlaceholder = products.length % 3 === 2;
+
   return (
     <section className="py-20 md:py-28">
       <div className="section-container">
@@ -34,6 +36,24 @@ export function ProductGrid({
           {products.map((product) => (
             <ProductCard key={product.domain} product={product} />
           ))}
+          {needsPlaceholder ? (
+            <div className="product-suite-card flex min-h-[24rem] flex-col justify-between rounded-lg border border-dashed border-white/10 p-6">
+              <div>
+                <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 text-lg" style={{ color: "var(--color-text-secondary)" }}>
+                  +
+                </div>
+                <h3 className="mb-2 text-lg font-semibold leading-tight" style={{ color: "var(--color-text)" }}>
+                  More tools coming soon
+                </h3>
+                <p className="text-sm leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
+                  The suite stays focused: small developer tools that remove repetitive operational work.
+                </p>
+              </div>
+              <span className="mt-6 inline-flex w-fit rounded-md border border-white/10 px-3 py-2 text-xs font-semibold" style={{ color: "var(--color-text-secondary)" }}>
+                Watch roadmap
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </section>

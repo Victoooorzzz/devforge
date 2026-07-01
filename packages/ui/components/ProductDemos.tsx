@@ -31,6 +31,7 @@ interface DirtyRow {
 
 function FileCleanerDemo() {
   const [cleaned, setCleaned] = useState(false);
+  const [isCleaning, setIsCleaning] = useState(false);
   const dirtyRows: DirtyRow[] = [
     { row: "001", email: " ANA@Example.com ", amount: "$1,200.00", country: "usa", issue: "Whitespace, case", status: "dirty" },
     { row: "002", email: "ana@example.com", amount: "1200", country: "United States", issue: "Duplicate", status: "dirty" },
@@ -44,6 +45,19 @@ function FileCleanerDemo() {
     { row: "004", email: "marco@agency.io", amount: "780.50", country: "ES", issue: "Normalized", status: "clean" },
   ];
   const rows = cleaned ? cleanRows : dirtyRows;
+  const handleCleaningDemo = () => {
+    if (isCleaning) return;
+    if (cleaned) {
+      setCleaned(false);
+      return;
+    }
+
+    setIsCleaning(true);
+    window.setTimeout(() => {
+      setCleaned(true);
+      setIsCleaning(false);
+    }, 720);
+  };
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1.35fr_0.65fr]">
@@ -55,13 +69,19 @@ function FileCleanerDemo() {
               {cleaned ? "Clean preview and quality report" : "Dirty file preview"}
             </h3>
           </div>
-          <button type="button" onClick={() => setCleaned((value) => !value)} className="btn-primary">
-            {cleaned ? "Reset dirty file" : "Run cleaning demo"}
+          <button type="button" onClick={handleCleaningDemo} className="cleaning-demo-button btn-primary" disabled={isCleaning}>
+            {isCleaning ? "Cleaning rows..." : cleaned ? "Reset dirty file" : "Run cleaning demo"}
           </button>
         </div>
         <DemoDataTable
           rows={rows}
           getRowKey={(row) => row.row}
+          className={isCleaning ? "cleaning-table-active" : ""}
+          rowClassName={(row, index) => row.status === "dirty" || isCleaning ? `dirty-row-transition dirty-row-${index}` : "clean-row-transition"}
+          cellClassName={(row, column) => {
+            const key = String(column.key);
+            return row.status === "dirty" && key !== "row" ? "dirty-cell" : "";
+          }}
           columns={[
             { key: "row", label: "Row" },
             { key: "email", label: "Email" },
@@ -101,8 +121,8 @@ function FileCleanerDemo() {
           <h4 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Plan gates</h4>
           <div className="mt-3 space-y-2 text-sm">
             <div className="flex items-center justify-between gap-3"><span>Schema rules</span><StatusBadge tone="accent">Pro</StatusBadge></div>
-            <div className="flex items-center justify-between gap-3"><span>10k fuzzy rows</span><StatusBadge tone="success">Team</StatusBadge></div>
-            <div className="flex items-center justify-between gap-3"><span>Parallel batch</span><StatusBadge tone="success">Team</StatusBadge></div>
+            <a href="/register?plan=pro" className="plan-gate-row" data-tooltip="Available on Pro. Upgrade now"><span>10k fuzzy rows</span><StatusBadge tone="accent">Pro</StatusBadge></a>
+            <a href="/register?plan=pro" className="plan-gate-row" data-tooltip="Available on Pro. Upgrade now"><span>Parallel batch</span><StatusBadge tone="accent">Pro</StatusBadge></a>
           </div>
         </div>
       </div>

@@ -2,6 +2,7 @@
 import React from "react";
 
 export interface ProductInfo {
+  slug: string;
   name: string;
   tagline: string;
   domain: string;
@@ -26,10 +27,11 @@ const statusLabels: Record<ProductInfo["status"], string> = {
 export function ProductCard({ product }: ProductCardProps) {
   return (
     <a
+      id={`product-${product.slug}`}
       href={`https://${product.domain}`}
       target="_blank"
       rel="noopener noreferrer"
-      className="group block p-6 rounded-lg transition-all duration-300 hover:translate-y-[-2px] animate-slide-up"
+      className="product-suite-card group flex flex-col rounded-lg p-6 transition-all duration-300 hover:translate-y-[-2px] animate-slide-up"
       style={{
         backgroundColor: "var(--color-surface)",
         "--card-accent": product.accentColor,
@@ -67,22 +69,22 @@ export function ProductCard({ product }: ProductCardProps) {
       </div>
 
       <h3
-        className="text-lg font-semibold mb-1"
+        className="mb-2 text-lg font-semibold leading-tight"
         style={{ color: "var(--color-text)" }}
       >
         {product.name}
       </h3>
       <p
-        className="text-sm mb-4"
+        className="mb-5 min-h-[3.5rem] text-sm leading-relaxed"
         style={{ color: "var(--color-text-secondary)" }}
       >
         {product.tagline}
       </p>
 
       {(product.problem || product.solution || product.audienceTags?.length) && (
-        <div className="mb-4 text-sm space-y-2 border-t pt-4" style={{ borderColor: "var(--color-border)", color: "var(--color-text-secondary)" }}>
-          {product.problem && <p><strong style={{ color: "var(--color-text)" }}>The Problem:</strong> {product.problem}</p>}
-          {product.solution && <p><strong style={{ color: "var(--color-text)" }}>The Solution:</strong> {product.solution}</p>}
+        <div className="mb-5 space-y-3 border-t pt-4 text-sm leading-relaxed" style={{ borderColor: "var(--color-border)", color: "var(--color-text-secondary)" }}>
+          {product.problem && <p className="break-words"><strong style={{ color: "var(--color-text)" }}>Problem:</strong> {product.problem}</p>}
+          {product.solution && <p className="break-words"><strong style={{ color: "var(--color-text)" }}>Solution:</strong> {product.solution}</p>}
           {product.audienceTags?.length ? (
             <div className="flex flex-wrap gap-2 pt-1">
               {product.audienceTags.map((tag) => (
@@ -99,7 +101,7 @@ export function ProductCard({ product }: ProductCardProps) {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="mt-auto flex items-center justify-between gap-3">
         <span
           className="text-sm font-mono font-semibold"
           style={{ color: product.accentColor }}
@@ -107,10 +109,10 @@ export function ProductCard({ product }: ProductCardProps) {
           ${product.price}/mo
         </span>
         <span
-          className="text-xs"
-          style={{ color: "var(--color-text-secondary)" }}
+          className="inline-flex shrink-0 items-center rounded-md border px-3 py-2 text-xs font-semibold transition group-hover:border-[color:var(--card-accent)]"
+          style={{ color: "var(--color-text)", borderColor: "rgba(255,255,255,0.14)" }}
         >
-          {product.domain}
+          Try Live Demo
         </span>
       </div>
     </a>

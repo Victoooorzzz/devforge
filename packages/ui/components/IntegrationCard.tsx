@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { StatusBadge, type StatusBadgeTone } from "./StatusBadge";
 
 interface IntegrationCardProps {
@@ -6,13 +7,14 @@ interface IntegrationCardProps {
   status?: string;
   tone?: StatusBadgeTone;
   meta?: string;
+  icon?: ReactNode;
 }
 
-export function IntegrationCard({ name, description, status = "Available", tone = "accent", meta }: IntegrationCardProps) {
+export function IntegrationCard({ name, description, status = "Available", tone = "accent", meta, icon }: IntegrationCardProps) {
   return (
     <div className="dashboard-card-motion surface-card-raised border border-white/10 p-4">
       <div className="flex items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>
             {name}
           </h3>
@@ -20,7 +22,13 @@ export function IntegrationCard({ name, description, status = "Available", tone 
             {description}
           </p>
         </div>
-        <StatusBadge tone={tone}>{status}</StatusBadge>
+        {icon ? (
+          <span className="feature-icon-badge" aria-hidden="true">
+            {icon}
+          </span>
+        ) : (
+          <StatusBadge tone={tone}>{status}</StatusBadge>
+        )}
       </div>
       {meta ? (
         <p className="mt-4 rounded-md bg-black/30 px-3 py-2 font-mono text-xs" style={{ color: "var(--color-text-secondary)" }}>

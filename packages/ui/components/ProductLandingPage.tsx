@@ -70,6 +70,47 @@ function getFeatureDescription(product: DevForgeProduct, feature: string): strin
   return featureDescriptions[product.slug]?.[feature] || `${feature} is available in the ${product.name} workflow with plan-aware limits.`;
 }
 
+function MiniIcon({ type }: { type: "problem" | "solution" | "audience" }) {
+  const paths = {
+    problem: <path d="M12 8v4m0 4h.01M4.9 19h14.2L12 4 4.9 19Z" />,
+    solution: <path d="M9 12l2 2 4-5M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z" />,
+    audience: <path d="M16 19v-1.5A3.5 3.5 0 0 0 12.5 14h-5A3.5 3.5 0 0 0 4 17.5V19m12-8a3 3 0 1 0 0-6m-6 6a3 3 0 1 0 0-6m10 14v-1a3 3 0 0 0-2-2.83" />,
+  };
+
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {paths[type]}
+    </svg>
+  );
+}
+
+function FeatureIcon({ feature }: { feature: string }) {
+  const lower = feature.toLowerCase();
+  let path = <path d="M4 12h16M12 4v16" />;
+
+  if (lower.includes("preview") || lower.includes("viewer") || lower.includes("chart")) {
+    path = <><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" /></>;
+  } else if (lower.includes("metadata") || lower.includes("exif") || lower.includes("signature") || lower.includes("validation")) {
+    path = <><path d="M7 11V8a5 5 0 0 1 10 0v3" /><path d="M6 11h12v9H6z" /></>;
+  } else if (lower.includes("duplicate") || lower.includes("dedup") || lower.includes("diff")) {
+    path = <><path d="M8 8h11v11H8z" /><path d="M5 5h11" /><path d="M5 5v11" /></>;
+  } else if (lower.includes("export") || lower.includes("curl") || lower.includes("postman")) {
+    path = <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>;
+  } else if (lower.includes("normalize") || lower.includes("rules") || lower.includes("selector")) {
+    path = <><path d="M4 7h16" /><path d="M7 7v10" /><path d="M17 7v10" /><path d="M4 17h16" /></>;
+  } else if (lower.includes("alert") || lower.includes("digest") || lower.includes("reminder")) {
+    path = <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z" /><path d="M10 21h4" /></>;
+  } else if (lower.includes("replay") || lower.includes("retry") || lower.includes("sync")) {
+    path = <><path d="M21 12a9 9 0 0 1-15.5 6.2" /><path d="M3 12A9 9 0 0 1 18.5 5.8" /><path d="M18 2v4h-4" /><path d="M6 22v-4h4" /></>;
+  }
+
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {path}
+    </svg>
+  );
+}
+
 export function ProductLandingPage({ product }: ProductLandingPageProps) {
   const relatedProducts = DEVFORGE_PRODUCTS.filter((item) => item.slug !== product.slug).slice(0, 4);
   const proPlan = product.plans.find((plan) => plan.slug === "pro");
@@ -113,13 +154,13 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
               <div className="mt-8 flex flex-wrap gap-3">
                 <a href="/register?plan=free" className="btn-primary">Start free</a>
                 <a href="#demo" className="btn-secondary">Try public demo</a>
-                <a href="/login" className="btn-ghost">Open dashboard</a>
+                <a href="/login" className="btn-outline">Open dashboard</a>
               </div>
             </div>
 
             <div className="surface-card-raised border border-white/10 p-5">
               <div className="flex items-center gap-3">
-                <Image src="/devforge-logo-white.svg" alt="DevForge" width={126} height={28} className="h-7 w-auto" style={{ width: "auto", height: "auto" }} priority />
+                <Image src="/devforge-logo-white.svg" alt="DevForge" width={126} height={28} priority />
                 <div>
                   <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Product brief</p>
                   <h2 className="text-lg font-semibold" style={{ color: "var(--color-text)" }}>{product.shortName}</h2>
@@ -127,12 +168,15 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
               </div>
               <div className="mt-5 space-y-4">
                 {[
-                  ["Problem", product.problem],
-                  ["Solution", product.solution],
-                  ["Built for", product.audience],
-                ].map(([label, value]) => (
+                  ["Problem", product.problem, "problem"],
+                  ["Solution", product.solution, "solution"],
+                  ["Built for", product.audience, "audience"],
+                ].map(([label, value, icon]) => (
                   <div key={label} className="rounded-md bg-black/30 p-4">
-                    <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>{label}</p>
+                    <p className="flex items-center gap-2 text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>
+                      <MiniIcon type={icon as "problem" | "solution" | "audience"} />
+                      {label}
+                    </p>
                     <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>{value}</p>
                   </div>
                 ))}
@@ -156,7 +200,7 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
             </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {product.features.map((feature) => (
-                <IntegrationCard key={feature} name={feature} description={getFeatureDescription(product, feature)} status="Included" tone="accent" />
+                <IntegrationCard key={feature} name={feature} description={getFeatureDescription(product, feature)} icon={<FeatureIcon feature={feature} />} />
               ))}
             </div>
           </div>
@@ -173,7 +217,7 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               {product.useCases.map((useCase) => (
-                <div key={useCase} className="surface-card-raised border border-white/10 p-4">
+                <div key={useCase} className="use-case-card surface-card-raised border border-white/10 p-4">
                   <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>{useCase}</p>
                 </div>
               ))}
@@ -212,9 +256,18 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
             </div>
             <div className="space-y-3">
               {product.faq.map((item) => (
-                <details key={item.question} className="surface-card-raised border border-white/10 p-4">
-                  <summary className="cursor-pointer text-sm font-semibold" style={{ color: "var(--color-text)" }}>{item.question}</summary>
-                  <p className="mt-3 text-sm leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>{item.answer}</p>
+                <details key={item.question} className="faq-accordion surface-card-raised border border-white/10 p-4">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-semibold" style={{ color: "var(--color-text)" }}>
+                    <span>{item.question}</span>
+                    <span className="faq-chevron" aria-hidden="true">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m9 6 6 6-6 6" />
+                      </svg>
+                    </span>
+                  </summary>
+                  <div className="faq-answer">
+                    <p className="pt-3 text-sm leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>{item.answer}</p>
+                  </div>
                 </details>
               ))}
             </div>
