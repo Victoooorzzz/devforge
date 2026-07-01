@@ -367,7 +367,7 @@ export default function DashboardPage() {
   return (
     <>
       <ActionToast toast={toast} onDismiss={() => setToast(null)} />
-      <div className="space-y-6">
+      <div className="dashboard-motion space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-bold" style={{ color: "var(--color-text)" }}>Invoice recovery</h1>
@@ -564,7 +564,7 @@ export default function DashboardPage() {
           </section>
         </div>
 
-        <div className="overflow-hidden rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
+        <div className="dashboard-table-scroll rounded-lg" style={{ backgroundColor: "var(--color-surface)" }}>
           {invoices.length === 0 ? (
             <div className="p-10">
               <DashboardEmptyState

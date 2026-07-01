@@ -18,7 +18,7 @@ export function UpgradePrompt({
   secondaryAction,
 }: UpgradePromptProps) {
   return (
-    <div className="surface-card-raised border border-white/10 p-5">
+    <div className="dashboard-card-motion surface-card-raised border border-white/10 p-5">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="max-w-2xl">
           <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>
@@ -42,7 +42,7 @@ export function UpgradePrompt({
         </div>
         <div className="flex shrink-0 items-center gap-3">
           {secondaryAction}
-          <a href={ctaHref} className="btn-primary">
+          <a href={ctaHref} className="btn-primary w-full justify-center sm:w-auto">
             {ctaLabel}
           </a>
         </div>

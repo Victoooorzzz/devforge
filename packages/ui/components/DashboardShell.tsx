@@ -33,10 +33,10 @@ export function DashboardShell({
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="min-h-screen flex" style={{ backgroundColor: "var(--color-bg)" }}>
+    <div className="dashboard-shell min-h-screen flex" style={{ backgroundColor: "var(--color-bg)" }}>
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-300 md:relative md:translate-x-0 ${
+        className={`dashboard-sidebar fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-300 md:relative md:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
         style={{ backgroundColor: "var(--color-surface)" }}
@@ -44,7 +44,7 @@ export function DashboardShell({
         <div className="flex flex-col h-full">
           {/* Logo */}
           <div className="flex items-center h-16 px-6 gap-3">
-            {logoSrc && <Image src={logoSrc} alt="DevForge" width={110} height={20} className="h-5 w-auto" />}
+            {logoSrc && <Image src={logoSrc} alt="DevForge" width={110} height={20} className="h-5 w-auto" style={{ width: "auto", height: "auto" }} />}
             <a
               href="/dashboard"
               className={`text-lg font-bold tracking-tight ${logoSrc ? 'border-l border-white/10 pl-3' : ''}`}
@@ -156,7 +156,7 @@ export function DashboardShell({
         </header>
 
         {/* Page content */}
-        <main className="flex-1 p-6 md:p-8 overflow-auto">
+        <main className="dashboard-main flex-1 p-4 sm:p-6 md:p-8 overflow-auto">
           {children}
         </main>
       </div>

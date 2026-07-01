@@ -10,7 +10,7 @@ interface IntegrationCardProps {
 
 export function IntegrationCard({ name, description, status = "Available", tone = "accent", meta }: IntegrationCardProps) {
   return (
-    <div className="surface-card-raised border border-white/10 p-4">
+    <div className="dashboard-card-motion surface-card-raised border border-white/10 p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>

@@ -210,7 +210,7 @@ export default function DashboardClient({
   const flaggedTrackers = trackers.filter((t) => t.status === "flagged");
 
   return (
-    <div className="space-y-6">
+    <div className="dashboard-motion space-y-6">
       {toast && <ActionToast toast={toast} onDismiss={() => setToast(null)} />}
 
       {/* Flagged review area */}
@@ -298,7 +298,7 @@ export default function DashboardClient({
             ].map((stat, idx) => (
               <div
                 key={idx}
-                className={`p-4 rounded-xl border flex flex-col justify-between h-24 backdrop-blur-md ${stat.bg}`}
+                className={`dashboard-card-motion p-4 rounded-xl border flex flex-col justify-between h-24 backdrop-blur-md ${stat.bg}`}
               >
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
@@ -315,7 +315,7 @@ export default function DashboardClient({
 
           {/* Health Alerts Panel */}
           {health.some((h) => h.severity !== "ok") && (
-            <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-4 space-y-3">
+            <div className="dashboard-card-motion bg-zinc-950/40 border border-white/5 rounded-xl p-4 space-y-3">
               <div className="flex items-center justify-between border-b border-white/5 pb-2">
                 <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                   Price Scrape Health Status
@@ -367,7 +367,7 @@ export default function DashboardClient({
               </span>
             </div>
             {activeTrackers.length === 0 ? (
-              <div className="text-center py-12 bg-zinc-950/20 border border-white/5 rounded-xl">
+              <div className="dashboard-card-motion text-center py-12 bg-zinc-950/20 border border-white/5 rounded-xl">
                 <p className="text-sm text-zinc-500 font-medium">No monitored products yet.</p>
                 <p className="text-xs text-zinc-600 mt-1">
                   Click the "Track Product" button to start monitoring price drops.
@@ -392,7 +392,7 @@ export default function DashboardClient({
 
         {/* Sidebar History Detail Panel */}
         {selected && (
-          <div className="w-full lg:w-80 flex-shrink-0 bg-zinc-950/20 border border-white/5 rounded-xl p-4 space-y-4 h-fit backdrop-blur-md">
+          <div className="dashboard-card-motion w-full lg:w-80 flex-shrink-0 bg-zinc-950/20 border border-white/5 rounded-xl p-4 space-y-4 h-fit backdrop-blur-md">
             <div className="flex items-center justify-between pb-2 border-b border-white/5">
               <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider truncate max-w-[200px]">
                 {selected.label}

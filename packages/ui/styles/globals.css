@@ -307,6 +307,79 @@
     animation: scaleIn 0.3s ease forwards;
   }
 
+  .demo-panel {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .demo-scanline::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      color-mix(in srgb, var(--color-accent) 32%, transparent) 50%,
+      transparent 100%
+    );
+    height: 28%;
+    opacity: 0.22;
+    transform: translateY(-120%);
+    animation: demoScanline 5s ease-in-out infinite;
+  }
+
+  .demo-pulse {
+    animation: demoPulse 3.2s ease-in-out infinite;
+  }
+
+  .dashboard-shell {
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .dashboard-sidebar {
+    min-width: 0;
+  }
+
+  .dashboard-main {
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .dashboard-motion {
+    animation: dashboardEnter 0.42s ease both;
+  }
+
+  .dashboard-card-motion {
+    animation: dashboardEnter 0.45s ease both;
+    transition: transform var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base);
+  }
+
+  .dashboard-card-motion:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--color-accent) 28%, rgba(255,255,255,0.1));
+    box-shadow: 0 12px 30px color-mix(in srgb, var(--color-accent) 12%, transparent);
+  }
+
+  .dashboard-progress-bar {
+    animation: dashboardProgress 0.8s ease-out both;
+    transform-origin: left center;
+  }
+
+  .dashboard-table-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dashboard-table-scroll > table {
+    min-width: max-content;
+  }
+
   @keyframes fadeIn {
     from {
       opacity: 0;
@@ -335,6 +408,72 @@
     to {
       opacity: 1;
       transform: scale(1);
+    }
+  }
+
+  @keyframes demoScanline {
+    0%, 35% {
+      transform: translateY(-120%);
+      opacity: 0;
+    }
+    45% {
+      opacity: 0.22;
+    }
+    70% {
+      opacity: 0.16;
+    }
+    100% {
+      transform: translateY(360%);
+      opacity: 0;
+    }
+  }
+
+  @keyframes demoPulse {
+    0%, 100% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 0%, transparent);
+      border-color: rgba(255,255,255,0.1);
+    }
+    45% {
+      box-shadow: 0 0 24px color-mix(in srgb, var(--color-accent) 22%, transparent);
+      border-color: color-mix(in srgb, var(--color-accent) 34%, rgba(255,255,255,0.1));
+    }
+  }
+
+  @keyframes dashboardEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes dashboardProgress {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-fade-in,
+    .animate-slide-up,
+    .animate-scale-in,
+    .demo-pulse,
+    .demo-scanline::after,
+    .dashboard-motion,
+    .dashboard-card-motion,
+    .dashboard-progress-bar {
+      animation: none;
+    }
+
+    .dashboard-card-motion:hover {
+      transform: none;
+      box-shadow: none;
     }
   }
 }

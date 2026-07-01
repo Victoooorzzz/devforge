@@ -10,7 +10,7 @@ export interface ProductInfo {
   status: "live" | "beta" | "coming-soon";
   problem?: string;
   solution?: string;
-  target?: string;
+  audienceTags?: string[];
 }
 
 interface ProductCardProps {
@@ -19,7 +19,7 @@ interface ProductCardProps {
 
 const statusLabels: Record<ProductInfo["status"], string> = {
   live: "Live",
-  beta: "Beta",
+  beta: "Beta pilot",
   "coming-soon": "Coming Soon",
 };
 
@@ -29,7 +29,7 @@ export function ProductCard({ product }: ProductCardProps) {
       href={`https://${product.domain}`}
       target="_blank"
       rel="noopener noreferrer"
-      className="group block p-6 rounded-lg transition-all duration-300 hover:translate-y-[-2px]"
+      className="group block p-6 rounded-lg transition-all duration-300 hover:translate-y-[-2px] animate-slide-up"
       style={{
         backgroundColor: "var(--color-surface)",
         "--card-accent": product.accentColor,
@@ -52,13 +52,13 @@ export function ProductCard({ product }: ProductCardProps) {
               product.status === "live"
                 ? "rgba(16,185,129,0.15)"
                 : product.status === "beta"
-                  ? `${product.accentColor}20`
+                  ? "rgba(163,163,163,0.12)"
                   : "rgba(163,163,163,0.15)",
             color:
               product.status === "live"
                 ? "#10B981"
                 : product.status === "beta"
-                  ? product.accentColor
+                  ? "var(--color-text-secondary)"
                   : "var(--color-text-secondary)",
           }}
         >
@@ -79,11 +79,23 @@ export function ProductCard({ product }: ProductCardProps) {
         {product.tagline}
       </p>
 
-      {(product.problem || product.solution || product.target) && (
+      {(product.problem || product.solution || product.audienceTags?.length) && (
         <div className="mb-4 text-sm space-y-2 border-t pt-4" style={{ borderColor: "var(--color-border)", color: "var(--color-text-secondary)" }}>
           {product.problem && <p><strong style={{ color: "var(--color-text)" }}>The Problem:</strong> {product.problem}</p>}
           {product.solution && <p><strong style={{ color: "var(--color-text)" }}>The Solution:</strong> {product.solution}</p>}
-          {product.target && <p><strong style={{ color: "var(--color-text)" }}>Who is it for:</strong> {product.target}</p>}
+          {product.audienceTags?.length ? (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {product.audienceTags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-full border border-white/10 px-2.5 py-1 text-xs"
+                  style={{ color: "var(--color-text-secondary)" }}
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
 

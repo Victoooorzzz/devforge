@@ -20,12 +20,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   };
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row" style={{ backgroundColor: "var(--color-bg)" }}>
+    <div className="dashboard-shell min-h-screen flex flex-col md:flex-row" style={{ backgroundColor: "var(--color-bg)" }}>
       {/* Sidebar */}
-      <aside className="w-full md:w-56 md:flex-shrink-0 flex flex-col border-b md:border-b-0 md:border-r" style={{ backgroundColor: "var(--color-surface)", borderColor: "var(--color-border)" }}>
+      <aside className="dashboard-sidebar w-full md:w-56 md:flex-shrink-0 flex flex-col border-b md:border-b-0 md:border-r" style={{ backgroundColor: "var(--color-surface)", borderColor: "var(--color-border)" }}>
         <div className="h-16 flex items-center px-5 border-b" style={{ borderColor: "var(--color-border)" }}>
           <Link href="/" className="flex items-center gap-3">
-            <Image src="/devforge-logo-white.svg" alt="DevForge" width={98} height={20} className="h-5 w-auto" />
+            <Image src="/devforge-logo-white.svg" alt="DevForge" width={98} height={20} className="h-5 w-auto" style={{ width: "auto", height: "auto" }} />
             <span className="text-base font-bold border-l border-white/10 pl-3">
               Feedback<span style={{ color: "var(--color-accent)" }}>Lens</span>
             </span>
@@ -52,7 +52,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Main */}
-      <main className="flex-1 min-w-0 overflow-auto">
+      <main className="dashboard-main flex-1 min-w-0 overflow-auto">
         <div className="max-w-4xl mx-auto px-4 md:px-8 py-6 md:py-10">
           {children}
         </div>

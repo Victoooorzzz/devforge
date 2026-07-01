@@ -1,10 +1,17 @@
 import { DEVFORGE_PRODUCTS, DEVFORGE_SUITE } from "@devforge/core";
 import Image from "next/image";
 import type { ProductInfo } from "./ProductCard";
-import { FeatureComparison } from "./FeatureComparison";
 import { Layout } from "./Layout";
 import { ProductGrid } from "./ProductGrid";
 import { StatusBadge } from "./StatusBadge";
+
+const audienceTagsByProduct = {
+  filecleaner: ["Data teams", "Agencies", "Operators"],
+  webhookmonitor: ["Developers", "API teams", "SaaS"],
+  feedbacklens: ["Product teams", "Support", "Founders"],
+  pricetrackr: ["Ecommerce", "Agencies", "Researchers"],
+  invoicefollow: ["Freelancers", "Agencies", "Consultants"],
+};
 
 const productCards: ProductInfo[] = DEVFORGE_PRODUCTS.map((product) => ({
   name: product.name,
@@ -15,7 +22,7 @@ const productCards: ProductInfo[] = DEVFORGE_PRODUCTS.map((product) => ({
   status: product.status,
   problem: product.problem,
   solution: product.solution,
-  target: product.audience,
+  audienceTags: audienceTagsByProduct[product.slug],
 }));
 
 const suitePlans = [
@@ -40,7 +47,8 @@ const suitePlans = [
 ];
 
 export function SuiteHomePage() {
-  const firstProduct = DEVFORGE_PRODUCTS[0];
+  const liveCount = DEVFORGE_PRODUCTS.filter((product) => product.status === "live").length;
+  const betaCount = DEVFORGE_PRODUCTS.filter((product) => product.status === "beta").length;
 
   return (
     <Layout
@@ -53,16 +61,16 @@ export function SuiteHomePage() {
         { label: "Comparison", href: "#comparison" },
         { label: "Hire", href: "/hire" },
       ]}
-      ctaText="Explore products"
-      ctaHref="#products"
+      ctaText="Start free"
+      ctaHref="/register?plan=free"
     >
       <section className="py-16 md:py-24">
         <div className="section-container grid gap-10 lg:grid-cols-[1fr_420px] lg:items-center">
           <div>
             <div className="mb-5 flex flex-wrap items-center gap-2">
-              <StatusBadge tone="success">5 products live</StatusBadge>
+              <StatusBadge tone="success">{liveCount} live products</StatusBadge>
+              <StatusBadge tone="neutral">{betaCount} beta pilots</StatusBadge>
               <StatusBadge tone="accent">Free, Pro, Team</StatusBadge>
-              <StatusBadge tone="neutral">Developer-first suite</StatusBadge>
             </div>
             <h1 className="heading-display text-4xl md:text-6xl">
               {DEVFORGE_SUITE.name}
@@ -74,12 +82,13 @@ export function SuiteHomePage() {
               {DEVFORGE_SUITE.description}
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <a href="#products" className="btn-primary">View products</a>
+              <a href="/register?plan=free" className="btn-primary">Start free</a>
               <a href="#plans" className="btn-secondary">Compare plans</a>
+              <a href="#products" className="btn-ghost">Explore products</a>
             </div>
           </div>
-          <div className="surface-card-raised border border-white/10 p-5">
-            <Image src="/devforge-logo-white.svg" alt="DevForge" width={144} height={32} className="h-8 w-auto" />
+          <div className="surface-card-raised border border-white/10 p-5 animate-scale-in">
+            <Image src="/devforge-logo-white.svg" alt="DevForge" width={144} height={32} className="h-8 w-auto" style={{ width: "auto", height: "auto" }} priority />
             <div className="mt-6 grid gap-3">
               {DEVFORGE_SUITE.benefits.map((benefit) => (
                 <div key={benefit} className="rounded-md bg-black/30 p-4 text-sm leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
@@ -128,13 +137,53 @@ export function SuiteHomePage() {
       <section id="comparison" className="py-16 md:py-20" style={{ backgroundColor: "var(--color-surface)" }}>
         <div className="section-container">
           <div className="mb-8 max-w-3xl">
-            <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>Example limits</p>
-            <h2 className="heading-section mt-3 text-3xl">FileCleaner plan comparison</h2>
+            <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>Product comparison</p>
+            <h2 className="heading-section mt-3 text-3xl">Pick the workflow you need first</h2>
             <p className="mt-4 leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
-              Each product page includes its own full comparison table. This is the suite-level example.
+              The suite is intentionally split into narrow tools, so you can start with the product that maps to your immediate pain.
             </p>
           </div>
-          <FeatureComparison product={firstProduct} />
+          <div className="overflow-hidden rounded-md border border-white/10">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead style={{ backgroundColor: "rgba(255,255,255,0.04)" }}>
+                  <tr>
+                    {["Product", "Status", "Best for", "Pro price", "Primary job"].map((heading) => (
+                      <th key={heading} className="px-4 py-3 text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>
+                        {heading}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/10">
+                  {DEVFORGE_PRODUCTS.map((product) => {
+                    const proPlan = product.plans.find((plan) => plan.slug === "pro");
+                    return (
+                      <tr key={product.slug} className="bg-black/20">
+                        <td className="px-4 py-3 font-medium" style={{ color: "var(--color-text)" }}>
+                          {product.name}
+                        </td>
+                        <td className="px-4 py-3">
+                          <StatusBadge tone={product.status === "live" ? "success" : "neutral"}>
+                            {product.status === "live" ? "Live" : "Beta pilot"}
+                          </StatusBadge>
+                        </td>
+                        <td className="px-4 py-3" style={{ color: "var(--color-text-secondary)" }}>
+                          {audienceTagsByProduct[product.slug].join(" / ")}
+                        </td>
+                        <td className="px-4 py-3 font-mono" style={{ color: "var(--color-text)" }}>
+                          {proPlan?.priceLabel || "$9.99"}/mo
+                        </td>
+                        <td className="px-4 py-3" style={{ color: "var(--color-text-secondary)" }}>
+                          {product.useCases[0]}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
     </Layout>

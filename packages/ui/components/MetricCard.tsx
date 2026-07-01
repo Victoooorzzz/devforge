@@ -18,7 +18,7 @@ const toneColors: Record<NonNullable<MetricCardProps["tone"]>, string> = {
 
 export function MetricCard({ label, value, detail, trend, tone = "accent" }: MetricCardProps) {
   return (
-    <div className="surface-card-raised border border-white/10 p-4">
+    <div className="dashboard-card-motion surface-card-raised border border-white/10 p-4">
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>
           {label}

@@ -20,7 +20,7 @@ export function ProductDemoShell({ eyebrow = "Interactive demo", title, descript
             {description}
           </p>
         </div>
-        <div className="surface-card border border-white/10 p-4 md:p-6">
+        <div className="demo-panel demo-scanline surface-card border border-white/10 p-4 md:p-6">
           {children}
         </div>
       </div>

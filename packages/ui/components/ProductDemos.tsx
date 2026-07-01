@@ -81,7 +81,7 @@ function FileCleanerDemo() {
         />
       </div>
       <div className="space-y-4">
-        <div className="surface-card-raised border border-white/10 p-4">
+        <div className="demo-pulse surface-card-raised border border-white/10 p-4">
           <h4 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Cleaning report</h4>
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
             {[
@@ -97,7 +97,7 @@ function FileCleanerDemo() {
             ))}
           </div>
         </div>
-        <div className="surface-card-raised border border-white/10 p-4">
+        <div className="demo-pulse surface-card-raised border border-white/10 p-4">
           <h4 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Plan gates</h4>
           <div className="mt-3 space-y-2 text-sm">
             <div className="flex items-center justify-between gap-3"><span>Schema rules</span><StatusBadge tone="accent">Pro</StatusBadge></div>
@@ -142,7 +142,7 @@ function WebhookMonitorDemo() {
   return (
     <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
       <div className="space-y-4">
-        <div className="surface-card-raised border border-white/10 p-4">
+        <div className="demo-pulse surface-card-raised border border-white/10 p-4">
           <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Endpoint</p>
           <div className="mt-3 rounded-md bg-black/40 p-3 font-mono text-xs" style={{ color: "var(--color-text)" }}>
             https://api.devforgeapp.pro/webhooks/prod-8f2
@@ -231,7 +231,7 @@ function FeedbackLensDemo() {
         />
       </div>
       <div className="space-y-4">
-        <div className="surface-card-raised border border-white/10 p-4">
+        <div className="demo-pulse surface-card-raised border border-white/10 p-4">
           <h4 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Cluster insight</h4>
           <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
             Import reliability is the top complaint this week. Two reports are duplicates, one is urgent, and the GitHub issue action is ready on Pro.
@@ -285,7 +285,7 @@ function PriceTrackrDemo() {
             { key: "check", label: "Last check" },
           ]}
         />
-        <div className="surface-card-raised border border-white/10 p-4">
+        <div className="demo-pulse surface-card-raised border border-white/10 p-4">
           <label className="text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Custom selector</label>
           <div className="mt-3 flex gap-2">
             <input value={selector} onChange={(event) => setSelector(event.target.value)} className="input-field" />

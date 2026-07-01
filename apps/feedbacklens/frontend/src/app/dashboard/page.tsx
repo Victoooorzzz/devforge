@@ -326,7 +326,7 @@ export default function DashboardPage() {
   });
 
   return (
-    <div className="flex gap-6">
+    <div className="dashboard-motion flex gap-6">
       <ActionToast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex-1 min-w-0">
         {/* Header */}

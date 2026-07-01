@@ -22,7 +22,7 @@ export function UsageQuotaCard({ label, used, limit, unit = "", caption, tone = 
   const color = toneColor[tone];
 
   return (
-    <div className="surface-card-raised border border-white/10 p-4">
+    <div className="dashboard-card-motion surface-card-raised border border-white/10 p-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>
           {label}
@@ -32,7 +32,7 @@ export function UsageQuotaCard({ label, used, limit, unit = "", caption, tone = 
         </span>
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-md bg-white/10">
-        <div className="h-full rounded-md" style={{ width: `${percentage}%`, backgroundColor: color }} />
+        <div className="dashboard-progress-bar h-full rounded-md" style={{ width: `${percentage}%`, backgroundColor: color }} />
       </div>
       <div className="mt-3 flex items-center justify-between gap-3 text-sm">
         <span style={{ color: "var(--color-text)" }}>

@@ -21,11 +21,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!authorized) return null;
 
   return (
-    <div className="min-h-screen bg-black flex flex-col md:flex-row">
+    <div className="dashboard-shell min-h-screen bg-black flex flex-col md:flex-row">
       {/* Sidebar */}
-      <aside className="w-full md:w-64 border-b md:border-b-0 md:border-r border-white/5 p-4 md:p-6 flex flex-col md:min-h-screen">
+      <aside className="dashboard-sidebar w-full md:w-64 border-b md:border-b-0 md:border-r border-white/5 p-4 md:p-6 flex flex-col md:min-h-screen">
         <Link href="/" className="flex items-center gap-3 mb-4 md:mb-8">
-          <Image src="/devforge-logo-white.svg" alt="DevForge" width={110} height={20} className="h-5 w-auto" />
+          <Image src="/devforge-logo-white.svg" alt="DevForge" width={110} height={20} className="h-5 w-auto" style={{ width: "auto", height: "auto" }} />
           <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3">
             Invoice<span className="text-accent">Follow</span>
           </span>
@@ -49,7 +49,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 min-w-0 p-4 md:p-8 overflow-auto">
+      <main className="dashboard-main flex-1 min-w-0 p-4 md:p-8 overflow-auto">
         {children}
       </main>
     </div>

@@ -465,7 +465,7 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="flex flex-col h-full max-w-[1600px] mx-auto overflow-hidden">
+    <div className="dashboard-motion flex flex-col h-full max-w-[1600px] mx-auto overflow-hidden">
       <ActionToast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 px-4 pt-4">
         <div>
@@ -812,7 +812,8 @@ export default function DashboardPage() {
                   </button>
                 ))}
               </div>
-              <table className="hidden md:table w-full border-collapse">
+              <div className="dashboard-table-scroll hidden md:block">
+              <table className="w-full border-collapse">
                 <thead className="sticky top-0 bg-[var(--color-surface)] z-10">
                   <tr className="border-b border-[var(--color-border)]">
                     {["Delivered", "Method", "Path", "Retries", ""].map((h, i) => (
@@ -859,6 +860,7 @@ export default function DashboardPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
               </>
             )}
           </div>

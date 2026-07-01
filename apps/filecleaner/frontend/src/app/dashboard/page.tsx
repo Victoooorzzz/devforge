@@ -419,7 +419,7 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto py-10 px-4">
+    <div className="dashboard-motion max-w-5xl mx-auto py-6 md:py-10 px-0 sm:px-4">
       <ActionToast toast={toast} onDismiss={() => setToast(null)} />
       {/* Header */}
       <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
@@ -644,7 +644,7 @@ export default function DashboardPage() {
             </button>
           </div>
           {profilePanel.preview && profilePanel.preview.length > 0 && (
-            <div className="overflow-auto max-h-72 border border-[var(--color-border)] rounded-lg">
+            <div className="dashboard-table-scroll max-h-72 border border-[var(--color-border)] rounded-lg">
               <table className="min-w-full text-xs">
                 <thead className="sticky top-0" style={{ backgroundColor: "var(--color-surface)" }}>
                   <tr>
