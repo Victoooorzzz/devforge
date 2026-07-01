@@ -2,6 +2,7 @@
 import { VerifyEmail } from "@devforge/ui";
 import { product } from "@/config/product";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@devforge/core";
 
@@ -21,9 +22,10 @@ export default function VerifyPage() {
 
   return (
     <div className="min-h-screen bg-black flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md text-center mb-8">
-        <Link href="/" className="text-3xl font-bold tracking-tighter text-white">
-          {product.name.split(' ')[0]}<span className="text-blue-500">{product.name.split(' ')[1] || ''}</span>
+      <div className="mb-8 text-center sm:mx-auto sm:w-full sm:max-w-md">
+        <Link href="/" className="inline-flex items-center justify-center gap-3 text-white">
+          <Image src="/devforge-logo-white.svg" alt="DevForge" width={132} height={30} className="h-7 w-auto" style={{ width: "auto", height: "auto" }} priority />
+          <span className="border-l border-white/15 pl-3 text-sm font-semibold">DevForge</span>
         </Link>
       </div>
       <VerifyEmail onVerified={handleVerified} />

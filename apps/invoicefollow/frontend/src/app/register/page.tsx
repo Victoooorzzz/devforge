@@ -33,7 +33,7 @@ function RegisterForm() {
     setError("");
 
     try {
-      const { success, error: authError, isEmailVerified, checkoutUrl } = await auth.register({
+      const { success, error: authError, checkoutUrl } = await auth.register({
         name,
         email,
         password,
@@ -47,11 +47,6 @@ function RegisterForm() {
 
         if (checkoutUrl) {
           window.location.href = checkoutUrl;
-          return;
-        }
-
-        if (isEmailVerified === false) {
-          router.push("/verify");
           return;
         }
 

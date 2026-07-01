@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { generateMetadata as seoMetadata, generateSoftwareAppJsonLd, getProduct } from "@devforge/core";
+import { Inter } from "next/font/google";
 import "@devforge/ui/styles/globals.css";
 
+const inter = Inter({ subsets: ["latin"] });
 const product = getProduct("feedbacklens");
 
 export const metadata: Metadata = seoMetadata({
@@ -31,7 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
       </head>
-      <body className="font-sans antialiased">{children}</body>
+      <body className={`${inter.className} antialiased`}>{children}</body>
     </html>
   );
 }

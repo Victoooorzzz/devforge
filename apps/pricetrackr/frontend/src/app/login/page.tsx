@@ -17,12 +17,8 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const { success, error: authError, isEmailVerified } = await auth.login(email, password);
+      const { success, error: authError } = await auth.login(email, password);
       if (success) {
-        if (isEmailVerified === false) {
-          router.push("/verify");
-          return;
-        }
         // Save JWT to local HTTP-only cookie for server-side Neon reads
         const token = auth.getToken();
         if (token) {
