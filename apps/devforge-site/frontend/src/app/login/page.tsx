@@ -64,20 +64,20 @@ function LoginForm() {
 
           <form onSubmit={handleLogin} className="mt-6 space-y-4">
             <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Product</label>
-              <select value={productSlug} onChange={(event) => setProductSlug(event.target.value as ProductSlug)} className="input-field">
+              <label htmlFor="suite-login-product" className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Product</label>
+              <select id="suite-login-product" value={productSlug} onChange={(event) => setProductSlug(event.target.value as ProductSlug)} className="input-field">
                 {DEVFORGE_PRODUCTS.map((product) => (
                   <option key={product.slug} value={product.slug}>{product.name}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Email</label>
-              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="input-field" placeholder="name@example.com" required autoComplete="email" />
+              <label htmlFor="suite-login-email" className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Email</label>
+              <input id="suite-login-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="input-field" placeholder="name@example.com" required autoComplete="email" />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Password</label>
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="input-field" placeholder="Password" required autoComplete="current-password" />
+              <label htmlFor="suite-login-password" className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Password</label>
+              <input id="suite-login-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="input-field" placeholder="Password" required autoComplete="current-password" />
             </div>
 
             {error ? <p className="text-center text-xs text-red-400">{error}</p> : null}

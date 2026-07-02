@@ -122,16 +122,16 @@ function RegisterForm() {
 
             <form onSubmit={handleRegister} className="space-y-4">
               <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Name</label>
-                <input value={name} onChange={(event) => setName(event.target.value)} className="input-field" placeholder="Your name" autoComplete="name" />
+                <label htmlFor="suite-register-name" className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Name</label>
+                <input id="suite-register-name" value={name} onChange={(event) => setName(event.target.value)} className="input-field" placeholder="Your name" autoComplete="name" />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Email</label>
-                <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="input-field" placeholder="name@example.com" required autoComplete="email" />
+                <label htmlFor="suite-register-email" className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Email</label>
+                <input id="suite-register-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="input-field" placeholder="name@example.com" required autoComplete="email" />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Password</label>
-                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="input-field" placeholder="Password" required autoComplete="new-password" />
+                <label htmlFor="suite-register-password" className="mb-1.5 block text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Password</label>
+                <input id="suite-register-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="input-field" placeholder="Password" required autoComplete="new-password" />
               </div>
 
               <div>
