@@ -23,10 +23,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="dashboard-shell min-h-screen bg-black flex flex-col md:flex-row">
       {/* Sidebar */}
-      <aside className="dashboard-sidebar w-full md:w-64 border-b md:border-b-0 md:border-r border-white/5 p-4 md:p-6 flex flex-col md:min-h-screen">
-        <Link href="/" className="flex items-center gap-3 mb-4 md:mb-8">
-          <Image src="/devforge-logo-white.svg" alt="DevForge" width={110} height={20} className="h-5 w-auto" style={{ width: "auto", height: "auto" }} />
-          <span className="text-xl font-bold tracking-tighter border-l border-white/20 pl-3">
+      <aside className="dashboard-sidebar w-full overflow-hidden md:w-64 md:shrink-0 border-b md:border-b-0 md:border-r border-white/5 p-4 md:p-6 flex flex-col md:min-h-screen">
+        <Link href="/" className="flex min-w-0 items-center gap-3 mb-4 md:mb-8">
+          <Image src="/devforge-logo-white.svg" alt="DevForge" width={96} height={20} className="h-5 w-auto shrink-0" style={{ width: "auto", height: "auto" }} />
+          <span className="block min-w-0 truncate text-base font-bold tracking-tight border-l border-white/20 pl-3">
             Price<span className="text-accent">Trackr</span>
           </span>
         </Link>

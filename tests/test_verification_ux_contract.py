@@ -13,6 +13,12 @@ class VerificationUxContractTest(unittest.TestCase):
                 self.assertNotIn('router.push("/verify")', text, f"{product} {page} should not block dashboard behind verify")
                 self.assertIn('router.push("/dashboard")', text, f"{product} {page} should route successful auth to dashboard")
 
+    def test_pricetrackr_login_uses_shared_auth_flow_only(self):
+        text = (ROOT / "apps" / "pricetrackr" / "frontend" / "src" / "app" / "login" / "page.tsx").read_text()
+
+        self.assertIn("auth.login", text)
+        self.assertNotIn('fetch("/api/auth"', text)
+
     def test_verify_pages_use_consistent_white_devforge_branding(self):
         for product in PRODUCTS:
             path = ROOT / "apps" / product / "frontend" / "src" / "app" / "verify" / "page.tsx"

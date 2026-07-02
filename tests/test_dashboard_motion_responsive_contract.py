@@ -40,6 +40,22 @@ class DashboardMotionResponsiveContractTest(unittest.TestCase):
             self.assertIn("dashboard-main", layout, product)
             self.assertIn("min-w-0", layout, product)
 
+    def test_sidebar_brand_cannot_overlap_dashboard_content(self):
+        for product in PRODUCTS:
+            layout_path = ROOT / "apps" / product / "frontend" / "src" / "app" / "dashboard" / "layout.tsx"
+            layout = layout_path.read_text()
+
+            self.assertIn("overflow-hidden", layout, product)
+            self.assertIn("truncate", layout, product)
+
+    def test_all_product_dashboard_navs_expose_settings(self):
+        for product in PRODUCTS:
+            layout_path = ROOT / "apps" / product / "frontend" / "src" / "app" / "dashboard" / "layout.tsx"
+            layout = layout_path.read_text()
+
+            self.assertIn('href="/dashboard/settings"', layout, product)
+            self.assertIn("Settings", layout, product)
+
     def test_dashboard_shared_cards_have_motion_and_progress_animation(self):
         files = [
             ROOT / "packages" / "ui" / "components" / "DashboardPlanPanel.tsx",

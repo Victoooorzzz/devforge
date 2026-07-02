@@ -36,18 +36,18 @@ export function DashboardShell({
     <div className="dashboard-shell min-h-screen flex" style={{ backgroundColor: "var(--color-bg)" }}>
       {/* Sidebar */}
       <aside
-        className={`dashboard-sidebar fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-300 md:relative md:translate-x-0 ${
+        className={`dashboard-sidebar fixed inset-y-0 left-0 z-40 w-64 overflow-hidden transform transition-transform duration-300 md:relative md:shrink-0 md:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
         style={{ backgroundColor: "var(--color-surface)" }}
       >
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center h-16 px-6 gap-3">
-            {logoSrc && <Image src={logoSrc} alt="DevForge" width={110} height={20} className="h-5 w-auto" style={{ width: "auto", height: "auto" }} />}
+          <div className="flex min-w-0 items-center h-16 px-6 gap-3">
+            {logoSrc && <Image src={logoSrc} alt="DevForge" width={96} height={20} className="h-5 w-auto shrink-0" style={{ width: "auto", height: "auto" }} />}
             <a
               href="/dashboard"
-              className={`text-lg font-bold tracking-tight ${logoSrc ? 'border-l border-white/10 pl-3' : ''}`}
+              className={`block min-w-0 truncate text-base font-bold tracking-tight ${logoSrc ? 'border-l border-white/10 pl-3' : ''}`}
               style={{ color: "var(--color-text)" }}
             >
               {productName}
