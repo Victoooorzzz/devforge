@@ -13,11 +13,19 @@ class VerificationUxContractTest(unittest.TestCase):
                 self.assertNotIn('router.push("/verify")', text, f"{product} {page} should not block dashboard behind verify")
                 self.assertIn('router.push("/dashboard")', text, f"{product} {page} should route successful auth to dashboard")
 
-    def test_pricetrackr_login_uses_shared_auth_flow_only(self):
+    def test_pricetrackr_login_syncs_local_cookie_for_next_dashboard_routes(self):
         text = (ROOT / "apps" / "pricetrackr" / "frontend" / "src" / "app" / "login" / "page.tsx").read_text()
 
         self.assertIn("auth.login", text)
-        self.assertNotIn('fetch("/api/auth"', text)
+        self.assertIn("auth.getToken", text)
+        self.assertIn('fetch("/api/auth"', text)
+        self.assertIn("Could not start your PriceTrackr session", text)
+
+    def test_pricetrackr_vercel_deploy_exports_jwt_secret(self):
+        script = (ROOT / "scripts" / "deploy-all.ps1").read_text()
+
+        self.assertIn('if ($app.Name -eq "pricetrackr")', script)
+        self.assertIn('"JWT_SECRET"', script)
 
     def test_verify_pages_use_consistent_white_devforge_branding(self):
         for product in PRODUCTS:

@@ -193,10 +193,10 @@ foreach ($app in $apps) {
     }
 
     if ($app.Name -eq "pricetrackr") {
-        foreach ($databaseKey in @("DATABASE_URL", "DATABASE_POOLED_URL")) {
-            $databaseValue = [Environment]::GetEnvironmentVariable($databaseKey, "Process")
-            if ($databaseValue) {
-                Set-VercelEnvVar -ProjectId $project.id -Key $databaseKey -Value $databaseValue
+        foreach ($serverKey in @("DATABASE_URL", "DATABASE_POOLED_URL", "JWT_SECRET")) {
+            $serverValue = [Environment]::GetEnvironmentVariable($serverKey, "Process")
+            if ($serverValue) {
+                Set-VercelEnvVar -ProjectId $project.id -Key $serverKey -Value $serverValue
             }
         }
     }

@@ -19,6 +19,23 @@ export default function LoginPage() {
     try {
       const { success, error: authError } = await auth.login(email, password);
       if (success) {
+        const token = auth.getToken();
+        if (!token) {
+          setError("Could not start your PriceTrackr session. Please try again.");
+          return;
+        }
+
+        const sessionResponse = await fetch("/api/auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+
+        if (!sessionResponse.ok) {
+          setError("Could not start your PriceTrackr session. Please try again.");
+          return;
+        }
+
         trackEvent("user_login", { method: "email" });
         router.push("/dashboard");
       } else {
