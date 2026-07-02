@@ -39,6 +39,23 @@ class DevForgeSiteUXContractTest(unittest.TestCase):
         self.assertIn('ctaHref="/register?plan=free"', suite_home)
         self.assertIn('href="/register?plan=free"', suite_home)
 
+    def test_suite_site_has_auth_entry_routes(self):
+        app_root = ROOT / "apps" / "devforge-site" / "frontend" / "src" / "app"
+
+        self.assertTrue((app_root / "register" / "page.tsx").exists())
+        self.assertTrue((app_root / "login" / "page.tsx").exists())
+        self.assertTrue((app_root / "verify" / "page.tsx").exists())
+
+    def test_suite_register_preserves_plan_and_product_selection(self):
+        register_page = (
+            ROOT / "apps" / "devforge-site" / "frontend" / "src" / "app" / "register" / "page.tsx"
+        ).read_text()
+
+        self.assertIn('searchParams.get("plan")', register_page)
+        self.assertIn('searchParams.get("product")', register_page)
+        self.assertIn("DEVFORGE_PRODUCTS", register_page)
+        self.assertIn("app_name: selectedProduct.slug", register_page)
+
     def test_product_cards_use_audience_tags_instead_of_audience_paragraph(self):
         product_card = (ROOT / "packages" / "ui" / "components" / "ProductCard.tsx").read_text()
 
