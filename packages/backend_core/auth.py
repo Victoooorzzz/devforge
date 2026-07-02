@@ -122,6 +122,7 @@ class ProfileResponse(BaseModel):
     created_at: datetime
     lemonsqueezy_customer_id: Optional[str]
     active_products: list[str] = Field(default_factory=list)
+    plans_by_product: dict[str, str] = Field(default_factory=dict)
 
 # --- Password Utilities ---
 
@@ -371,6 +372,7 @@ async def get_profile(
     session: AsyncSession = Depends(get_session),
 ):
     from .product_access import UserProductAccess
+    from .plan_limits import resolve_user_plan
 
     result = await session.execute(
         select(UserProductAccess).where(
@@ -379,6 +381,10 @@ async def get_profile(
         )
     )
     active_products = [p.app_name for p in result.scalars().all()]
+    plans_by_product = {
+        app_name: await resolve_user_plan(user, session, app_name)
+        for app_name in ["filecleaner", "invoicefollow", "pricetrackr", "webhookmonitor", "feedbacklens"]
+    }
     request_app = app_slug_from_url(request.headers.get("origin")) or app_slug_from_url(request.headers.get("referer"))
     has_active_subscription = (
         request_app in active_products
@@ -399,6 +405,7 @@ async def get_profile(
         created_at=user.created_at,
         lemonsqueezy_customer_id=user.lemonsqueezy_customer_id,
         active_products=active_products,
+        plans_by_product=plans_by_product,
     )
 
 @auth_router.put("/profile", response_model=ProfileResponse)
@@ -421,6 +428,7 @@ async def update_profile(body: ProfileUpdateRequest, user: User = Depends(get_cu
     await session.commit()
 
     from .product_access import UserProductAccess
+    from .plan_limits import resolve_user_plan
     active_result = await session.execute(
         select(UserProductAccess).where(
             UserProductAccess.user_id == user.id,
@@ -428,6 +436,10 @@ async def update_profile(body: ProfileUpdateRequest, user: User = Depends(get_cu
         )
     )
     active_products = [p.app_name for p in active_result.scalars().all()]
+    plans_by_product = {
+        app_name: await resolve_user_plan(user, session, app_name)
+        for app_name in ["filecleaner", "invoicefollow", "pricetrackr", "webhookmonitor", "feedbacklens"]
+    }
 
     has_active_subscription = user.is_active or bool(active_products)
     has_access = user.is_on_trial or has_active_subscription
@@ -445,4 +457,5 @@ async def update_profile(body: ProfileUpdateRequest, user: User = Depends(get_cu
         created_at=user.created_at,
         lemonsqueezy_customer_id=user.lemonsqueezy_customer_id,
         active_products=active_products,
+        plans_by_product=plans_by_product,
     )

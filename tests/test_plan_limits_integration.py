@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 import apps.pricetrackr.backend.main as tracker_main
 import apps.webhookmonitor.backend.main as webhook_main
 from backend_core.plan_limits import resolve_user_plan
-from backend_core.auth import User, get_current_user
+from backend_core.auth import ProfileResponse, User, get_current_user
 from backend_core.database import get_session
 
 
@@ -234,6 +234,11 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
         plan = asyncio.run(resolve_user_plan(_paid_user(77), session, "feedbacklens"))
 
         self.assertEqual(plan, "pro")
+
+    def test_profile_response_exposes_product_plans_for_dashboards(self):
+        fields = ProfileResponse.model_fields
+
+        self.assertIn("plans_by_product", fields)
 
 
 if __name__ == "__main__":

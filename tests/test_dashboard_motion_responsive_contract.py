@@ -70,6 +70,15 @@ class DashboardMotionResponsiveContractTest(unittest.TestCase):
         self.assertIn("dashboard-card-motion", combined)
         self.assertIn("dashboard-progress-bar", combined)
 
+    def test_dashboard_plan_panel_uses_backend_product_plan(self):
+        panel = (ROOT / "packages" / "ui" / "components" / "DashboardPlanPanel.tsx").read_text()
+
+        self.assertIn("/auth/profile", panel)
+        self.assertIn("plans_by_product", panel)
+        self.assertIn("teamQuotaByProduct", panel)
+        self.assertIn("limit: 200", panel)
+        self.assertIn("limit: 500", panel)
+
     def test_dashboard_tables_keep_mobile_overflow_inside_components(self):
         table_files = [
             ROOT / "apps" / "filecleaner" / "frontend" / "src" / "app" / "dashboard" / "page.tsx",
