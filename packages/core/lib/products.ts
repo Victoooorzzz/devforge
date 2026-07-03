@@ -24,6 +24,25 @@ export interface ProductFAQ {
   answer: string;
 }
 
+export interface ProductBriefCard {
+  label: string;
+  title: string;
+  body: string;
+}
+
+export interface ProductProofBlock {
+  label: string;
+  body: string;
+}
+
+export interface ProductUniqueSection {
+  eyebrow: string;
+  title: string;
+  description: string;
+  blocks: ProductProofBlock[];
+  badges?: string[];
+}
+
 export interface DevForgeProduct {
   slug: ProductSlug;
   name: string;
@@ -36,12 +55,25 @@ export interface DevForgeProduct {
   category: string;
   headline: string;
   description: string;
+  founderNote: string;
+  proofPoint: string;
   seoTitle: string;
   seoDescription: string;
   keywords: string[];
   problem: string;
   solution: string;
   audience: string;
+  briefCards: ProductBriefCard[];
+  uniqueSection: ProductUniqueSection;
+  featureSectionTitle: string;
+  featureSectionDescription: string;
+  useCaseSectionTitle: string;
+  useCaseSectionDescription: string;
+  pricingSectionTitle: string;
+  pricingSectionDescription: string;
+  comparisonSectionTitle: string;
+  faqSectionTitle: string;
+  relatedSectionTitle: string;
   features: string[];
   useCases: string[];
   demoTitle: string;
@@ -135,25 +167,75 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
     accentColor: "#F59E0B",
     status: "live",
     category: "Data operations",
-    headline: "Clean CSV, Excel, JSON, images, and messy exports before they break your workflow.",
-    description: "FileCleaner turns dirty spreadsheets and bulky files into clean, validated outputs with reports your team can trust.",
+    headline: "Clean broken CSVs before they break your import.",
+    description: "Fix messy headers, duplicate rows, weird encodings, empty columns, and inconsistent customer fields before they reach your database.",
+    founderNote: "Built because \"just fix the spreadsheet real quick\" is where afternoons go to die.",
+    proofPoint: "Demo data shown. Production cleanup uses your uploaded file, preserves the original, and keeps a change report for review.",
     seoTitle: "FileCleaner - CSV and Excel cleaning tool by DevForge",
     seoDescription: "Clean CSV, Excel, JSON, and image files with normalization, schema checks, anomaly detection, fuzzy duplicate detection, and export-ready reports.",
     keywords: ["data cleaning tool", "CSV cleaner", "Excel cleaning tool", "file cleanup", "schema validation"],
-    problem: "Messy exports create duplicate rows, invalid emails, inconsistent phones, and silent analytics errors.",
-    solution: "Run cleaning, normalization, fuzzy matching, schema validation, anomaly checks, and clean exports from one dashboard.",
-    audience: "Data analysts, operators, agencies, founders, and support teams that receive messy customer or revenue files.",
-    features: [
-      "Preview dirty files before processing",
-      "Normalize phone, country, currency, and date columns",
-      "Find exact and fuzzy duplicates",
-      "Validate schema rules and flag anomaly outliers",
-      "Strip EXIF metadata and convert image/PDF utility files",
-      "Export CSV, XLSX, or JSON with a cleaning report",
+    problem: "Messy exports create duplicate rows, invalid emails, inconsistent dates, empty totals, and silent analytics errors.",
+    solution: "Preview the file, normalize headers and formats, group duplicates, flag invalid rows, then export only after review.",
+    audience: "Data analysts, operators, agencies, founders, and support teams importing customer, invoice, or marketplace files.",
+    briefCards: [
+      {
+        label: "Messy headers",
+        title: "\"Nombre Cliente\" -> customer_name",
+        body: "\"Monto S/.\" -> amount_pen, \"fecha pago\" -> payment_date, and odd casing mapped before import.",
+      },
+      {
+        label: "Duplicate rows",
+        title: "Repeated emails, invoice IDs, SKUs, and customer keys",
+        body: "Duplicates are grouped for review instead of silently creating bad records.",
+      },
+      {
+        label: "Audit report",
+        title: "Changed, dropped, needs review",
+        body: "See every normalized field, every removed row, and the leftovers that still need a human.",
+      },
     ],
-    useCases: ["Clean CRM exports", "Prepare billing imports", "Audit partner CSVs", "Remove metadata before sharing assets"],
-    demoTitle: "Dirty customer file cleaning demo",
-    demoDescription: "Run a simulated import and watch invalid emails, duplicate rows, phone formats, dates, fuzzy matches, and outliers get flagged.",
+    uniqueSection: {
+      eyebrow: "Before / after",
+      title: "Before / After file cleanup",
+      description: "The demo intentionally shows ugly file data: broken emails, duplicate rows, mixed dates, and values that should not be imported blindly.",
+      blocks: [
+        {
+          label: "Before",
+          body: "Nombre Cliente | E-mail | monto S/. | fecha pago | Estado\nACME SAC | test@ | S/ 1,200 | 12-31-24 | pagadoo\nACME SAC | test@ | 1200 | 31/12/2024 | pagado\n<empty> | NULL | -- | soon | pending",
+        },
+        {
+          label: "After",
+          body: "customer_name | email | amount_pen | payment_date | status\nACME SAC | test@acme.pe | 1200.00 | 2024-12-31 | paid",
+        },
+      ],
+      badges: ["3 duplicate rows found", "2 invalid emails", "1 date format normalized", "4 headers renamed"],
+    },
+    featureSectionTitle: "From broken export to safe import",
+    featureSectionDescription: "Public demos stay safe, but the workflow mirrors production cleanup: preview, normalize, dedupe, validate, approve, export.",
+    useCaseSectionTitle: "Files that usually ruin an afternoon",
+    useCaseSectionDescription: "FileCleaner is intentionally narrow: it catches the spreadsheet mess that appears right before data enters a real system.",
+    pricingSectionTitle: "What each cleanup tier actually unlocks",
+    pricingSectionDescription: "Start with Free for small files, move to Pro for fuzzy matching and validation, or use Team when batch volume and retention matter.",
+    comparisonSectionTitle: "Cleanup limits by file risk",
+    faqSectionTitle: "Before you upload a file",
+    relatedSectionTitle: "Works well with these DevForge tools",
+    features: [
+      "Header mapping",
+      "Duplicate detection",
+      "Format normalization",
+      "Review before export",
+      "Cleanup report",
+      "EXIF and utility cleanup",
+    ],
+    useCases: [
+      "HubSpot exports with duplicate leads",
+      "Marketplace CSVs with broken product fields",
+      "Invoice spreadsheets with mixed date formats",
+      "Customer lists with invalid emails",
+      "Legacy Excel files before database import",
+    ],
+    demoTitle: "Dirty files waiting for review",
+    demoDescription: "Preview realistic files with invalid emails, mixed dates, duplicate customers, empty totals, suggested fixes, and statuses that still need approval.",
     plans: withLimits(sharedPlans("FileCleaner"), {
       free: ["10 MB max file size", "Basic cleaning", "1 active normalization rule", "EXIF cleanup up to 5 MB", "24h retention", "CSV/XLSX/JSON export"],
       pro: ["100 MB max file size", "Expanded normalization", "Anomaly detection", "Fuzzy duplicates up to 1,000 rows", "5 schema rules per file", "48h retention", "10-file sequential batch"],
@@ -170,9 +252,11 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
     ],
     dashboardFeatures: ["Upload and preview", "Cleaning rules", "Schema validation", "Anomaly view", "Fuzzy duplicates", "Report exports", "Usage quota"],
     faq: [
-      { question: "Does FileCleaner store my files forever?", answer: "No. Retention follows your plan: 24 hours on Free, 48 hours on Pro, and 7 days on Team." },
-      { question: "Can I export cleaned files?", answer: "Yes. CSV, XLSX, and JSON exports are available across plans." },
-      { question: "What is locked on Free?", answer: "Fuzzy matching, anomaly detection, schema validation, larger utility files, and batch processing require Pro or Team." },
+      { question: "Can I review changes before exporting?", answer: "Yes. FileCleaner previews changed headers, normalized values, duplicates, and invalid rows before you download the cleaned file." },
+      { question: "Does FileCleaner modify my original file?", answer: "No. The original stays intact; exports are generated as cleaned copies with a change report." },
+      { question: "What happens with invalid rows?", answer: "Invalid rows are flagged for review, not silently deleted. You decide whether to fix, exclude, or export them." },
+      { question: "Can it detect duplicate customers by email or ID?", answer: "Yes. Exact and fuzzy duplicate detection can use emails, invoice IDs, SKUs, customer keys, or configured columns." },
+      { question: "Can I save cleanup rules for future files?", answer: "Saved rules are part of the paid workflow so recurring exports can reuse the same mappings and validations." },
     ],
   },
   {
@@ -185,18 +269,63 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
     accentColor: "#8B5CF6",
     status: "live",
     category: "Developer operations",
-    headline: "Debug, replay, diff, validate, and forward webhooks without guessing.",
-    description: "Webhook Monitor captures payloads, masks sensitive data, validates signatures, compares payloads, and retries failed deliveries.",
+    headline: "Replay failed webhooks with the full evidence attached.",
+    description: "Capture payloads, headers, status codes, latency, attempts, and responses so failed deliveries stop becoming archaeology.",
+    founderNote: "Built after debugging webhook retries with twelve tabs open and zero useful logs.",
+    proofPoint: "Replay preserves headers, body, status code, latency, attempt history, and masked sensitive fields.",
     seoTitle: "Webhook Monitor - Webhook debugging tool by DevForge",
     seoDescription: "Inspect, replay, diff, search, export, and validate webhooks with signature validation, forwarding rules, and automatic retry support.",
     keywords: ["webhook debugging tool", "webhook monitor", "webhook replay", "webhook diff", "signature validation"],
-    problem: "Webhook failures disappear into logs, retries are hard to reproduce, and payload changes are painful to compare.",
-    solution: "Create endpoints, inspect events, search JSON, replay payloads, validate signatures, and forward requests with retry controls.",
+    problem: "Webhook failures disappear into logs, retries are hard to reproduce, and payload changes hide inside large JSON bodies.",
+    solution: "Capture the full request, inspect payload and headers, verify signatures, replay one event, and keep the failure timeline attached.",
     audience: "Backend developers, API integrators, agencies, SaaS founders, and small teams shipping payment or automation flows.",
-    features: ["Endpoint management", "Event table and JSON viewer", "Headers viewer", "Replay and retry", "Payload diffing", "Forwarding rules", "Signature validation", "Export cURL/Postman"],
-    useCases: ["Debug Stripe/Polar events", "Replay failed Shopify hooks", "Compare payload versions", "Forward production hooks to staging"],
+    briefCards: [
+      {
+        label: "Captured request",
+        title: "POST /webhooks/stripe 500 842ms",
+        body: "Event type, provider, endpoint, attempt number, signature status, and response body stay together.",
+      },
+      {
+        label: "Replay context",
+        title: "Original headers and body preserved",
+        body: "Replay a single event without asking the provider to resend the whole batch.",
+      },
+      {
+        label: "Sensitive data",
+        title: "Mask fields before teammates inspect payloads",
+        body: "Authorization, cookies, tokens, API keys, and configured payload paths stay hidden in previews.",
+      },
+    ],
+    uniqueSection: {
+      eyebrow: "Incident autopsy",
+      title: "Failed webhook autopsy",
+      description: "A failed delivery is useful only when the request, failure, and replay result can be read in one place.",
+      blocks: [
+        { label: "Request", body: "POST /webhooks/stripe\nEvent: invoice.payment_failed\nSignature: valid\nAttempt: 1 of 3" },
+        { label: "Failure", body: "Status: 500\nLatency: 842ms\nError: Missing customer_id\nResponse: Cannot read property 'customer_id' of undefined" },
+        { label: "Replay result", body: "Status: 200\nLatency: 118ms\nFixed after mapping customer_id from metadata." },
+      ],
+      badges: ["Replay this event", "Copy cURL", "View headers", "Mask sensitive fields"],
+    },
+    featureSectionTitle: "Every failed delivery, explained",
+    featureSectionDescription: "The product is built around evidence: payload, headers, response, attempt timeline, signature state, and replay result.",
+    useCaseSectionTitle: "Incidents worth keeping evidence for",
+    useCaseSectionDescription: "Webhook Monitor is for integration failures where one missing field or timeout can break payment, order, or automation flows.",
+    pricingSectionTitle: "What each webhook tier actually unlocks",
+    pricingSectionDescription: "Free captures a small endpoint, Pro adds replay and validation, and Team raises event volume, payload size, and retention.",
+    comparisonSectionTitle: "Webhook limits by incident volume",
+    faqSectionTitle: "Before you capture production webhooks",
+    relatedSectionTitle: "Pair webhook evidence with these tools",
+    features: ["Payload capture", "Replay safely", "Failure timeline", "Signature checks", "Endpoint health", "Export cURL/Postman"],
+    useCases: [
+      "Stripe invoice webhooks failing after a deploy",
+      "GitHub events timing out during CI spikes",
+      "Shopify order webhooks missing customer metadata",
+      "Internal webhook consumers returning 500s",
+      "Retrying a batch after fixing a parser bug",
+    ],
     demoTitle: "Webhook incident replay demo",
-    demoDescription: "Inspect simulated webhook events, search payloads, view headers, replay a request, compare diffs, and see Free-plan locked features.",
+    demoDescription: "Inspect failed events with timestamps, payload, headers, response body, retry history, signature status, and a replay result.",
     plans: withLimits(sharedPlans("Webhook Monitor"), {
       free: ["1 endpoint", "100 events/day", "7 days log retention", "256 KB max payload", "Encryption", "cURL export"],
       pro: ["10 endpoints", "10,000 events/day", "30 days retention", "1 MB max payload", "Signature validation", "3 forwarding rules", "Manual replay", "Diffing and advanced search", "cURL + Postman export"],
@@ -213,9 +342,11 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
     ],
     dashboardFeatures: ["Endpoint list", "Event table", "Payload viewer", "Headers viewer", "Replay", "Diff viewer", "Forwarding rules", "Signature state", "Usage quota"],
     faq: [
-      { question: "Can I use this with Stripe or Polar?", answer: "Yes. The monitor is provider-agnostic and includes signature validation patterns for common webhook providers." },
-      { question: "Does Free include replay?", answer: "No. Free is for capture and basic inspection. Replay, diffing, forwarding, and advanced search start on Pro." },
-      { question: "Are sensitive headers exposed?", answer: "Dashboard previews mask authorization, cookie, API key, token, secret, and signature-style headers." },
+      { question: "Does replay preserve the original headers?", answer: "Yes. Replay keeps the original headers, body, endpoint context, status history, and timing metadata visible." },
+      { question: "Can I filter failed webhooks by endpoint or status code?", answer: "Yes. Paid workflows support filtering by endpoint, provider, status code, event type, and replay state." },
+      { question: "Do you store request bodies?", answer: "Webhook bodies are stored according to plan retention so incidents can be inspected and replayed later." },
+      { question: "Can I mask sensitive fields?", answer: "Yes. Header masking is built in, and sensitive payload fields can be kept out of shared previews." },
+      { question: "Can I replay one event without replaying the full batch?", answer: "Yes. Manual replay is designed around one event at a time, with batch retries reserved for controlled paid workflows." },
     ],
   },
   {
@@ -228,18 +359,63 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
     accentColor: "#10B981",
     status: "beta",
     category: "Product intelligence",
-    headline: "Turn noisy customer feedback into themes, urgency, duplicates, and next actions.",
-    description: "FeedbackLens ingests feedback from multiple sources, labels sentiment and spam, groups repeats, and drafts action-ready summaries.",
+    headline: "Turn messy feedback into roadmap signals you can defend.",
+    description: "Cluster support emails, GitHub issues, Canny posts, and sales notes into themes, duplicates, urgency, and next actions your team can actually discuss.",
+    founderNote: "Built because \"users are asking for this\" should come with receipts.",
+    proofPoint: "Demo feedback is intentionally imperfect; production digests keep raw messages linked to every theme and duplicate cluster.",
     seoTitle: "FeedbackLens - Customer feedback analysis tool by DevForge",
     seoDescription: "Analyze product feedback from email, GitHub, Canny, Reddit, and X/Twitter with sentiment, spam detection, semantic dedupe, weekly digests, and GitHub Issues.",
     keywords: ["customer feedback analysis", "product feedback tool", "sentiment analysis", "semantic deduplication", "weekly feedback digest"],
-    problem: "Important bugs and churn signals get buried across support inboxes, GitHub, Reddit, Canny, and social channels.",
-    solution: "Collect feedback, classify sentiment, detect spam, group duplicates, surface clusters, draft replies, and create GitHub issues.",
+    problem: "Important bugs and churn signals get buried across support inboxes, GitHub, Canny, sales notes, and social channels.",
+    solution: "Collect raw feedback, cluster themes, link duplicates, show confidence, surface ambiguity, and turn the loudest pattern into action.",
     audience: "Product managers, founders, support leads, developer advocates, and teams building from user feedback.",
-    features: ["Manual and source ingestion", "Sentiment and urgency labels", "Spam detection", "Semantic deduplication", "Topic clusters", "GitHub Issue action", "Weekly digest", "Attachment processing"],
-    useCases: ["Summarize support tickets", "Detect repeated bugs", "Prioritize roadmap themes", "Turn feedback into GitHub issues"],
-    demoTitle: "Feedback triage inbox demo",
-    demoDescription: "Review simulated feedback from Email, GitHub, Canny, Reddit, and X/Twitter with sentiment, spam, duplicate groups, clusters, and a weekly digest.",
+    briefCards: [
+      {
+        label: "Raw messages",
+        title: "\"csv import broke again w/ accents...\"",
+        body: "Typos, sarcasm, half-context, and messy customer language stay visible.",
+      },
+      {
+        label: "Confidence",
+        title: "Human review needed when the model is unsure",
+        body: "Low-confidence or ambiguous classifications are marked instead of pretending every label is perfect.",
+      },
+      {
+        label: "Receipts",
+        title: "Themes link back to Canny, GitHub, email, and support notes",
+        body: "Roadmap meetings get source evidence instead of a single generated summary.",
+      },
+    ],
+    uniqueSection: {
+      eyebrow: "Duplicate cluster",
+      title: "Duplicate cluster breakdown",
+      description: "Different people rarely describe the same bug the same way. FeedbackLens keeps the raw sources attached to the shared pattern.",
+      blocks: [
+        { label: "Cluster", body: "CSV import fails with accented headers" },
+        { label: "Sources", body: "Canny: CSV import fails with accented headers\nGitHub: Same import bug as ticket 21\nEmail: Client file from Mexico breaks on upload\nSupport: Encoding issue with n and accented names" },
+        { label: "Detected pattern", body: "Likely UTF-8 normalization issue during header mapping.\nSuggested action: create one bug ticket, link duplicates, prioritize before next import release." },
+      ],
+      badges: ["4 reports", "2 duplicates", "1 urgent customer", "Human review visible"],
+    },
+    featureSectionTitle: "From noisy inbox to roadmap evidence",
+    featureSectionDescription: "The workflow preserves raw feedback while clustering repeated themes, showing confidence, and exposing what still needs review.",
+    useCaseSectionTitle: "When feedback sounds loud but needs proof",
+    useCaseSectionDescription: "FeedbackLens is for teams that need to turn scattered messages into defensible roadmap evidence without losing the original wording.",
+    pricingSectionTitle: "What each feedback tier actually unlocks",
+    pricingSectionDescription: "Free handles small inboxes, Pro unlocks more sources and digests, and Team keeps longer history across higher feedback volume.",
+    comparisonSectionTitle: "Feedback limits by source volume",
+    faqSectionTitle: "Before you trust a feedback cluster",
+    relatedSectionTitle: "Pair feedback evidence with these tools",
+    features: ["Theme clustering", "Duplicate detection", "Urgency scoring", "Digest generation", "Human review", "GitHub Issue action"],
+    useCases: [
+      "Support teams drowning in repeated bug reports",
+      "Founders turning sales calls into product evidence",
+      "Product managers preparing roadmap meetings",
+      "Developers grouping GitHub issues before a sprint",
+      "Agencies collecting client requests across inboxes",
+    ],
+    demoTitle: "Messy feedback triage demo",
+    demoDescription: "Review imperfect messages from Email, GitHub, Canny, and sales notes with confidence, duplicates, human-review flags, and a digest people can discuss.",
     plans: withLimits(feedbackLensPlans(), {
       free: ["100 feedback items/month", "2 active sources", "Manual + email channels", "30 days retention", "Sentiment analysis", "Spam detection"],
       pro: ["5,000 feedback items/month", "10 active sources", "All channels", "180 days retention", "Semantic deduplication", "Email weekly digest", "GitHub Issues", "Attachment processing"],
@@ -256,9 +432,11 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
     ],
     dashboardFeatures: ["Feedback inbox", "Source connectors", "Sentiment overview", "Topic clusters", "Duplicate groups", "Spam labels", "GitHub issue action", "Weekly digest", "Usage quota"],
     faq: [
-      { question: "Which sources can I connect?", answer: "Free supports manual and email. Pro and Team unlock all channels: Email, GitHub, Canny, Reddit, and X/Twitter." },
-      { question: "Is deduplication available on Free?", answer: "Free shows basic sentiment and spam labels. Semantic deduplication starts on Pro." },
-      { question: "Can it create GitHub Issues?", answer: "Yes. Pro and Team can turn feedback clusters into GitHub Issues." },
+      { question: "Can I review or correct classifications?", answer: "Yes. FeedbackLens keeps low-confidence items visible so a human can correct themes, urgency, and duplicate links." },
+      { question: "Does FeedbackLens show confidence scores?", answer: "Yes. Confidence is shown in the triage view so uncertain feedback does not look more precise than it is." },
+      { question: "Can it detect duplicates across different sources?", answer: "Yes. Pro and Team can link repeated complaints across Canny, GitHub, email, support notes, and connected channels." },
+      { question: "Can I export a digest to Slack, email, or Linear?", answer: "Email digest is part of Pro and Team. Slack or Linear handoff can be handled from exported digest content as integrations expand." },
+      { question: "What happens when feedback is ambiguous?", answer: "Ambiguous feedback is marked for review instead of being buried inside a confident-looking summary." },
     ],
   },
   {
@@ -271,18 +449,63 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
     accentColor: "#EF4444",
     status: "live",
     category: "Commerce intelligence",
-    headline: "Track competitor prices, stock status, history, and alerts from one command center.",
-    description: "PriceTrackr monitors product URLs, charts price history, detects stock changes, and alerts by email or webhook.",
+    headline: "Catch competitor price drops before they eat your margin.",
+    description: "Track prices, stock changes, discount patterns, and alert-worthy movements across competitor pages without living inside spreadsheets.",
+    founderNote: "Built for teams that check competitor prices often enough to hate doing it manually.",
+    proofPoint: "Demo data shown. Production checks depend on your tracked URLs, refresh limits, selectors, and alert thresholds.",
     seoTitle: "PriceTrackr - Price monitoring tool by DevForge",
     seoDescription: "Monitor product URLs, price drops, stock changes, history charts, custom selectors, and email or webhook alerts for ecommerce teams.",
     keywords: ["price monitoring tool", "price tracker", "competitor price monitoring", "product URL tracker", "price history chart"],
-    problem: "Manual competitor checks are slow, inconsistent, and miss price drops while your margins are moving.",
-    solution: "Track URLs, store price history, detect drops and scrape errors, configure selectors, and send alert workflows.",
+    problem: "Manual competitor checks are slow, inconsistent, and miss price drops while stock and margins are moving.",
+    solution: "Track URLs, price history, stock state, thresholds, selectors, and decision notes from one watchlist.",
     audience: "Ecommerce operators, agencies, founders, deal trackers, and market researchers.",
-    features: ["Tracker list", "Price and stock state", "History chart", "Email/webhook alerts", "Custom selector preview", "Scrape error pause state", "Public product pages", "Usage quota"],
-    useCases: ["Monitor competitor SKUs", "Track marketplace deals", "Watch stock changes", "Trigger webhook alerts"],
+    briefCards: [
+      {
+        label: "Price movement",
+        title: "AcmeTools $49 -> $39 in one check",
+        body: "Watch old price, current price, percent change, source URL, stock, and last checked timestamp together.",
+      },
+      {
+        label: "Margin context",
+        title: "Do not auto-match when stock is low",
+        body: "A price drop is not always a command. Add margin floor and stock context before reacting.",
+      },
+      {
+        label: "Alert evidence",
+        title: "Threshold crossed at 2 min ago",
+        body: "Production alerts include the tracked URL, selector state, currency, and change history.",
+      },
+    ],
+    uniqueSection: {
+      eyebrow: "Movement timeline",
+      title: "Competitor price movement timeline",
+      description: "The important part is not the line going down. It is the sequence of changes and the decision your team should make.",
+      blocks: [
+        { label: "Monday", body: "Competitor A: $99 -> $89\nSignal: discount started" },
+        { label: "Wednesday", body: "Competitor A: $89 -> $79\nSignal: second drop in 72h" },
+        { label: "Friday", body: "Competitor A: $79, stock low\nSuggested action: review campaign, do not auto-match yet. Stock is low and margin risk is high." },
+      ],
+      badges: ["Your price: $99", "Competitor: $79", "Margin floor: $74", "Recommended: Watch"],
+    },
+    featureSectionTitle: "From price change to pricing decision",
+    featureSectionDescription: "PriceTrackr connects price, stock, source URL, history, threshold, and decision notes so a drop becomes a choice, not panic.",
+    useCaseSectionTitle: "Markets where one price move matters",
+    useCaseSectionDescription: "Use it when competitor pages, stock shifts, and discounts can affect margins before someone checks the spreadsheet.",
+    pricingSectionTitle: "What each tracking tier actually unlocks",
+    pricingSectionDescription: "Free checks a few URLs slowly, Pro adds hourly checks and webhook alerts, and Team supports high-volume, frequent monitoring.",
+    comparisonSectionTitle: "Tracking limits by refresh pressure",
+    faqSectionTitle: "Before you trust a price alert",
+    relatedSectionTitle: "Works well with these operations tools",
+    features: ["Tracked URLs", "Stock shifts", "Change history", "Alert rules", "Decision notes", "Custom selector preview"],
+    useCases: [
+      "SaaS teams tracking competitor plan changes",
+      "Ecommerce teams watching seasonal discounts",
+      "Agencies monitoring client competitors",
+      "Founders validating pricing experiments",
+      "Operators checking stock-driven price drops",
+    ],
     demoTitle: "Price drop watchlist demo",
-    demoDescription: "Browse simulated URL trackers with current/previous price, change status, history chart, alert settings, custom selectors, and paused error states.",
+    demoDescription: "Browse simulated competitors with source URLs, old/current prices, stock, last checked timestamps, alert signals, and margin context.",
     plans: withLimits(sharedPlans("PriceTrackr"), {
       free: ["5 active URL trackers", "Every 24 hours", "30 days price history", "Delayed email alerts", "SVG charts", "Basic User-Agent rotation"],
       pro: ["100 active URL trackers", "Every 1 hour", "180 days price history", "Instant email alerts", "Webhook alerts", "Advanced User-Agent and proxy rotation", "Custom selectors"],
@@ -299,9 +522,11 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
     ],
     dashboardFeatures: ["Tracker list", "Add tracker flow", "History chart", "Last checked status", "Error pause state", "Alert settings", "Webhook settings", "Custom selectors", "Usage quota"],
     faq: [
-      { question: "How often can trackers run?", answer: "Free runs every 24 hours, Pro every hour, and Team every 10 minutes." },
-      { question: "Can alerts go to webhooks?", answer: "Webhook alerts start on Pro and are included in Team." },
-      { question: "Can I tune selectors?", answer: "Yes. Custom selectors are available on Pro and Team for pages where automatic extraction needs help." },
+      { question: "How often are prices checked?", answer: "Free runs every 24 hours, Pro every hour, and Team every 10 minutes." },
+      { question: "Can I track pages that require JavaScript?", answer: "Some pages need custom selectors or advanced extraction. The selector preview helps catch pages that require extra setup." },
+      { question: "Can I set alert thresholds by percentage?", answer: "Yes. Pro and Team workflows can trigger alerts when movement crosses configured percentage or price thresholds." },
+      { question: "Can I track stock changes as well as price?", answer: "Yes. Stock state is tracked next to price so teams can avoid reacting to discounts caused by low inventory." },
+      { question: "Do you support multiple currencies?", answer: "Tracked values can include currency context. Teams should keep comparisons grouped by currency for clean decisioning." },
     ],
   },
   {
@@ -314,18 +539,64 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
     accentColor: "#6366F1",
     status: "beta",
     category: "Cash operations",
-    headline: "Automate invoice follow-up, reply triage, reminders, and payment reconciliation.",
-    description: "InvoiceFollow automates invoice follow-up, reply triage, reminders, and payment reconciliation.",
+    headline: "Send polite invoice follow-ups before unpaid work gets awkward.",
+    description: "Schedule reminders, track invoice status, review messages before they send, and reconcile payments without chasing every client by hand.",
+    founderNote: "Built because unpaid invoices should not live rent-free in your head.",
+    proofPoint: "Manual approval is available before firm reminders, and reminders can pause when a client replies or disputes an invoice.",
     seoTitle: "InvoiceFollow - Automated invoice reminders by DevForge",
     seoDescription: "Invoice follow up software for overdue invoices, automated invoice reminders, Gmail sync, NLP reply classification, Stripe and PayPal reconciliation, and weekly financial digests.",
     keywords: ["invoice follow up software", "automated invoice reminders", "invoice collection emails", "payment reconciliation", "Gmail invoice sync"],
-    problem: "Late payments cost time, follow-up gets emotional, and replies or payment confirmations land in too many places.",
-    solution: "Import invoices, run reminder schedules, classify client replies, pause disputed records, and match Stripe or PayPal payments.",
+    problem: "Late payments cost time, follow-up gets emotional, and replies, disputes, partial payments, or confirmations land in too many places.",
+    solution: "Import invoices, preview reminders, require approval for firm follow-ups, pause on replies, and reconcile payment state.",
     audience: "Freelancers, agencies, consultants, founders, and small teams that need disciplined cash collection without awkward manual chasing.",
-    features: ["Invoice list and status board", "CSV/XLS import", "Reminder schedule", "Email history", "NLP reply classification", "Stripe/PayPal state", "Gmail sync", "Weekly financial digest", "Usage quota"],
-    useCases: ["Follow up overdue invoices", "Classify payment promise emails", "Pause disputes", "Reconcile Stripe/PayPal payments"],
+    briefCards: [
+      {
+        label: "Reminder preview",
+        title: "Subject, tone, payment link, approval state",
+        body: "Review the exact email before it leaves your workspace.",
+      },
+      {
+        label: "Collection brakes",
+        title: "Pause on reply, dispute, or partial payment",
+        body: "Invoice automation should stop when a human conversation starts.",
+      },
+      {
+        label: "Cash context",
+        title: "Viewed, due soon, overdue, partial paid, disputed",
+        body: "The status board shows awkward money states without pretending everything is binary.",
+      },
+    ],
+    uniqueSection: {
+      eyebrow: "Reminder sequence",
+      title: "Reminder email sequence",
+      description: "Collections need tone and brakes. The sequence starts polite, asks for approval when it becomes firm, and stops before automation gets weird.",
+      blocks: [
+        { label: "Day 0", body: "Invoice sent\nSubject: Invoice #INV-2041 for March development work\nTone: neutral\nStatus: sent" },
+        { label: "Day 3", body: "Friendly reminder\nSubject: Quick reminder about invoice #INV-2041\nTone: polite\nRequires approval: no" },
+        { label: "Day 7", body: "Firm follow-up\nSubject: Follow-up on overdue invoice #INV-2041\nTone: firm but professional\nRequires approval: yes" },
+        { label: "Day 14", body: "Manual review\nNo automatic email. Ask the owner to review before sending." },
+      ],
+      badges: ["Manual approval", "Pause when client replies", "Partial payments", "Disputed invoices"],
+    },
+    featureSectionTitle: "From sent invoice to settled payment",
+    featureSectionDescription: "InvoiceFollow keeps reminders, replies, approval gates, partial payments, and payment links visible before automation sends anything sensitive.",
+    useCaseSectionTitle: "Follow-ups that need tact, not autopilot",
+    useCaseSectionDescription: "Use it for invoices that need a reminder workflow but still require human judgment around tone, disputes, and partial balances.",
+    pricingSectionTitle: "What each invoice tier actually unlocks",
+    pricingSectionDescription: "Free covers a few active invoices, Pro adds payment connections and Gmail sync, and Team adds seats, volume, and longer retention.",
+    comparisonSectionTitle: "Invoice limits by collection volume",
+    faqSectionTitle: "Before you automate a reminder",
+    relatedSectionTitle: "Pair cash follow-up with these tools",
+    features: ["Reminder schedules", "Message preview", "Client replies", "Partial payments", "Reconciliation notes", "Gmail sync"],
+    useCases: [
+      "Freelance developers billing monthly retainers",
+      "Design studios waiting on final project payments",
+      "Agencies collecting deposits before kickoff",
+      "Consultants handling partial payments",
+      "Small teams that need reminders but not aggressive collections",
+    ],
     demoTitle: "Receivables recovery demo",
-    demoDescription: "Walk through invoices, overdue states, reminder timeline, email preview, reply classification badges, payment reconciliation, and weekly digest.",
+    demoDescription: "Walk through invoices with viewed, due soon, overdue, partial paid, disputed, and needs-review states plus a realistic email preview.",
     plans: withLimits(sharedPlans("InvoiceFollow", true), {
       free: ["5 active invoices", "25 collection emails/month", "10 NLP reply analyses/month", "1 workspace user", "30 days retention"],
       pro: ["50 active invoices", "500 collection emails/month", "200 NLP reply analyses/month", "2 payment connections", "Stripe", "Limited PayPal", "90 days retention", "Gmail sync", "Weekly digest", "API access", "Bulk import"],
@@ -342,9 +613,12 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
     ],
     dashboardFeatures: ["Invoice list", "Status board", "Add/import flow", "Customer detail", "Reminder schedule", "Email history", "Reply classification", "Stripe/PayPal state", "Gmail sync", "Weekly digest", "Usage quota"],
     faq: [
-      { question: "Does InvoiceFollow create legal invoices?", answer: "No. It tracks existing invoices, reminder workflows, replies, and payment reconciliation." },
-      { question: "Can it connect Gmail?", answer: "Gmail sync starts on Pro and is included in Team." },
-      { question: "What happens when a client disputes an invoice?", answer: "NLP reply classification can flag disputes and pause reminders for manual review." },
+      { question: "Can I approve reminders before they are sent?", answer: "Yes. Firm reminders can require manual approval before sending, and sensitive invoices can stay out of automation." },
+      { question: "Can reminders pause when a client replies?", answer: "Yes. Client replies, disputes, and payment confirmations can pause the next scheduled reminder for manual review." },
+      { question: "Can I customize the tone of each email?", answer: "Yes. Reminder previews show subject, tone, payment link, and approval state before messages go out." },
+      { question: "Does InvoiceFollow support partial payments?", answer: "Yes. Partial paid status and remaining-balance notes are part of the recovery workflow." },
+      { question: "Can I mark an invoice as disputed?", answer: "Yes. Disputed invoices can pause reminders and stay visible in the status board." },
+      { question: "Do you send from my domain or from DevForge?", answer: "Gmail sync starts on Pro. Sender setup depends on connected mailbox and plan capabilities." },
     ],
   },
 ];
@@ -353,14 +627,13 @@ export const DEVFORGE_SUITE = {
   name: "DevForge",
   domain: "devforgeapp.pro",
   url: "https://devforgeapp.pro",
-  headline: "DevForge: five micro-SaaS tools to automate the boring parts of building.",
-  description: "Clean files, debug webhooks, analyze feedback, track prices, and follow invoices from one developer-first suite.",
-  audience: "Built for developers, founders, freelancers, agencies and small teams.",
+  headline: "Five small tools for the ugly work behind clean software.",
+  description: "Clean messy files, replay failed webhooks, track competitor prices, organize feedback, and chase invoices without building five internal tools from scratch.",
+  audience: "Built for small teams that want practical tools without enterprise theater.",
   benefits: [
-    "One developer-first suite instead of five scattered workflows.",
-    "Shared auth, billing, and operational patterns across every tool.",
-    "Clear Free, Pro, and Team limits so teams can start small and scale.",
-    "Practical dashboards focused on repeated work, not vanity metrics.",
+    "DevForge is a compact product suite for the operational chores developers usually postpone.",
+    "Each tool solves one painful workflow: dirty files, broken webhooks, price changes, noisy feedback, or unpaid invoices.",
+    "Same account, same billing logic, same dark little workshop.",
   ],
 };
 

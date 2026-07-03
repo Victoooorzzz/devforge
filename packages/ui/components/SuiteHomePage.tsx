@@ -5,11 +5,11 @@ import { ProductGrid } from "./ProductGrid";
 import { StatusBadge } from "./StatusBadge";
 
 const audienceTagsByProduct = {
-  filecleaner: ["Data teams", "Agencies", "Operators"],
-  webhookmonitor: ["Developers", "API teams", "SaaS"],
-  feedbacklens: ["Product teams", "Support", "Founders"],
-  pricetrackr: ["Ecommerce", "Agencies", "Researchers"],
-  invoicefollow: ["Freelancers", "Agencies", "Consultants"],
+  filecleaner: ["Dirty CSVs", "Bad imports", "Cleanup reports"],
+  webhookmonitor: ["Failed hooks", "Payload evidence", "Replay"],
+  feedbacklens: ["Messy feedback", "Duplicates", "Roadmap proof"],
+  pricetrackr: ["Price drops", "Stock shifts", "Margin checks"],
+  invoicefollow: ["Unpaid invoices", "Polite reminders", "Manual review"],
 };
 
 const productCards: ProductInfo[] = DEVFORGE_PRODUCTS.map((product) => ({
@@ -20,8 +20,8 @@ const productCards: ProductInfo[] = DEVFORGE_PRODUCTS.map((product) => ({
   accentColor: product.accentColor,
   price: product.plans.find((plan) => plan.slug === "pro")?.price || 9.99,
   status: product.status,
-  problem: product.problem,
-  solution: product.solution,
+  problem: undefined,
+  solution: undefined,
   audienceTags: audienceTagsByProduct[product.slug],
 }));
 
@@ -29,20 +29,20 @@ const suitePlans = [
   {
     name: "Free",
     price: "$0",
-    description: "Try every product with practical limits before picking a paid workflow.",
-    limits: ["Free limits per product", "Public demos", "Single-user workspace"],
+    description: "For testing one real workflow before you trust it with production mess.",
+    limits: ["Low limits", "One workspace", "Core workflow"],
   },
   {
     name: "Pro",
     price: "$9.99",
-    description: "One product, higher limits, advanced workflow features, and production retention.",
-    limits: ["Per product", "Advanced features", "Best for founders and solo operators"],
+    description: "For individual operators running the workflow often enough that manual work hurts.",
+    limits: ["More volume", "Longer history", "Exports, alerts, or automation"],
   },
   {
     name: "Team",
     price: "$49",
-    description: "Higher limits, team seats where supported, longer retention, and deeper integrations.",
-    limits: ["Per product", "Team limits", "Best for agencies and small teams"],
+    description: "For small teams that need shared access, higher limits, and safer collaboration.",
+    limits: ["Members", "Permissions", "More retention", "Priority support"],
   },
 ];
 
@@ -72,7 +72,6 @@ function AvailabilityIcon({ enabled }: { enabled: boolean }) {
 
 export function SuiteHomePage() {
   const liveCount = DEVFORGE_PRODUCTS.filter((product) => product.status === "live").length;
-  const betaCount = DEVFORGE_PRODUCTS.filter((product) => product.status === "beta").length;
 
   return (
     <Layout
@@ -92,9 +91,10 @@ export function SuiteHomePage() {
         <div className="section-container grid gap-10 lg:grid-cols-[1fr_420px] lg:items-center">
           <div>
             <div className="mb-5 flex flex-wrap items-center gap-2">
-              <StatusBadge tone="success">{liveCount} live products</StatusBadge>
-              <StatusBadge tone="neutral">{betaCount} beta pilots</StatusBadge>
-              <StatusBadge tone="neutral">Free, Pro, Team</StatusBadge>
+              <StatusBadge tone="success">5 focused tools</StatusBadge>
+              <StatusBadge tone="neutral">Shared auth + billing</StatusBadge>
+              <StatusBadge tone="neutral">Built for small teams</StatusBadge>
+              <StatusBadge tone="accent">No enterprise theater</StatusBadge>
             </div>
             <h1 className="heading-display text-4xl md:text-6xl">
               {DEVFORGE_SUITE.name}
@@ -108,7 +108,7 @@ export function SuiteHomePage() {
             <div className="mt-8 flex flex-wrap gap-3">
               <a href="/register?plan=free" className="btn-primary">Start free</a>
               <a href="#plans" className="btn-secondary">Compare plans</a>
-              <a href="#products" className="btn-ghost">Explore products</a>
+              <a href="#products" className="btn-ghost">View products</a>
             </div>
           </div>
           <div className="suite-hero-mockup surface-card-raised border border-white/10 p-5 animate-scale-in">
@@ -122,7 +122,7 @@ export function SuiteHomePage() {
             </div>
             <div className="mt-5 space-y-3 font-mono text-xs leading-relaxed">
               <p><span style={{ color: "#A3A3A3" }}>const</span> tools = <span style={{ color: "#F5F5F5" }}>["FileCleaner", "Webhook Monitor", "FeedbackLens"]</span>;</p>
-              <p><span style={{ color: "#A3A3A3" }}>await</span> DevForge.automate(<span style={{ color: "#F59E0B" }}>"boring_ops"</span>);</p>
+              <p><span style={{ color: "#A3A3A3" }}>await</span> DevForge.cleanUp(<span style={{ color: "#F59E0B" }}>"messy_ops"</span>);</p>
               <div className="rounded-md bg-black/40 p-3">
                 {[
                   ["FileCleaner", "1,804 fixes queued"],
@@ -157,18 +157,52 @@ export function SuiteHomePage() {
       <section id="products" className="py-16 md:py-20" style={{ backgroundColor: "var(--color-surface)" }}>
         <ProductGrid
           products={productCards}
-          title="The five-product suite"
-          subtitle="Each product has a public page, a safe interactive demo, a real dashboard, and Free/Pro/Team limits."
+          title="Five focused tools, five annoying chores"
+          subtitle="Each product has a public demo, production dashboard paths, plan-aware limits, and copy that names the actual mess it handles."
         />
+      </section>
+
+      <section className="py-16 md:py-20">
+        <div className="section-container grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+          <div>
+            <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>Suite logic</p>
+            <h2 className="heading-section mt-3 text-3xl md:text-4xl">Why these five tools belong together</h2>
+            <div className="mt-4 space-y-3 leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
+              {DEVFORGE_SUITE.benefits.map((benefit) => (
+                <p key={benefit}>{benefit}</p>
+              ))}
+            </div>
+          </div>
+          <div className="surface-card-raised border border-white/10 p-5">
+            <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Operational chain</p>
+            <div className="mt-5 grid gap-3">
+              {[
+                ["Messy file", "Clean headers before an import explodes"],
+                ["Broken integration", "Replay a failed webhook with evidence"],
+                ["Market change", "Notice price drops before margins move"],
+                ["Customer noise", "Cluster feedback with raw receipts"],
+                ["Unpaid invoice", "Send reminders with human brakes"],
+              ].map(([pain, detail]) => (
+                <div key={pain} className="flex items-start gap-3 rounded-md bg-black/30 p-3">
+                  <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: "var(--color-accent)" }} />
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>{pain}</p>
+                    <p className="mt-1 text-xs leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>{detail}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </section>
 
       <section id="plans" className="py-16 md:py-20">
         <div className="section-container">
           <div className="mb-8 max-w-3xl">
             <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Plans</p>
-            <h2 className="heading-section mt-3 text-3xl md:text-4xl">Pricing stays predictable across products</h2>
+            <h2 className="heading-section mt-3 text-3xl md:text-4xl">One pricing shape across every product</h2>
             <p className="mt-4 leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
-              Every product starts at Free. Most Pro plans are $9.99/month and most Team plans are $49/month; FeedbackLens uses higher product-intelligence limits at $19/month Pro and $79/month Team.
+              Each product keeps its own limits, but the upgrade logic stays predictable: Free to test, Pro to operate, Team to collaborate.
             </p>
           </div>
           <div className="grid gap-4 lg:grid-cols-3">
@@ -256,7 +290,7 @@ export function SuiteHomePage() {
       <section className="py-16 md:py-20">
         <div className="section-container">
           <div className="closing-cta border border-white/10 p-8 text-center md:p-10">
-            <h2 className="heading-section text-3xl md:text-4xl">Ready to automate the boring parts?</h2>
+            <h2 className="heading-section text-3xl md:text-4xl">Ready to clean up the ugly work?</h2>
             <p className="mx-auto mt-4 max-w-2xl leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
               Start free, test the live demos, and upgrade only when a workflow earns its keep.
             </p>

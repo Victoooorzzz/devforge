@@ -23,14 +23,14 @@ class DevForgeSiteUXContractTest(unittest.TestCase):
         self.assertIsNotNone(webhook_block)
         self.assertIn('shortName: "Webhook Monitor"', webhook_block.group(0))
 
-    def test_suite_home_does_not_claim_all_products_are_live(self):
+    def test_suite_home_uses_specific_suite_badges(self):
         suite_home = (ROOT / "packages" / "ui" / "components" / "SuiteHomePage.tsx").read_text()
 
         self.assertNotIn("5 products live", suite_home)
         self.assertIn("liveCount", suite_home)
-        self.assertIn("live products", suite_home)
-        self.assertIn("betaCount", suite_home)
-        self.assertIn("beta pilots", suite_home)
+        self.assertIn("5 focused tools", suite_home)
+        self.assertIn("Shared auth + billing", suite_home)
+        self.assertIn("No enterprise theater", suite_home)
 
     def test_suite_home_has_high_intent_signup_cta(self):
         suite_home = (ROOT / "packages" / "ui" / "components" / "SuiteHomePage.tsx").read_text()
@@ -72,7 +72,7 @@ class DevForgeSiteUXContractTest(unittest.TestCase):
         landing = (ROOT / "packages" / "ui" / "components" / "ProductLandingPage.tsx").read_text()
 
         self.assertIn("<details", landing)
-        self.assertIn("Other tools in the same stack", landing)
+        self.assertIn("product.relatedSectionTitle", landing)
 
     def test_shared_site_has_motion_hooks(self):
         styles = (ROOT / "packages" / "ui" / "styles" / "globals.css").read_text()

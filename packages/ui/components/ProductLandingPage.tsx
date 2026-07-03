@@ -16,6 +16,12 @@ interface ProductLandingPageProps {
 
 const featureDescriptions: Record<string, Record<string, string>> = {
   filecleaner: {
+    "Header mapping": "Rename messy columns into stable database-friendly fields before your import sees them.",
+    "Duplicate detection": "Catch repeated customers, invoices, SKUs, and emails before they create bad records.",
+    "Format normalization": "Standardize dates, currency, booleans, casing, and empty values.",
+    "Review before export": "Approve changes before downloading the cleaned file.",
+    "Cleanup report": "Export a summary of every change made to the file.",
+    "EXIF and utility cleanup": "Strip sensitive metadata and convert utility files when cleanup is not just tabular.",
     "Preview dirty files before processing": "Inspect rows, columns, sample values, and obvious quality issues before spending a run.",
     "Normalize phone, country, currency, and date columns": "Standardize messy regional formats into predictable values that downstream tools can trust.",
     "Find exact and fuzzy duplicates": "Catch repeated records even when casing, spacing, or small typos make them look different.",
@@ -24,6 +30,11 @@ const featureDescriptions: Record<string, Record<string, string>> = {
     "Export CSV, XLSX, or JSON with a cleaning report": "Download cleaned data plus a report that explains what changed and what needs review.",
   },
   webhookmonitor: {
+    "Payload capture": "Store request bodies with headers, timestamps, and delivery attempts.",
+    "Replay safely": "Retry one event or a filtered batch without losing the original context.",
+    "Failure timeline": "See exactly when the delivery failed, retried, timed out, or recovered.",
+    "Signature checks": "Track whether webhook signatures passed, failed, or were missing.",
+    "Endpoint health": "Know which endpoints are failing before customers report it.",
     "Endpoint management": "Create isolated webhook URLs for providers, environments, clients, or temporary debugging sessions.",
     "Event table and JSON viewer": "Scan incoming requests quickly, then inspect full payloads without digging through server logs.",
     "Headers viewer": "Review provider headers and masked sensitive values when signature or auth failures need context.",
@@ -34,6 +45,11 @@ const featureDescriptions: Record<string, Record<string, string>> = {
     "Export cURL/Postman": "Hand off a reproducible request to engineering or support without rebuilding the payload manually.",
   },
   feedbacklens: {
+    "Theme clustering": "Group scattered feedback into product areas without losing the original messages.",
+    "Duplicate detection": "Link repeated complaints across Canny, GitHub, email, and support notes.",
+    "Urgency scoring": "Separate loud feedback from feedback that blocks revenue or retention.",
+    "Digest generation": "Send weekly summaries your product team can actually act on.",
+    "Human review": "Keep low-confidence classifications visible instead of pretending the model is always right.",
     "Manual and source ingestion": "Collect feedback from manual notes, email, GitHub, Canny, Reddit, and X/Twitter in one inbox.",
     "Sentiment and urgency labels": "Separate praise, churn risk, bugs, and urgent reports before they blend into one queue.",
     "Spam detection": "Filter low-signal submissions so roadmap decisions are based on real customer input.",
@@ -44,6 +60,11 @@ const featureDescriptions: Record<string, Record<string, string>> = {
     "Attachment processing": "Extract text-like attachment content where supported so useful context is not lost.",
   },
   pricetrackr: {
+    "Tracked URLs": "Monitor competitor product, plan, or pricing pages from one watchlist.",
+    "Stock shifts": "Know when a price drop matters less because inventory is low or unavailable.",
+    "Change history": "See how prices moved over days or weeks, not just the latest number.",
+    "Alert rules": "Trigger alerts only when movement crosses your threshold.",
+    "Decision notes": "Attach context so your team remembers why a price was ignored or reviewed.",
     "Tracker list": "Keep monitored URLs, status, last check time, and current price in one scannable workspace.",
     "Price and stock state": "Track current price, previous price, stock changes, and error states for each URL.",
     "History chart": "See price movement over time so drops, spikes, and stale trackers are easy to spot.",
@@ -54,6 +75,11 @@ const featureDescriptions: Record<string, Record<string, string>> = {
     "Usage quota": "Show active tracker limits and plan gates before a team hits scale friction.",
   },
   invoicefollow: {
+    "Reminder schedules": "Create polite follow-up sequences based on due date and invoice status.",
+    "Message preview": "Review subject lines, tone, and payment links before reminders go out.",
+    "Client replies": "Pause automation when a client responds or disputes an invoice.",
+    "Partial payments": "Track remaining balances instead of treating every invoice as paid or unpaid.",
+    "Reconciliation notes": "Keep payment status, follow-up history, and owner notes in one place.",
     "Invoice list and status board": "Track overdue, pending, paid, disputed, and promised invoices from one cash view.",
     "CSV/XLS import": "Bring existing invoices in bulk instead of retyping customer, amount, and due-date data.",
     "Reminder schedule": "Run planned follow-up sequences while keeping disputed or sensitive invoices out of automation.",
@@ -111,6 +137,35 @@ function FeatureIcon({ feature }: { feature: string }) {
   );
 }
 
+function ProductUniqueSection({ product }: { product: DevForgeProduct }) {
+  return (
+    <section className="py-16 md:py-20">
+      <div className="section-container">
+        <div className="mb-8 max-w-3xl">
+          <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>{product.uniqueSection.eyebrow}</p>
+          <h2 className="heading-section mt-3 text-3xl md:text-4xl">{product.uniqueSection.title}</h2>
+          <p className="mt-4 leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>{product.uniqueSection.description}</p>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          {product.uniqueSection.blocks.map((block) => (
+            <div key={block.label} className="surface-card-raised border border-white/10 p-5">
+              <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>{block.label}</p>
+              <p className="mt-3 whitespace-pre-line font-mono text-xs leading-relaxed" style={{ color: "var(--color-text)" }}>{block.body}</p>
+            </div>
+          ))}
+        </div>
+        {product.uniqueSection.badges?.length ? (
+          <div className="mt-5 flex flex-wrap gap-2">
+            {product.uniqueSection.badges.map((badge) => (
+              <StatusBadge key={badge} tone="accent">{badge}</StatusBadge>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 export function ProductLandingPage({ product }: ProductLandingPageProps) {
   const relatedProducts = DEVFORGE_PRODUCTS.filter((item) => item.slug !== product.slug).slice(0, 4);
   const proPlan = product.plans.find((plan) => plan.slug === "pro");
@@ -151,6 +206,9 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
               <p className="mt-4 max-w-2xl text-base leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
                 {product.description}
               </p>
+              <p className="mt-4 max-w-2xl rounded-md border border-white/10 bg-black/25 p-4 text-sm leading-relaxed" style={{ color: "var(--color-text)" }}>
+                {product.founderNote}
+              </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <a href="/register?plan=free" className="btn-primary">Start free</a>
                 <a href="#demo" className="btn-secondary">Try public demo</a>
@@ -167,19 +225,20 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
                 </div>
               </div>
               <div className="mt-5 space-y-4">
-                {[
-                  ["Problem", product.problem, "problem"],
-                  ["Solution", product.solution, "solution"],
-                  ["Built for", product.audience, "audience"],
-                ].map(([label, value, icon]) => (
-                  <div key={label} className="rounded-md bg-black/30 p-4">
+                {product.briefCards.map((card, index) => (
+                  <div key={card.label} className="rounded-md bg-black/30 p-4">
                     <p className="flex items-center gap-2 text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>
-                      <MiniIcon type={icon as "problem" | "solution" | "audience"} />
-                      {label}
+                      <MiniIcon type={index === 0 ? "problem" : index === 1 ? "solution" : "audience"} />
+                      {card.label}
                     </p>
-                    <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>{value}</p>
+                    <h3 className="mt-2 text-sm font-semibold" style={{ color: "var(--color-text)" }}>{card.title}</h3>
+                    <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>{card.body}</p>
                   </div>
                 ))}
+                <div className="rounded-md border border-white/10 bg-black/20 p-4">
+                  <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Product signal</p>
+                  <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--color-text)" }}>{product.proofPoint}</p>
+                </div>
               </div>
             </div>
           </div>
@@ -189,13 +248,15 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
           <ProductDemo slug={product.slug} />
         </ProductDemoShell>
 
+        <ProductUniqueSection product={product} />
+
         <section id="features" className="py-16 md:py-20" style={{ backgroundColor: "var(--color-surface)" }}>
           <div className="section-container">
             <div className="mb-8 max-w-3xl">
               <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>Workflow</p>
-              <h2 className="heading-section mt-3 text-3xl md:text-4xl">Everything the real dashboard is built around</h2>
+              <h2 className="heading-section mt-3 text-3xl md:text-4xl">{product.featureSectionTitle}</h2>
               <p className="mt-4 leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
-                Public demos stay safe, but the feature set mirrors the production backend paths, plan limits, retention, and upgrade gates.
+                {product.featureSectionDescription}
               </p>
             </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -210,9 +271,9 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
           <div className="section-container grid gap-8 lg:grid-cols-[0.85fr_1.15fr]">
             <div>
               <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>Use cases</p>
-              <h2 className="heading-section mt-3 text-3xl">Where teams use it</h2>
+              <h2 className="heading-section mt-3 text-3xl">{product.useCaseSectionTitle}</h2>
               <p className="mt-4 leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
-                The product is intentionally narrow: it targets repeated operations where teams lose time every week.
+                {product.useCaseSectionDescription}
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
@@ -229,9 +290,9 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
           <div className="section-container">
             <div className="mb-8 max-w-3xl">
               <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>Pricing</p>
-              <h2 className="heading-section mt-3 text-3xl md:text-4xl">Free, Pro, and Team plans</h2>
+              <h2 className="heading-section mt-3 text-3xl md:text-4xl">{product.pricingSectionTitle}</h2>
               <p className="mt-4 leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
-                Start with Free, move to Pro at {proPlan?.priceLabel || "$9.99"}/month, or use Team at {teamPlan?.priceLabel || "$49"}/month when higher limits and shared workflows matter.
+                {product.pricingSectionDescription} Pro starts at {proPlan?.priceLabel || "$9.99"}/month and Team at {teamPlan?.priceLabel || "$49"}/month.
               </p>
             </div>
             <PricingTable product={product} />
@@ -242,7 +303,7 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
           <div className="section-container">
             <div className="mb-8 max-w-3xl">
               <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>Plan comparison</p>
-              <h2 className="heading-section mt-3 text-3xl">Limits without surprises</h2>
+              <h2 className="heading-section mt-3 text-3xl">{product.comparisonSectionTitle}</h2>
             </div>
             <FeatureComparison product={product} />
           </div>
@@ -252,7 +313,7 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
           <div className="section-container grid gap-8 lg:grid-cols-[0.75fr_1.25fr]">
             <div>
               <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>FAQ</p>
-              <h2 className="heading-section mt-3 text-3xl">Before you sign up</h2>
+              <h2 className="heading-section mt-3 text-3xl">{product.faqSectionTitle}</h2>
             </div>
             <div className="space-y-3">
               {product.faq.map((item) => (
@@ -279,7 +340,7 @@ export function ProductLandingPage({ product }: ProductLandingPageProps) {
             <details className="surface-card-raised border border-white/10 p-5">
               <summary className="cursor-pointer list-none">
                 <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>DevForge suite</p>
-                <h2 className="heading-section mt-3 text-3xl">Other tools in the same stack</h2>
+                <h2 className="heading-section mt-3 text-3xl">{product.relatedSectionTitle}</h2>
               </summary>
               <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 {relatedProducts.map((item) => (
