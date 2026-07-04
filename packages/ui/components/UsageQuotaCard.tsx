@@ -19,8 +19,9 @@ function formatNumber(value: number) {
 }
 
 export function UsageQuotaCard({ label, used, limit, unit = "", caption, mode = "usage", tone = "accent" }: UsageQuotaCardProps) {
-  const displayUsed = mode === "capacity" ? limit : used;
-  const percentage = limit <= 0 ? 0 : Math.min(100, Math.round((displayUsed / limit) * 100));
+  const isCapacity = mode === "capacity";
+  const percentage = limit <= 0 || isCapacity ? 0 : Math.min(100, Math.round((used / limit) * 100));
+  const displayValue = isCapacity ? limit : used;
   const color = toneColor[tone];
 
   return (
@@ -30,18 +31,22 @@ export function UsageQuotaCard({ label, used, limit, unit = "", caption, mode = 
           {label}
         </p>
         <span className="text-xs font-semibold" style={{ color }}>
-          {percentage}%
+          {isCapacity ? "Plan limit" : `${percentage}%`}
         </span>
       </div>
-      <div className="mt-3 h-2 overflow-hidden rounded-md bg-white/10">
-        <div className="dashboard-progress-bar h-full rounded-md" style={{ width: `${percentage}%`, backgroundColor: color }} />
-      </div>
+      {isCapacity ? (
+        <div className="mt-3 h-2 rounded-md bg-white/5" />
+      ) : (
+        <div className="mt-3 h-2 overflow-hidden rounded-md bg-white/10">
+          <div className="dashboard-progress-bar h-full rounded-md" style={{ width: `${percentage}%`, backgroundColor: color }} />
+        </div>
+      )}
       <div className="mt-3 flex items-center justify-between gap-3 text-sm">
         <span style={{ color: "var(--color-text)" }}>
-          {formatNumber(displayUsed)}{unit}
+          {formatNumber(displayValue)}{unit}
         </span>
         <span style={{ color: "var(--color-text-secondary)" }}>
-          of {formatNumber(limit)}{unit}
+          {isCapacity ? "available" : `of ${formatNumber(limit)}${unit}`}
         </span>
       </div>
       {caption ? (

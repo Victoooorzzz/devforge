@@ -11,13 +11,15 @@ def read(path: str) -> str:
 
 
 class DashboardReviewContractTest(unittest.TestCase):
-    def test_capacity_quotas_render_plan_capacity_as_full_available_limit(self):
+    def test_capacity_quotas_render_as_plan_limits_not_consumed_usage(self):
         panel = read("packages/ui/components/DashboardPlanPanel.tsx")
         usage = read("packages/ui/components/UsageQuotaCard.tsx")
 
         self.assertIn('mode?: "usage" | "capacity"', panel)
         self.assertIn('mode: "capacity"', panel)
-        self.assertIn("displayUsed", usage)
+        self.assertIn("isCapacity", usage)
+        self.assertIn("Plan limit", usage)
+        self.assertNotIn('displayUsed = mode === "capacity" ? limit : used', usage)
 
     def test_filecleaner_dashboard_has_schema_placeholder_and_pipeline_presets(self):
         page = read("apps/filecleaner/frontend/src/app/dashboard/page.tsx")
