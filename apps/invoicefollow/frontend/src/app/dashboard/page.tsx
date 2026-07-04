@@ -227,6 +227,7 @@ export default function DashboardPage() {
     const atRisk = invoices.filter((invoice) => invoice.status !== "paid" && daysOverdue(invoice.due_date) > 30).length;
     return { pendingAmount, atRisk };
   }, [invoices]);
+  const hasInvoiceData = invoices.length > 0 || Boolean(metrics?.total_invoices);
 
   const saveRecord = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -370,9 +371,9 @@ export default function DashboardPage() {
       <div className="dashboard-motion space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-2xl font-bold" style={{ color: "var(--color-text)" }}>Invoice recovery</h1>
+            <h1 className="text-2xl font-bold" style={{ color: "var(--color-text)" }}>Cash recovery, not invoice creation</h1>
             <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>
-              {invoices.length} tracked invoices · {money(metrics?.pending_amount ?? totals.pendingAmount, "USD")} pending
+              Stop dreading your inbox on Mondays. {hasInvoiceData ? `${invoices.length} tracked invoices · ${money(metrics?.pending_amount ?? totals.pendingAmount, "USD")} pending` : "Add or import invoices when there is real recovery work to track."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -457,10 +458,10 @@ export default function DashboardPage() {
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
-            { label: "Recovery rate", value: `${metrics?.recovery_rate ?? 0}%`, icon: CheckCircle2, color: "#059669" },
-            { label: "Pending", value: money(metrics?.pending_amount ?? totals.pendingAmount, "USD"), icon: Clock, color: "#B45309" },
-            { label: "At risk", value: String(metrics?.at_risk_count ?? totals.atRisk), icon: AlertTriangle, color: "#DC2626" },
-            { label: "Avg payment", value: `${metrics?.avg_payment_time_days ?? 0}d`, icon: FileText, color: "#0284C7" },
+            { label: "Recovery rate", value: hasInvoiceData && metrics ? `${metrics.recovery_rate}%` : "—", icon: CheckCircle2, color: "#059669" },
+            { label: "Pending", value: hasInvoiceData ? money(metrics?.pending_amount ?? totals.pendingAmount, "USD") : "—", icon: Clock, color: "#B45309" },
+            { label: "At risk", value: hasInvoiceData ? String(metrics?.at_risk_count ?? totals.atRisk) : "—", icon: AlertTriangle, color: "#DC2626" },
+            { label: "Avg payment", value: hasInvoiceData && metrics ? `${metrics.avg_payment_time_days}d` : "—", icon: FileText, color: "#0284C7" },
           ].map((item) => (
             <div key={item.label} className="rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)" }}>
               <div className="mb-2 flex items-center gap-2 text-xs" style={{ color: "var(--color-text-secondary)" }}>
@@ -496,7 +497,7 @@ export default function DashboardPage() {
                 return (
                   <div key={provider} className="rounded-lg p-3" style={{ backgroundColor: "var(--color-surface-high)" }}>
                     <p className="text-xs font-semibold capitalize" style={{ color: "var(--color-text)" }}>{provider}</p>
-                    <p className={`mt-1 text-[11px] font-bold ${connected ? "text-emerald-500" : "text-amber-500"}`}>
+                    <p className={`mt-1 text-[11px] font-bold ${connected ? "text-emerald-500" : "text-zinc-400"}`}>
                       {connected ? "Connected" : "Not connected"}
                     </p>
                   </div>
@@ -536,10 +537,10 @@ export default function DashboardPage() {
             <h2 className="text-sm font-bold" style={{ color: "var(--color-text)" }}>Email invoice detection</h2>
             <p className="mb-3 text-xs" style={{ color: "var(--color-text-secondary)" }}>Paste a forwarded invoice email to create a reviewable draft.</p>
             <div className="space-y-2">
-              <input className="input-field w-full text-xs" placeholder="Subject" value={emailDraftInput.subject} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, subject: event.target.value })} />
-              <input className="input-field w-full text-xs" type="email" placeholder="Sender email" value={emailDraftInput.sender_email} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, sender_email: event.target.value })} />
-              <input className="input-field w-full text-xs" placeholder="Sender name" value={emailDraftInput.sender_name} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, sender_name: event.target.value })} />
-              <textarea className="input-field min-h-24 w-full resize-y text-xs" placeholder="Email body" value={emailDraftInput.body} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, body: event.target.value })} />
+              <input className="input-field w-full text-xs" placeholder="Invoice #INV-2041 from Clara Studio" value={emailDraftInput.subject} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, subject: event.target.value })} />
+              <input className="input-field w-full text-xs" type="email" placeholder="billing@clarastudio.com" value={emailDraftInput.sender_email} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, sender_email: event.target.value })} />
+              <input className="input-field w-full text-xs" placeholder="Clara Studio Billing" value={emailDraftInput.sender_name} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, sender_name: event.target.value })} />
+              <textarea className="input-field min-h-24 w-full resize-y text-xs" placeholder="Hi, attached is invoice INV-2041 for $2,400 due July 31." value={emailDraftInput.body} onChange={(event) => setEmailDraftInput({ ...emailDraftInput, body: event.target.value })} />
               <button type="button" onClick={detectInvoiceEmail} disabled={detectingEmail || !emailDraftInput.sender_email || !emailDraftInput.body} className="btn-secondary w-full justify-center text-xs">
                 {detectingEmail ? <InlineSpinner /> : null}
                 Detect invoice draft

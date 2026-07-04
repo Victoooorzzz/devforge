@@ -13,6 +13,7 @@ export interface DashboardQuota {
   limit: number;
   unit?: string;
   caption?: string;
+  mode?: "usage" | "capacity";
 }
 
 interface DashboardPlanPanelProps {
@@ -54,25 +55,28 @@ const defaultLockedByProduct: Record<DevForgeProduct["slug"], string[]> = {
   invoicefollow: ["Gmail sync", "Stripe/PayPal reconciliation", "Weekly digest", "API access"],
 };
 
-const planQuotaByProduct: Record<PlanSlug, Partial<Record<DevForgeProduct["slug"], Record<string, Pick<DashboardQuota, "limit" | "unit" | "caption">>>>> = {
+const planQuotaByProduct: Record<PlanSlug, Partial<Record<DevForgeProduct["slug"], Record<string, Pick<DashboardQuota, "limit" | "unit" | "caption" | "mode">>>>> = {
   free: {
     filecleaner: {
-      "File size": { limit: 10, unit: " MB", caption: "Free max upload before Pro." },
-      Retention: { limit: 1, unit: " day", caption: "Free file retention." },
+      "File size": { limit: 10, unit: " MB", caption: "Free max upload before Pro.", mode: "capacity" },
+      "Max upload size": { limit: 10, unit: " MB", caption: "Free max upload before Pro.", mode: "capacity" },
+      Retention: { limit: 1, unit: " day", caption: "Free file retention.", mode: "capacity" },
       "Files in history": { limit: 10, caption: "Free workspace visibility before Pro/Team retention." },
     },
     webhookmonitor: {
       "Events today": { limit: 100, caption: "Free daily delivery quota." },
       Endpoints: { limit: 1, caption: "Free endpoint quota." },
+      Retention: { limit: 7, unit: " days", caption: "Free keeps 7 days.", mode: "capacity" },
     },
     feedbacklens: {
       "Feedback this month": { limit: 100, caption: "Free monthly analysis quota." },
       Sources: { limit: 2, caption: "Free manual and email source quota." },
+      "Duplicate groups": { limit: 250, caption: "Free dedupe visibility without a hard 10-group ceiling." },
     },
     pricetrackr: {
       "Active trackers": { limit: 5, caption: "Free active tracker quota." },
       "Watched links": { limit: 5, caption: "Free watched link quota." },
-      "Check frequency": { limit: 24, unit: " h", caption: "Free checks run daily." },
+      "Check frequency": { limit: 24, unit: " h", caption: "Free checks run daily.", mode: "capacity" },
     },
     invoicefollow: {
       "Active invoices": { limit: 5, caption: "Free active invoice quota." },
@@ -82,22 +86,25 @@ const planQuotaByProduct: Record<PlanSlug, Partial<Record<DevForgeProduct["slug"
   },
   pro: {
     filecleaner: {
-      "File size": { limit: 100, unit: " MB", caption: "Pro max upload." },
-      Retention: { limit: 2, unit: " days", caption: "Pro file retention." },
+      "File size": { limit: 100, unit: " MB", caption: "Pro max upload.", mode: "capacity" },
+      "Max upload size": { limit: 100, unit: " MB", caption: "Pro max upload.", mode: "capacity" },
+      Retention: { limit: 2, unit: " days", caption: "Pro file retention.", mode: "capacity" },
       "Files in history": { limit: 100, caption: "Pro workspace visibility." },
     },
     webhookmonitor: {
       "Events today": { limit: 10000, caption: "Pro daily delivery quota." },
       Endpoints: { limit: 10, caption: "Pro endpoint quota." },
+      Retention: { limit: 30, unit: " days", caption: "Pro keeps 30 days.", mode: "capacity" },
     },
     feedbacklens: {
       "Feedback this month": { limit: 5000, caption: "Pro monthly analysis quota." },
       Sources: { limit: 10, caption: "Pro source quota." },
+      "Duplicate groups": { limit: 2500, caption: "Pro expands dedupe history." },
     },
     pricetrackr: {
       "Active trackers": { limit: 100, caption: "Pro active tracker quota." },
       "Watched links": { limit: 100, caption: "Pro watched link quota." },
-      "Check frequency": { limit: 1, unit: " h", caption: "Pro checks hourly." },
+      "Check frequency": { limit: 1, unit: " h", caption: "Pro checks hourly.", mode: "capacity" },
     },
     invoicefollow: {
       "Active invoices": { limit: 50, caption: "Pro active invoice quota." },
@@ -107,22 +114,25 @@ const planQuotaByProduct: Record<PlanSlug, Partial<Record<DevForgeProduct["slug"
   },
   team: {
     filecleaner: {
-      "File size": { limit: 500, unit: " MB", caption: "Team max upload." },
-      Retention: { limit: 7, unit: " days", caption: "Team file retention." },
+      "File size": { limit: 500, unit: " MB", caption: "Team max upload.", mode: "capacity" },
+      "Max upload size": { limit: 500, unit: " MB", caption: "Team max upload.", mode: "capacity" },
+      Retention: { limit: 7, unit: " days", caption: "Team file retention.", mode: "capacity" },
       "Files in history": { limit: 500, caption: "Team workspace visibility." },
     },
     webhookmonitor: {
       "Events today": { limit: 50000, caption: "Team daily delivery quota." },
       Endpoints: { limit: 50, caption: "Team endpoint quota." },
+      Retention: { limit: 90, unit: " days", caption: "Team keeps 90 days.", mode: "capacity" },
     },
     feedbacklens: {
       "Feedback this month": { limit: 25000, caption: "Team monthly analysis quota." },
       Sources: { limit: 50, caption: "Team source quota." },
+      "Duplicate groups": { limit: 10000, caption: "Team dedupe history is effectively unlimited for launch teams." },
     },
     pricetrackr: {
       "Active trackers": { limit: 500, caption: "Team active tracker quota." },
       "Watched links": { limit: 500, caption: "Team watched link quota." },
-      "Check frequency": { limit: 10, unit: " min", caption: "Team checks every 10 minutes." },
+      "Check frequency": { limit: 10, unit: " min", caption: "Team checks every 10 minutes.", mode: "capacity" },
     },
     invoicefollow: {
       "Active invoices": { limit: 200, caption: "Team active invoice quota." },

@@ -18,6 +18,20 @@ import {
 
 const dashboardProduct = getProduct("feedbacklens");
 
+const sourceCards = [
+  { name: "GitHub", detail: "Issues and comments" },
+  { name: "Email", detail: "Forwarded support threads" },
+  { name: "Canny", detail: "Feature requests" },
+  { name: "Reddit", detail: "Community feedback" },
+  { name: "X/Twitter", detail: "Public mentions" },
+];
+
+const sampleFeedback = [
+  "The export keeps timing out when I filter by customer segment.",
+  "Love the weekly digest, but I need one-click reply drafts for angry customers.",
+  "Pricing is fair, yet duplicate requests make our roadmap meeting noisy.",
+];
+
 interface FeedbackEntry {
   id: number;
   text: string;
@@ -245,6 +259,14 @@ export default function DashboardPage() {
     setTimeout(() => setCopiedReply(null), 2000);
   };
 
+  const loadSampleFeedback = () => {
+    setTab("bulk");
+    setBulkResult(null);
+    setBulkText(sampleFeedback.join("\n"));
+    showToast({ tone: "info", message: "Sample feedback loaded. Review it, then import when ready." });
+    trackEvent("feature_used", { feature_name: "feedbacklens_load_sample_feedback" });
+  };
+
   const handleCreateGitHubIssue = async (cluster: FeedbackCluster) => {
     setGithubIssueClusterId(cluster.id);
     trackEvent("feature_used", { feature_name: "feedbacklens_create_github_issue", cluster_id: cluster.id });
@@ -333,9 +355,19 @@ export default function DashboardPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
           <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight mb-1" style={{ color: "var(--color-text)" }}>What your users are saying</h1>
-            <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>{entries.length} feedback items reviewed</p>
+            <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>{entries.length} feedback items processed by the system</p>
           </div>
           {/* Export Dropdown */}
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <button
+            type="button"
+            onClick={loadSampleFeedback}
+            className="flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
+            style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
+          >
+            <Sparkles size={15} />
+            <span>Load sample feedback</span>
+          </button>
           <div className="relative w-full sm:w-auto" ref={exportRef}>
             <button
               onClick={() => setExportOpen(!exportOpen)}
@@ -359,6 +391,7 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
+          </div>
         </div>
 
         <div className="mb-6">
@@ -367,7 +400,7 @@ export default function DashboardPage() {
             quotas={[
               { label: "Feedback this month", used: entries.length, limit: 100, caption: "Free monthly analysis quota." },
               { label: "Sources", used: sources.length, limit: 2, caption: "Free supports manual and email sources." },
-              { label: "Duplicate groups", used: dedupeSummary?.duplicate_groups ?? 0, limit: 10, caption: "Dedupe stays visible before Pro source expansion." },
+              { label: "Duplicate groups", used: dedupeSummary?.duplicate_groups ?? 0, limit: 250, caption: "Team expands dedupe history without a hard 10-group ceiling." },
             ]}
           />
         </div>
@@ -485,7 +518,14 @@ export default function DashboardPage() {
             </div>
             <div className="space-y-2">
               {sources.length === 0 ? (
-                <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Connect email, GitHub, Canny, Reddit, or X/Twitter from settings.</p>
+                <div className="grid grid-cols-1 gap-2">
+                  {sourceCards.map(source => (
+                    <div key={source.name} className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                      <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>{source.name}</p>
+                      <p className="text-[11px]" style={{ color: "var(--color-text-secondary)" }}>{source.detail}</p>
+                    </div>
+                  ))}
+                </div>
               ) : sources.slice(0, 5).map(source => (
                 <div key={source.id} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-surface-high)" }}>
                   <div className="min-w-0">
@@ -562,6 +602,23 @@ export default function DashboardPage() {
               <p className="text-xl font-bold font-mono" style={{ color: s.color }}>{s.value}</p>
             </div>
           ))}
+        </div>
+
+        <div className="mb-6 grid gap-4 md:grid-cols-2">
+          <div className="rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "var(--color-text-secondary)" }}>ROI micro-case</p>
+            <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Product team saved 8 hours/week</p>
+            <p className="mt-1 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+              Source cards, digest clusters, and inline reply drafts keep triage out of spreadsheets.
+            </p>
+          </div>
+          <div className="rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+            <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "var(--color-text-secondary)" }}>Beta offer</p>
+            <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Join beta - 50% off first 3 months</p>
+            <p className="mt-1 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+              Good fit for teams drowning in tickets, reviews, and duplicate roadmap noise.
+            </p>
+          </div>
         </div>
 
         {/* Input Tabs — Single vs Bulk */}

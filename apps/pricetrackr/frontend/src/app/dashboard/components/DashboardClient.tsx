@@ -225,7 +225,7 @@ export default function DashboardClient({
         quotas={[
           { label: "Active trackers", used: activeTrackers.length, limit: 5, caption: "Free active tracker quota." },
           { label: "Watched links", used: summary.total_trackers, limit: 5, caption: "Pro supports 100; Team supports 500." },
-          { label: "Check frequency", used: 24, limit: 24, unit: " h", caption: "Pro checks hourly; Team can check every 10 minutes." },
+          { label: "Check frequency", used: 0, limit: 24, unit: " h", mode: "capacity", caption: "Free checks daily; Pro checks hourly; Team can check every 10 minutes." },
         ]}
       />
 
@@ -313,6 +313,24 @@ export default function DashboardClient({
             ))}
           </div>
 
+          <div className="dashboard-card-motion rounded-xl border border-emerald-500/10 bg-emerald-500/5 p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-1">
+                <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+                  <TrendingDown className="h-3 w-3" />
+                  Price drop detected
+                </span>
+                <p className="text-sm font-semibold text-white">Webhook alert preview</p>
+                <p className="text-xs text-zinc-400">
+                  When a monitored price falls below your threshold, PriceTrackr can send the product, old price, new price, and link to email, Slack, or Discord.
+                </p>
+              </div>
+              <div className="rounded-lg border border-white/5 bg-zinc-950/60 px-3 py-2 font-mono text-[10px] text-emerald-200">
+                {"{ \"event\": \"price_drop\", \"source\": \"Shopify JSON-LD\", \"new_price\": 79.00 }"}
+              </div>
+            </div>
+          </div>
+
           {/* Health Alerts Panel */}
           {health.some((h) => h.severity !== "ok") && (
             <div className="dashboard-card-motion bg-zinc-950/40 border border-white/5 rounded-xl p-4 space-y-3">
@@ -368,9 +386,9 @@ export default function DashboardClient({
             </div>
             {activeTrackers.length === 0 ? (
               <div className="dashboard-card-motion text-center py-12 bg-zinc-950/20 border border-white/5 rounded-xl">
-                <p className="text-sm text-zinc-500 font-medium">No monitored products yet.</p>
+                <p className="text-sm text-zinc-500 font-medium">Add your first product</p>
                 <p className="text-xs text-zinc-600 mt-1">
-                  Click the "Track Product" button to start monitoring price drops.
+                  Use a scrapeable product URL from Shopify-friendly stores, Best Buy, or Newegg to start monitoring price drops.
                 </p>
               </div>
             ) : (

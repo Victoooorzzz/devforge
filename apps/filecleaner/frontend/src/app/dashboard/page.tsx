@@ -95,6 +95,50 @@ type ExportFormat = "csv" | "xlsx" | "json";
 
 const POLL_INTERVAL_MS = 2500;
 const CANCEL_ENDPOINT_TEMPLATE = "/files/{fileId}/cancel";
+const pipelinePresets = [
+  {
+    name: "Sales ops",
+    config: {
+      fuzzyMatching: true,
+      fuzzyColumns: "email,company,phone",
+      fuzzyThreshold: 85,
+      schemaRules: "required:email, type:number:amount, unique:invoice_id",
+      anomalyDetection: true,
+      countryColumns: "country,region",
+      phoneColumns: "phone,mobile",
+      currencyColumns: "amount,total,revenue",
+      dateColumns: "created_at,closed_at,paid_at",
+    },
+  },
+  {
+    name: "Marketing leads",
+    config: {
+      fuzzyMatching: true,
+      fuzzyColumns: "email,domain,company",
+      fuzzyThreshold: 82,
+      schemaRules: "required:email, unique:email, type:text:source",
+      anomalyDetection: false,
+      countryColumns: "country",
+      phoneColumns: "phone",
+      currencyColumns: "budget",
+      dateColumns: "signup_date,created_at",
+    },
+  },
+  {
+    name: "Support tickets",
+    config: {
+      fuzzyMatching: true,
+      fuzzyColumns: "email,ticket_id,subject",
+      fuzzyThreshold: 88,
+      schemaRules: "required:ticket_id, required:email, unique:ticket_id",
+      anomalyDetection: true,
+      countryColumns: "country",
+      phoneColumns: "phone",
+      currencyColumns: "refund_amount",
+      dateColumns: "created_at,resolved_at",
+    },
+  },
+];
 
 const severityColor: Record<string, string> = {
   high: "text-red-500 bg-red-500/10",
@@ -125,7 +169,7 @@ export default function DashboardPage() {
     fuzzyMatching: true,
     fuzzyColumns: "",
     fuzzyThreshold: 85,
-    schemaRules: "[]",
+    schemaRules: "required:email, type:number:amount, unique:invoice_id",
     anomalyDetection: true,
     countryColumns: "country",
     phoneColumns: "phone",
@@ -234,11 +278,21 @@ export default function DashboardPage() {
     value.split(",").map(item => item.trim()).filter(Boolean);
 
   const parseSchemaRules = () => {
+    const raw = pipelineConfig.schemaRules.trim();
     try {
-      const parsed = JSON.parse(pipelineConfig.schemaRules);
+      const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
-      return [];
+      return raw.split(",").map(item => item.trim()).filter(Boolean).map((item) => {
+        const [kind, value, column] = item.split(":").map(part => part.trim()).filter(Boolean);
+        if (kind === "required" && value) return { column: value, not_null: true };
+        if (kind === "unique" && value) return { column: value, unique: true };
+        if (kind === "type" && value && column) {
+          const normalizedType = value === "number" ? "float" : value;
+          return { column, type: normalizedType };
+        }
+        return null;
+      }).filter(Boolean);
     }
   };
 
@@ -491,8 +545,8 @@ export default function DashboardPage() {
           product={dashboardProduct}
           quotas={[
             { label: "Files in history", used: summary?.total_files ?? files.length, limit: 10, caption: "Free workspace visibility before Pro/Team retention." },
-            { label: "Max upload size", used: 10, limit: 10, unit: " MB", caption: "Pro raises this to 100 MB; Team raises it to 500 MB." },
-            { label: "Retention", used: 1, limit: 1, unit: " day", caption: "Pro keeps files for 2 days; Team keeps them for 7 days." },
+            { label: "Max upload size", used: 0, limit: 10, unit: " MB", mode: "capacity", caption: "Pro raises this to 100 MB; Team raises it to 500 MB." },
+            { label: "Retention", used: 0, limit: 1, unit: " day", mode: "capacity", caption: "Pro keeps files for 2 days; Team keeps them for 7 days." },
           ]}
         />
       </div>
@@ -551,6 +605,20 @@ export default function DashboardPage() {
           {profileLoading && <InlineSpinner />}
         </div>
 
+        <div className="mb-4 flex flex-wrap gap-2">
+          {pipelinePresets.map((preset) => (
+            <button
+              key={preset.name}
+              type="button"
+              onClick={() => setPipelineConfig(preset.config)}
+              className="rounded-md border border-white/10 px-3 py-2 text-xs font-semibold transition hover:border-[var(--color-primary)]"
+              style={{ color: "var(--color-text)", backgroundColor: "var(--color-surface-raised)" }}
+            >
+              {preset.name}
+            </button>
+          ))}
+        </div>
+
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-3">
             <label className="flex items-center gap-2 text-sm">
@@ -597,6 +665,7 @@ export default function DashboardPage() {
                 value={pipelineConfig.schemaRules}
                 onChange={e => setPipelineConfig(prev => ({ ...prev, schemaRules: e.target.value }))}
                 className="input-field px-3 py-2 w-full min-h-20 font-mono"
+                placeholder="required:email, type:number:amount, unique:invoice_id"
                 spellCheck={false}
               />
             </label>

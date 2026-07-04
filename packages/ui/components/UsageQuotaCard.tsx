@@ -4,6 +4,7 @@ interface UsageQuotaCardProps {
   limit: number;
   unit?: string;
   caption?: string;
+  mode?: "usage" | "capacity";
   tone?: "accent" | "warning" | "danger";
 }
 
@@ -17,8 +18,9 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-export function UsageQuotaCard({ label, used, limit, unit = "", caption, tone = "accent" }: UsageQuotaCardProps) {
-  const percentage = limit <= 0 ? 0 : Math.min(100, Math.round((used / limit) * 100));
+export function UsageQuotaCard({ label, used, limit, unit = "", caption, mode = "usage", tone = "accent" }: UsageQuotaCardProps) {
+  const displayUsed = mode === "capacity" ? limit : used;
+  const percentage = limit <= 0 ? 0 : Math.min(100, Math.round((displayUsed / limit) * 100));
   const color = toneColor[tone];
 
   return (
@@ -36,7 +38,7 @@ export function UsageQuotaCard({ label, used, limit, unit = "", caption, tone = 
       </div>
       <div className="mt-3 flex items-center justify-between gap-3 text-sm">
         <span style={{ color: "var(--color-text)" }}>
-          {formatNumber(used)}{unit}
+          {formatNumber(displayUsed)}{unit}
         </span>
         <span style={{ color: "var(--color-text-secondary)" }}>
           of {formatNumber(limit)}{unit}

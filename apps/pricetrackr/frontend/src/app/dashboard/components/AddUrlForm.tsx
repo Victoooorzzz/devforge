@@ -136,12 +136,12 @@ export default function AddUrlForm({ onSuccess, onCancel, showToast }: AddUrlFor
                 required
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://www.amazon.com/dp/B0CHX1GPH2"
+                placeholder="https://www.bestbuy.com/site/example-product/1234567.p"
                 className="input-field w-full pl-10 text-sm"
               />
             </div>
             <p className="text-[10px] text-zinc-500">
-              Paste the URL of any product page. We'll attempt to automatically read the current price and stock status.
+              Paste a product page with visible price HTML. Shopify-friendly URLs, Best Buy, Newegg, Gymshark, Allbirds, and Casper pages work best; Shopify JSON-LD helps detection stay stable.
             </p>
           </div>
 

@@ -247,6 +247,36 @@ export default function DashboardPage() {
     }
   };
 
+  const handleSendTestWebhook = async () => {
+    const targetUrl = endpoints[0]?.endpoint_url || endpointUrl;
+    if (!targetUrl) {
+      showToast({ tone: "info", message: "Create or copy a connection URL before sending a test webhook." });
+      return;
+    }
+
+    trackEvent("feature_used", { feature_name: "webhook_send_test_event" });
+    try {
+      await fetch(targetUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-DevForge-Test": "true",
+        },
+        body: JSON.stringify({
+          type: "payment_intent.succeeded",
+          provider: "devforge_test",
+          amount: 4200,
+          currency: "usd",
+          created_at: new Date().toISOString(),
+        }),
+      });
+      showToast({ tone: "success", message: "Test webhook sent. It should appear in the delivery log shortly." });
+      refreshWebhooks(false);
+    } catch {
+      showToast({ tone: "error", message: "We could not send the test webhook from this browser." });
+    }
+  };
+
   const handleDeleteEndpoint = async (endpoint: WebhookEndpoint) => {
     setDeletingEndpointId(endpoint.id);
     trackEvent("feature_used", { feature_name: "webhook_delete_endpoint" });
@@ -518,7 +548,7 @@ export default function DashboardPage() {
           quotas={[
             { label: "Events today", used: summary?.recent_24h ?? requests.length, limit: 100, caption: "Free daily delivery quota." },
             { label: "Endpoints", used: endpoints.length, limit: 1, caption: "Pro unlocks 10 endpoints; Team unlocks 50." },
-            { label: "Retention", used: 7, limit: 7, unit: " days", caption: "Pro keeps 30 days; Team keeps 90 days." },
+            { label: "Retention", used: 0, limit: 7, unit: " days", mode: "capacity", caption: "Free keeps 7 days; Pro keeps 30 days; Team keeps 90 days." },
           ]}
         />
       </div>
@@ -630,6 +660,16 @@ export default function DashboardPage() {
             actionLabel="Copy connection URL"
             onAction={handleCopy}
           />
+          <div className="mt-3 flex justify-center">
+            <button
+              type="button"
+              onClick={handleSendTestWebhook}
+              className="btn-primary flex items-center gap-2 text-sm"
+            >
+              <Send size={14} />
+              Send test webhook
+            </button>
+          </div>
         </div>
       )}
 
@@ -646,6 +686,16 @@ export default function DashboardPage() {
             <div key={stat.label} className="p-4 rounded-xl" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
               <p className="text-[10px] uppercase font-bold tracking-wider opacity-50 mb-1">{stat.label}</p>
               <p className="text-xl font-mono font-bold" style={{ color: stat.color }}>{stat.value}</p>
+              {stat.label === "Failed forwards" ? (
+                <p className="mt-1 text-[10px] leading-snug opacity-60">
+                  Failed forwards are delivery attempts that reached Webhook Monitor but did not succeed at your target endpoint; retries are resend attempts.
+                </p>
+              ) : null}
+              {stat.label === "Auto retry" ? (
+                <p className="mt-1 text-[10px] leading-snug opacity-60">
+                  Auto retry is visible here so delivery automation is never hidden in the log filters.
+                </p>
+              ) : null}
             </div>
           ))}
         </div>
@@ -933,9 +983,10 @@ export default function DashboardPage() {
                     type="button"
                     onClick={() => handleEventExport("curl")}
                     disabled={eventExporting !== null}
+                    aria-label="Export cURL - Copy as cURL"
                     className="rounded-lg bg-black/10 px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {eventExporting === "curl" ? "Exporting..." : "Export cURL"}
+                    {eventExporting === "curl" ? "Exporting..." : "Copy as cURL"}
                   </button>
                   <button
                     type="button"
