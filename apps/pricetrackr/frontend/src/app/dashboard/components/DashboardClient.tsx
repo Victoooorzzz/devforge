@@ -223,9 +223,9 @@ export default function DashboardClient({
       <DashboardPlanPanel
         product={dashboardProduct}
         quotas={[
-          { label: "Active trackers", used: activeTrackers.length, limit: 5, caption: "Free active tracker quota." },
-          { label: "Watched links", used: summary.total_trackers, limit: 5, caption: "Pro supports 100; Team supports 500." },
-          { label: "Check frequency", used: 0, limit: 24, unit: " h", mode: "capacity", caption: "Free checks daily; Pro checks hourly; Team can check every 10 minutes." },
+          { label: "Active trackers", used: activeTrackers.length },
+          { label: "Watched links", used: summary.total_trackers },
+          { label: "Check frequency", used: 0 },
         ]}
       />
 

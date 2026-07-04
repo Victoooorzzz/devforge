@@ -544,9 +544,9 @@ export default function DashboardPage() {
         <DashboardPlanPanel
           product={dashboardProduct}
           quotas={[
-            { label: "Files in history", used: summary?.total_files ?? files.length, limit: 10, caption: "Free workspace visibility before Pro/Team retention." },
-            { label: "Max upload size", used: 0, limit: 10, unit: " MB", mode: "capacity", caption: "Pro raises this to 100 MB; Team raises it to 500 MB." },
-            { label: "Retention", used: 0, limit: 1, unit: " day", mode: "capacity", caption: "Pro keeps files for 2 days; Team keeps them for 7 days." },
+            { label: "Max upload size", used: 0 },
+            { label: "Retention", used: 0 },
+            { label: "Schema rules", used: pipelineConfig.schemaRules.trim() ? parseSchemaRules().length : 0 },
           ]}
         />
       </div>

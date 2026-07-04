@@ -123,6 +123,7 @@ class ProfileResponse(BaseModel):
     lemonsqueezy_customer_id: Optional[str]
     active_products: list[str] = Field(default_factory=list)
     plans_by_product: dict[str, str] = Field(default_factory=dict)
+    dashboard_limits_by_product: dict[str, dict[str, dict[str, int | float]]] = Field(default_factory=dict)
 
 # --- Password Utilities ---
 
@@ -372,7 +373,7 @@ async def get_profile(
     session: AsyncSession = Depends(get_session),
 ):
     from .product_access import UserProductAccess
-    from .plan_limits import resolve_user_plan
+    from .plan_limits import build_dashboard_limits_by_product, resolve_user_plan
 
     result = await session.execute(
         select(UserProductAccess).where(
@@ -406,6 +407,7 @@ async def get_profile(
         lemonsqueezy_customer_id=user.lemonsqueezy_customer_id,
         active_products=active_products,
         plans_by_product=plans_by_product,
+        dashboard_limits_by_product=build_dashboard_limits_by_product(),
     )
 
 @auth_router.put("/profile", response_model=ProfileResponse)
@@ -428,7 +430,7 @@ async def update_profile(body: ProfileUpdateRequest, user: User = Depends(get_cu
     await session.commit()
 
     from .product_access import UserProductAccess
-    from .plan_limits import resolve_user_plan
+    from .plan_limits import build_dashboard_limits_by_product, resolve_user_plan
     active_result = await session.execute(
         select(UserProductAccess).where(
             UserProductAccess.user_id == user.id,
@@ -458,4 +460,5 @@ async def update_profile(body: ProfileUpdateRequest, user: User = Depends(get_cu
         lemonsqueezy_customer_id=user.lemonsqueezy_customer_id,
         active_products=active_products,
         plans_by_product=plans_by_product,
+        dashboard_limits_by_product=build_dashboard_limits_by_product(),
     )

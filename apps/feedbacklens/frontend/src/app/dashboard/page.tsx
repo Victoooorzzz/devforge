@@ -398,9 +398,9 @@ export default function DashboardPage() {
           <DashboardPlanPanel
             product={dashboardProduct}
             quotas={[
-              { label: "Feedback this month", used: entries.length, limit: 100, caption: "Free monthly analysis quota." },
-              { label: "Sources", used: sources.length, limit: 2, caption: "Free supports manual and email sources." },
-              { label: "Duplicate groups", used: dedupeSummary?.duplicate_groups ?? 0, limit: 250, caption: "Team expands dedupe history without a hard 10-group ceiling." },
+              { label: "Feedback this month", used: entries.length },
+              { label: "Sources", used: sources.length },
+              { label: "Duplicate groups", used: dedupeSummary?.duplicate_groups ?? 0 },
             ]}
           />
         </div>

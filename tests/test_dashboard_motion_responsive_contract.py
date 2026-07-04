@@ -75,9 +75,11 @@ class DashboardMotionResponsiveContractTest(unittest.TestCase):
 
         self.assertIn("/auth/profile", panel)
         self.assertIn("plans_by_product", panel)
-        self.assertIn("teamQuotaByProduct", panel)
-        self.assertIn("limit: 200", panel)
-        self.assertIn("limit: 500", panel)
+        self.assertIn("dashboard_limits_by_product", panel)
+        self.assertNotIn("planQuotaByProduct", panel)
+        self.assertNotIn("teamQuotaByProduct", panel)
+        self.assertNotIn("limit: 200", panel)
+        self.assertNotIn("limit: 500", panel)
 
     def test_dashboard_tables_keep_mobile_overflow_inside_components(self):
         table_files = [

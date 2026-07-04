@@ -546,9 +546,9 @@ export default function DashboardPage() {
         <DashboardPlanPanel
           product={dashboardProduct}
           quotas={[
-            { label: "Events today", used: summary?.recent_24h ?? requests.length, limit: 100, caption: "Free daily delivery quota." },
-            { label: "Endpoints", used: endpoints.length, limit: 1, caption: "Pro unlocks 10 endpoints; Team unlocks 50." },
-            { label: "Retention", used: 0, limit: 7, unit: " days", mode: "capacity", caption: "Free keeps 7 days; Pro keeps 30 days; Team keeps 90 days." },
+            { label: "Events today", used: summary?.recent_24h ?? requests.length },
+            { label: "Endpoints", used: endpoints.length },
+            { label: "Retention", used: 0 },
           ]}
         />
       </div>

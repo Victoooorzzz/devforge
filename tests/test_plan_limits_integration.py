@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 import apps.pricetrackr.backend.main as tracker_main
 import apps.webhookmonitor.backend.main as webhook_main
-from backend_core.plan_limits import resolve_user_plan
+from backend_core.plan_limits import build_dashboard_limits_by_product, resolve_user_plan
 from backend_core.auth import ProfileResponse, User, get_current_user
 from backend_core.database import get_session
 
@@ -239,6 +239,16 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
         fields = ProfileResponse.model_fields
 
         self.assertIn("plans_by_product", fields)
+        self.assertIn("dashboard_limits_by_product", fields)
+
+    def test_dashboard_limits_are_serialized_from_backend_plan_limits(self):
+        limits = build_dashboard_limits_by_product()
+
+        self.assertEqual(limits["filecleaner"]["team"]["max_upload_mb"], 500)
+        self.assertEqual(limits["webhookmonitor"]["team"]["retention_days"], 90)
+        self.assertEqual(limits["invoicefollow"]["team"]["max_active_invoices"], 200)
+        self.assertEqual(limits["pricetrackr"]["team"]["min_check_frequency_minutes"], 10)
+        self.assertEqual(limits["feedbacklens"]["team"]["max_sources"], 50)
 
 
 if __name__ == "__main__":

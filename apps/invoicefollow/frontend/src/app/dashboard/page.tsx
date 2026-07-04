@@ -407,9 +407,9 @@ export default function DashboardPage() {
         <DashboardPlanPanel
           product={dashboardProduct}
           quotas={[
-            { label: "Active invoices", used: invoices.filter((invoice) => invoice.status !== "paid").length, limit: 5, caption: "Free active invoice quota." },
-            { label: "Emails this month", used: digest?.reminders_sent ?? 0, limit: 25, caption: "Free monthly reminder quota." },
-            { label: "NLP reply analyses", used: digest?.valid_excuses_pending ?? 0, limit: 10, caption: "Free reply classification quota." },
+            { label: "Active invoices", used: invoices.filter((invoice) => invoice.status !== "paid").length },
+            { label: "Emails this month", used: digest?.reminders_sent ?? 0 },
+            { label: "NLP reply analyses", used: digest?.valid_excuses_pending ?? 0 },
           ]}
         />
 

@@ -197,6 +197,63 @@ INVOICEFOLLOW_LIMITS: dict[PlanName, InvoiceFollowLimits] = {
 }
 
 
+def _bytes_to_mb(value: int) -> int:
+    return value // (1024 * 1024)
+
+
+def _hours_to_minutes(value: float) -> int:
+    return int(round(value * 60))
+
+
+def build_dashboard_limits_by_product() -> dict[str, dict[PlanName, dict[str, int | float]]]:
+    return {
+        "filecleaner": {
+            plan: {
+                "max_upload_mb": _bytes_to_mb(limits.max_file_size_bytes),
+                "retention_days": limits.retention_days,
+                "schema_max_rules": limits.schema_max_rules,
+                "fuzzy_max_rows": limits.fuzzy_max_rows,
+            }
+            for plan, limits in FILECLEANER_LIMITS.items()
+        },
+        "webhookmonitor": {
+            plan: {
+                "events_per_day": limits.events_per_day,
+                "max_endpoints": limits.max_endpoints,
+                "retention_days": limits.retention_days,
+            }
+            for plan, limits in WEBHOOKMONITOR_LIMITS.items()
+        },
+        "feedbacklens": {
+            plan: {
+                "max_feedback_per_month": limits.max_feedback_per_month,
+                "max_sources": limits.max_sources,
+                "history_retention_days": limits.history_retention_days,
+                "dedupe_lookback_items": 500,
+            }
+            for plan, limits in FEEDBACKLENS_LIMITS.items()
+        },
+        "pricetrackr": {
+            plan: {
+                "max_active_trackers": limits.max_active_trackers,
+                "min_check_frequency_hours": limits.min_check_frequency_hours,
+                "min_check_frequency_minutes": _hours_to_minutes(limits.min_check_frequency_hours),
+            }
+            for plan, limits in PRICETRACKR_LIMITS.items()
+        },
+        "invoicefollow": {
+            plan: {
+                "max_active_invoices": limits.max_active_invoices,
+                "monthly_emails": limits.monthly_emails,
+                "monthly_nlp": limits.monthly_nlp,
+                "history_retention_days": limits.history_retention_days,
+                "max_payment_connections": limits.max_payment_connections,
+            }
+            for plan, limits in INVOICEFOLLOW_LIMITS.items()
+        },
+    }
+
+
 def _plan_label(plan: PlanName) -> str:
     if plan == "free":
         return "Free"
