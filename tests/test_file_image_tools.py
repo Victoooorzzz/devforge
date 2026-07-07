@@ -40,6 +40,17 @@ class FileImageToolsTests(unittest.TestCase):
         self.assertEqual(image.format, "PNG")
         self.assertEqual(image.info, {})
 
+    def test_corrupt_tiny_png_returns_actionable_error(self):
+        corrupt_tiny_png = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+            b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+            b"\x00\x00\x00\rIDATx\xdac\xfc\xcf\xc0P\x0f\x00\x05\x83"
+            b"\x02\x7f\x97\xa8\t\xc5\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unsupported or corrupt image file"):
+            process_image_file(corrupt_tiny_png, "tiny.png")
+
     def test_converts_png_to_jpeg_with_rgb_output(self):
         processed = process_image_file(_png_with_metadata(), "photo.png", output_format="jpeg")
 

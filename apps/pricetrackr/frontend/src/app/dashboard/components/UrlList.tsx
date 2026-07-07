@@ -113,6 +113,16 @@ export default function UrlList({
                       Flagged Change
                     </span>
                   )}
+                  {t.status === "blocked" && (
+                    <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 uppercase tracking-wide">
+                      Blocked
+                    </span>
+                  )}
+                  {t.status === "needs_selector" && (
+                    <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 uppercase tracking-wide">
+                      Needs Selector
+                    </span>
+                  )}
                   {t.alert_threshold !== null && (
                     <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase tracking-wide flex items-center gap-0.5">
                       <Bell className="w-2.5 h-2.5" />
@@ -133,7 +143,9 @@ export default function UrlList({
                       ${parseFloat(t.current_price as any).toFixed(2)}
                     </p>
                   ) : (
-                    <p className="text-xs text-zinc-500 font-medium">Fetching price...</p>
+                    <p className="text-xs text-zinc-500 font-medium">
+                      {t.status === "blocked" ? "Blocked" : t.status === "needs_selector" ? "Needs selector" : "Fetching price..."}
+                    </p>
                   )}
                   {diff !== null && (
                     <p

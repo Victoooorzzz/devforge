@@ -157,7 +157,7 @@ export default async function ProductDetailPage({ params }: { params: { slug: st
             <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Price History Chart</h3>
             <div className="relative aspect-[5/2] w-full overflow-hidden rounded-xl border border-white/5 bg-zinc-950/40">
               <img
-                src={`${apiUrl}/public/pricetrackr/trackers/${p.id}/history.svg`}
+                src={`${apiUrl}/public/pricetrackr/trackers/${p.id}/history.svg?slug=${encodeURIComponent(p.slug)}`}
                 alt="Product price history chart"
                 className="w-full h-full object-contain"
               />

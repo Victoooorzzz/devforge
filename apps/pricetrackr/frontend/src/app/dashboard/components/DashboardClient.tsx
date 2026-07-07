@@ -40,7 +40,7 @@ export interface TrackerSummary {
 export interface TrackerHealth {
   id: number;
   label: string;
-  health: "healthy" | "stale" | "never_checked" | "price_missing" | "out_of_stock";
+  health: "healthy" | "stale" | "never_checked" | "price_missing" | "out_of_stock" | "blocked" | "needs_selector";
   severity: "ok" | "warning" | "critical";
   detail: string;
   last_checked: string | null;

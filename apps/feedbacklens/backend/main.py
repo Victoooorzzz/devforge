@@ -1,6 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
+import asyncio
 import base64, hashlib, hmac, json, logging, io, re, secrets, unicodedata, uuid
 from difflib import SequenceMatcher
 from urllib.parse import urlencode
@@ -9,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func
+from sqlalchemy import Column, DateTime, func
 from sqlmodel import Field, SQLModel, select
 from pydantic import BaseModel, Field as PydanticField
 from typing import Any, Optional, List, Literal
@@ -31,8 +32,16 @@ from backend_core.worker import register_job_handler
 logger = logging.getLogger(__name__)
 DEDUPE_LOOKBACK_LIMIT = 500
 SEMANTIC_DUPLICATE_THRESHOLD = 0.75
+SIMHASH_HAMMING_THRESHOLD = 10
 FEEDBACK_TEXT_LIMIT = 2000
-SPAM_TERMS = ("buy now", "click here", "free money", "casino", "viagra", "limited offer")
+SPAM_TERMS = (
+    "buy now", "click here", "free money", "casino", "viagra", "limited offer",
+    "act now", "order now", "special promotion", "credit card", "weight loss",
+    "work from home", "make money", "million dollars", "risk free", "call now",
+    "exclusive deal", "congratulations you won", "click below", "100% free",
+    "no obligation", "this is not spam", "winner", "lottery", "dear friend",
+    "nigerian prince", "investment opportunity", "double your", "earn extra cash",
+)
 FEEDBACK_STOPWORDS = {
     "a",
     "an",
@@ -64,11 +73,90 @@ FEEDBACK_STOPWORDS = {
     "with",
     "you",
     "your",
+    "they",
+    "them",
+    "their",
+    "has",
+    "have",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "can",
+    "may",
+    "might",
+    "after",
+    "before",
 }
+NEGATION_OF_NEGATIVE = {
+    "not", "no", "never", "none", "nobody", "nothing", "neither", "nowhere",
+    "hardly", "barely", "scarcely", "without", "aint", "lack", "lacking",
+}
+INABILITY_WORDS = {
+    "cannot", "can't", "couldn't", "unable", "fails", "failed", "failing",
+    "won't", "wouldn't", "doesn't", "dont", "doesnt", "didnt", "isnt",
+    "arent", "wasnt", "werent", "hasnt", "havent", "hadnt",
+}
+POSITIVE_WORDS = [
+    "love", "great", "amazing", "excellent", "perfect", "best", "wonderful",
+    "fantastic", "good", "thank", "thanks", "awesome", "happy", "pleased",
+    "smooth", "fast", "impressive", "beautiful", "clean", "intuitive", "easy",
+    "reliable", "solid", "flawless", "outstanding", "superb", "brilliant",
+    "enjoy", "nice", "helpful", "efficient", "seamless", "pleasant", "delightful",
+    "remarkable", "incredible", "satisfied", "recommend", "perfectly", "works",
+]
+NEGATIVE_WORDS = [
+    "bad", "terrible", "worst", "hate", "broken", "awful", "horrible",
+    "useless", "poor", "wrong", "disappointed", "frustrating", "slow",
+    "annoying", "ugly", "confusing", "complicated", "clunky", "unreliable",
+    "messy", "outdated", "defective", "unusable", "waste", "regret", "sad",
+    "angry", "ridiculous", "pathetic", "unacceptable", "inferior", "weak",
+    "disgusting", "trash", "garbage", "crap", "suck", "hates", "hated",
+]
+NEGATIVE_ADJECTIVES = {
+    "bad", "terrible", "awful", "horrible", "useless", "poor", "wrong", "broken",
+    "disappointing", "frustrating", "annoying", "ugly", "confusing", "clunky",
+    "slow", "unreliable", "messy", "outdated", "defective", "unusable",
+    "inferior", "weak", "disgusting", "pathetic", "unacceptable",
+}
+URGENT_WORDS = [
+    "urgent", "immediately", "refund", "charge", "lost", "critical", "asap",
+    "blocked", "blocking", "down", "outage", "security", "breach", "hack",
+    "stolen", "fraud", "emergency", "escalate", "legal", "lawyer", "complaint",
+    "ceo", "manager", "supervisor", "deadline", "penalty", "fine", "sued", "help",
+]
+FEEDBACKLENS_SENTIMENT_MODEL = os.getenv(
+    "FEEDBACKLENS_SENTIMENT_MODEL",
+    "distilbert-base-uncased-finetuned-sst-2-english",
+)
+FEEDBACKLENS_URGENCY_MODEL = os.getenv(
+    "FEEDBACKLENS_URGENCY_MODEL",
+    "cross-encoder/nli-deberta-v3-xsmall",
+)
+_sentiment_pipeline = None
+_urgency_pipeline = None
+_embedder = None
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
+
+
+def _as_aware_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _run_in_thread(func, *args, **kwargs):
+    loop = asyncio.get_event_loop()
+    return loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
 
 # ---------------------------------------------------------------------------
@@ -84,14 +172,14 @@ class FeedbackEntry(SQLModel, table=True):
     themes_json: str = Field(default="[]")
     is_urgent: bool = Field(default=False)
     draft_reply: Optional[str] = None
-    analysis_engine: Optional[str] = None  # "vader" | "keyword"
+    analysis_engine: Optional[str] = None  # "enhanced_keyword" | "local_transformers" | "keyword"
     source: str = Field(default="manual", index=True)
     author: str = Field(default="")
     source_url: str = Field(default="")
     source_message_id: str = Field(default="", index=True)
     cluster_slug: str = Field(default="", index=True)
     priority: str = Field(default="low", index=True)
-    created_at: datetime = Field(default_factory=_utc_now)
+    created_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class FeedbackSource(SQLModel, table=True):
@@ -107,9 +195,9 @@ class FeedbackSource(SQLModel, table=True):
     webhook_secret: str = Field(default="")
     config_json: str = Field(default="{}")
     forward_token: str = Field(default_factory=lambda: uuid.uuid4().hex, index=True)
-    last_polled_at: Optional[datetime] = None
-    created_at: datetime = Field(default_factory=_utc_now)
-    updated_at: datetime = Field(default_factory=_utc_now)
+    last_polled_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    created_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class FeedbackSettings(SQLModel, table=True):
@@ -120,7 +208,7 @@ class FeedbackSettings(SQLModel, table=True):
     alert_email: str = Field(default="")
     weekly_summary_enabled: bool = Field(default=True)
     timezone: str = Field(default="UTC")
-    last_weekly_digest_at: Optional[datetime] = None
+    last_weekly_digest_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +284,58 @@ class FeedbackPrefsUpdate(BaseModel):
     timezone: str = "UTC"
 
 # ---------------------------------------------------------------------------
-# Analysis Engines (VADER -> keyword fallback)
+# Analysis Engines: enhanced rules by default, local transformers optional
 # ---------------------------------------------------------------------------
+
+def _is_spam_feedback_v2(text: str) -> dict[str, Any]:
+    lowered = text.lower()
+    reasons: list[str] = []
+    score = 0
+
+    spam_hits = sum(1 for term in SPAM_TERMS if term in lowered)
+    if spam_hits >= 2:
+        score += 3
+        reasons.append(f"multi_spam_terms({spam_hits})")
+    elif spam_hits == 1:
+        score += 1
+        reasons.append("spam_term")
+
+    url_count = len(re.findall(r"https?://", lowered))
+    if url_count >= 3:
+        score += 2
+        reasons.append("many_urls")
+    elif url_count >= 1 and spam_hits >= 1:
+        score += 2
+        reasons.append("url+spam")
+
+    if len(text) > 20:
+        caps_ratio = sum(1 for char in text if char.isupper()) / max(len(text), 1)
+        if caps_ratio > 0.5:
+            score += 2
+            reasons.append("shouting_caps")
+
+    if text.count("!") / max(len(text), 1) > 0.08:
+        score += 1
+        reasons.append("exclamation_spam")
+
+    words = [word.lower() for word in re.findall(r"[a-zA-Z]+", text)]
+    repeats = sum(1 for _word, count in Counter(words).items() if count > 3)
+    if repeats:
+        score += 1
+        reasons.append("repeated_words")
+
+    if len(text) > 50:
+        entropy_ratio = len(set(text.lower())) / len(text)
+        if entropy_ratio < 0.3:
+            score += 1
+            reasons.append("low_entropy")
+
+    return {"is_spam": score >= 3, "score": score, "reasons": reasons}
+
+
+def _is_spam_feedback(text: str) -> bool:
+    return bool(_is_spam_feedback_v2(text)["is_spam"])
+
 
 def _extract_themes(text: str, focus_terms: str = "") -> list[str]:
     tokens = list(_feedback_tokens(text))
@@ -205,6 +343,8 @@ def _extract_themes(text: str, focus_terms: str = "") -> list[str]:
     priority_terms = [
         "payment", "billing", "checkout", "login", "export", "csv", "crash",
         "performance", "onboarding", "pricing", "mobile", "dashboard", "refund",
+        "summary", "dark", "mode", "api", "webhook", "integration", "sync", "import",
+        "notification", "email", "password", "account", "subscription", "cancel",
     ]
     ordered: list[str] = []
     for token in priority_terms:
@@ -218,84 +358,232 @@ def _extract_themes(text: str, focus_terms: str = "") -> list[str]:
             ordered.append(token)
     return ordered[:5]
 
-def _analyze_with_vader(text: str) -> dict:
-    """
-    Local sentiment analysis using VADER. No API key required.
-    """
-    try:
-        from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer  # type: ignore
-        analyzer = SentimentIntensityAnalyzer()
-        scores = analyzer.polarity_scores(text)
-        compound = scores["compound"]
 
-        if compound >= 0.05:
-            sentiment = "positive"
-        elif compound <= -0.05:
-            sentiment = "negative"
-        else:
-            sentiment = "neutral"
+def _software_failure_score(text: str) -> int:
+    lowered = text.lower()
+    problem_indicators = [
+        "not", "cannot", "can't", "couldn't", "won't", "isn't", "arent", "doesn't",
+        "dont", "doesnt", "didnt", "wasnt", "werent", "hasnt", "havent", "error",
+        "broken", "fail", "failed", "failure", "bug", "crash", "crashes", "crashed",
+        "blocked", "blocking", "unauthorized", "unauthorised", "not working",
+        "doesn't work", "slow", "freezes", "hangs", "stuck", "timeout", "unable to",
+        "impossible", "missing", "disappeared", "blank", "empty", "wrong",
+    ]
+    if not any(indicator in lowered for indicator in problem_indicators):
+        return 0
 
-        confidence = min(abs(compound) + 0.5, 1.0)
-
-        # Simple urgency heuristic
-        urgent_keywords = ["broken", "not working", "can't", "cannot", "urgent", "immediately",
-                           "refund", "charge", "error", "crash", "down", "bug", "lost", "critical"]
-        is_urgent = any(k in text.lower() for k in urgent_keywords) and sentiment == "negative"
-
-        draft = None
-        if sentiment == "negative":
-            draft = "Thank you for your feedback. We're sorry to hear about your experience and will address this as a priority."
-        elif sentiment == "positive":
-            draft = "Thank you for the kind words! We're glad to hear you're having a great experience."
-
-        return {
-            "sentiment": sentiment,
-            "confidence": round(confidence, 2),
-            "themes": _extract_themes(text),
-            "is_urgent": is_urgent,
-            "draft_reply": draft,
-            "engine": "vader",
-        }
-    except ImportError:
-        return _analyze_with_keywords(text)
+    patterns = [
+        r"\bcrash(?:es|ed|ing)?\b",
+        r"\bblock(?:s|ed|ing)?\b",
+        r"\bbroken\b",
+        r"\bbug(?:s)?\b",
+        r"\berror(?:s)?\b",
+        r"\bfail(?:s|ed|ing|ure)?\b",
+        r"\bunauthori[sz]ed\b",
+        r"\bnot working\b",
+        r"\bcan't\b",
+        r"\bcannot\b",
+        r"\bfreezes?\b",
+        r"\bhangs?\b",
+        r"\bstuck\b",
+        r"\btimeout\b",
+        r"\bslow\b",
+        r"\bunable to\b",
+        r"\blogin\b",
+        r"\bsign[ -]?in\b",
+    ]
+    return sum(1 for pattern in patterns if re.search(pattern, lowered))
 
 
-def _analyze_with_keywords(text: str) -> dict:
-    """Ultimate fallback: simple keyword matching. Always available."""
+def _support_draft(sentiment: str, is_urgent: bool) -> str:
+    if is_urgent:
+        return (
+            "Thanks for reaching out. We received your message and are treating it as a priority. "
+            "Our team will follow up with the next step as soon as possible."
+        )
+    if sentiment == "negative":
+        return (
+            "Thanks for sharing this. We are sorry the experience did not meet expectations. "
+            "Could you send a few more details so we can look into it quickly?"
+        )
+    if sentiment == "positive":
+        return "Thanks for the kind words. We appreciate you taking the time to share what is working well."
+    return "Thanks for the feedback. We have logged it for review and will use it while planning upcoming improvements."
+
+
+def _analyze_with_enhanced_keywords(text: str, focus_terms: str = "") -> dict:
     text_lower = text.lower()
-    positive_words = ["love", "great", "amazing", "excellent", "perfect", "best", "wonderful", "fantastic", "good", "thank"]
-    negative_words = ["bad", "terrible", "worst", "hate", "broken", "awful", "horrible", "useless", "poor", "wrong"]
-    urgent_words   = ["urgent", "immediately", "refund", "charge", "lost", "critical", "asap", "blocked"]
+    sentences = [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", text_lower) if sentence.strip()]
+    if not sentences:
+        sentences = [text_lower]
 
-    pos_score = sum(1 for w in positive_words if w in text_lower)
-    neg_score = sum(1 for w in negative_words if w in text_lower)
-    is_urgent = any(w in text_lower for w in urgent_words) and neg_score > 0
+    pos_score = 0
+    neg_score = 0
+    urgent_score = 0
 
-    if pos_score > neg_score:
-        sentiment, confidence = "positive", 0.65
-        draft = "Thank you for the kind words!"
-    elif neg_score > pos_score:
-        sentiment, confidence = "negative", 0.65
-        draft = "We're sorry about your experience. We'll look into this right away."
+    for sentence in sentences:
+        words = re.findall(r"[a-zA-Z']+", sentence)
+        sentence_pos = 0
+        sentence_neg = 0
+        sentence_urgent = 0
+
+        for index, word in enumerate(words):
+            clean = word.lower().strip("'")
+            window = words[max(0, index - 3): min(len(words), index + 4)]
+            is_negated = any(item.lower().strip("'") in NEGATION_OF_NEGATIVE for item in window)
+            is_inability = any(item.lower().strip("'") in INABILITY_WORDS for item in window)
+
+            if clean in POSITIVE_WORDS:
+                if is_negated and not is_inability:
+                    sentence_neg += 2
+                elif is_inability:
+                    sentence_neg += 1
+                else:
+                    sentence_pos += 1
+            elif clean in NEGATIVE_WORDS:
+                if is_negated and not is_inability and clean in NEGATIVE_ADJECTIVES:
+                    sentence_pos += 2
+                elif is_inability:
+                    sentence_neg += 1
+                else:
+                    sentence_neg += 1
+            elif clean in URGENT_WORDS:
+                sentence_urgent += 1
+
+        failure = _software_failure_score(sentence)
+        if failure > 0:
+            negated_failure = re.search(
+                r"\b(not|n't|never|hardly|barely)\s+\w{0,12}\s*(broken|crash|fail|bug|error|block|hang|freeze|slow)",
+                sentence,
+            )
+            if not negated_failure:
+                sentence_neg += failure
+
+        pos_score += sentence_pos
+        neg_score += sentence_neg
+        urgent_score += sentence_urgent
+
+    failure_total = _software_failure_score(text_lower)
+    if pos_score >= 2 and failure_total > 0:
+        neg_score += failure_total * 2
+        pos_score = max(0, pos_score - 2)
+
+    if neg_score > pos_score:
+        sentiment = "negative"
+        confidence = min(0.55 + 0.04 * neg_score, 0.95)
+    elif pos_score > neg_score:
+        sentiment = "positive"
+        confidence = min(0.55 + 0.04 * pos_score, 0.95)
     else:
-        sentiment, confidence = "neutral", 0.55
-        draft = None
+        sentiment = "neutral"
+        confidence = 0.55
 
+    is_urgent = (urgent_score > 0 and sentiment == "negative") or (urgent_score > 0 and failure_total > 0)
+    themes = _extract_themes(text, focus_terms)
     return {
         "sentiment": sentiment,
-        "confidence": confidence,
-        "themes": _extract_themes(text),
+        "confidence": round(confidence, 2),
+        "themes": themes,
         "is_urgent": is_urgent,
-        "draft_reply": draft,
-        "engine": "keyword",
+        "draft_reply": _support_draft(sentiment, is_urgent),
+        "engine": "enhanced_keyword",
+    }
+
+
+def _get_sentiment_pipeline():
+    global _sentiment_pipeline
+    if _sentiment_pipeline is None:
+        try:
+            from optimum.onnxruntime import ORTModelForSequenceClassification
+            from transformers import AutoTokenizer, pipeline
+
+            tokenizer = AutoTokenizer.from_pretrained(FEEDBACKLENS_SENTIMENT_MODEL)
+            model = ORTModelForSequenceClassification.from_pretrained(
+                FEEDBACKLENS_SENTIMENT_MODEL,
+                export=True,
+            )
+            _sentiment_pipeline = pipeline(
+                "sentiment-analysis",
+                model=model,
+                tokenizer=tokenizer,
+                device=-1,
+                truncation=True,
+                max_length=512,
+            )
+        except Exception as exc:
+            logger.warning("ONNX sentiment pipeline unavailable, trying transformers default: %s", exc)
+            from transformers import pipeline
+            _sentiment_pipeline = pipeline(
+                "sentiment-analysis",
+                model=FEEDBACKLENS_SENTIMENT_MODEL,
+                device=-1,
+                truncation=True,
+                max_length=512,
+            )
+    return _sentiment_pipeline
+
+
+def _get_urgency_pipeline():
+    global _urgency_pipeline
+    if _urgency_pipeline is None:
+        from transformers import pipeline
+        _urgency_pipeline = pipeline(
+            "zero-shot-classification",
+            model=FEEDBACKLENS_URGENCY_MODEL,
+            device=-1,
+        )
+    return _urgency_pipeline
+
+
+async def _analyze_with_local_transformers(text: str, focus_terms: str = "") -> dict:
+    try:
+        pipe = _get_sentiment_pipeline()
+        result = await _run_in_thread(pipe, text[:512])
+    except Exception as exc:
+        logger.warning("Local transformer sentiment unavailable, using enhanced keywords: %s", exc)
+        return _analyze_with_enhanced_keywords(text, focus_terms)
+
+    label = str(result[0].get("label", "")).lower()
+    score = float(result[0].get("score", 0.55))
+    sentiment = "positive" if "positive" in label else "negative" if "negative" in label else "neutral"
+
+    fallback = _analyze_with_enhanced_keywords(text, focus_terms)
+    failure_score = _software_failure_score(text)
+    if sentiment == "positive" and failure_score > 0 and fallback["sentiment"] == "negative":
+        sentiment = "negative"
+        score = max(score, fallback["confidence"])
+
+    try:
+        urgent_pipe = _get_urgency_pipeline()
+        urgent_result = await _run_in_thread(
+            urgent_pipe,
+            text[:512],
+            candidate_labels=["urgent technical issue", "general feedback", "compliment"],
+        )
+        is_urgent = urgent_result["labels"][0] == "urgent technical issue" and urgent_result["scores"][0] > 0.6
+    except Exception:
+        is_urgent = bool(fallback["is_urgent"])
+
+    themes = _extract_themes(text, focus_terms)
+    return {
+        "sentiment": sentiment,
+        "confidence": round(score, 2),
+        "themes": themes,
+        "is_urgent": is_urgent,
+        "draft_reply": _support_draft(sentiment, is_urgent),
+        "engine": "local_transformers",
     }
 
 
 def _analyze_feedback_locally(text: str, focus_terms: str = "") -> dict:
-    analysis = _analyze_with_vader(text)
-    if focus_terms:
-        analysis["themes"] = _extract_themes(text, focus_terms)
-    return analysis
+    return _analyze_with_enhanced_keywords(text, focus_terms)
+
+
+async def _analyze_feedback_locally_async(text: str, focus_terms: str = "") -> dict:
+    engine = os.getenv("FEEDBACKLENS_ANALYSIS_ENGINE", "enhanced_keyword").strip().lower()
+    if engine in {"local_transformers", "transformers", "distilbert"}:
+        return await _analyze_with_local_transformers(text, focus_terms)
+    return _analyze_with_enhanced_keywords(text, focus_terms)
 
 
 def _cluster_slug_for_analysis(text: str, themes: list[str] | None = None) -> str:
@@ -343,6 +631,19 @@ def _apply_local_processing(entry: FeedbackEntry, focus_terms: str = "", mention
     return analysis
 
 
+async def _apply_local_processing_async(entry: FeedbackEntry, focus_terms: str = "", mention_count: int = 1) -> dict:
+    analysis = await _analyze_feedback_locally_async(entry.text, focus_terms)
+    entry.sentiment = analysis["sentiment"]
+    entry.confidence = analysis["confidence"]
+    entry.themes_json = json.dumps(analysis["themes"])
+    entry.is_urgent = analysis["is_urgent"]
+    entry.draft_reply = analysis.get("draft_reply")
+    entry.analysis_engine = analysis["engine"]
+    entry.cluster_slug = _cluster_slug_for_analysis(entry.text, analysis["themes"])
+    entry.priority = _priority_for_analysis(analysis, mention_count)
+    return analysis
+
+
 def _combine_feedback_text(title: str = "", body: str = "") -> str:
     pieces = [title.strip(), body.strip()]
     return "\n\n".join(piece for piece in pieces if piece)
@@ -359,13 +660,6 @@ def _source_poll_frequency_hours(source_type: str) -> int | None:
     }.get(source_type)
 
 
-def _is_spam_feedback(text: str) -> bool:
-    lowered = text.lower()
-    spam_hits = sum(1 for term in SPAM_TERMS if term in lowered)
-    url_count = len(re.findall(r"https?://", lowered))
-    return spam_hits >= 2 or (spam_hits >= 1 and url_count >= 2)
-
-
 def _sentence_split(text: str) -> list[str]:
     return [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", text) if sentence.strip()]
 
@@ -375,14 +669,16 @@ def _clean_feedback_text(text: str) -> str:
     normalized = re.sub(r"\s+", " ", normalized).strip()
     if not normalized:
         return ""
-    if _is_spam_feedback(normalized):
-        raise HTTPException(status_code=400, detail="Feedback rejected as spam")
+    spam_check = _is_spam_feedback_v2(normalized)
+    if spam_check["is_spam"]:
+        raise HTTPException(status_code=400, detail=f"Feedback rejected as spam: {spam_check['reasons']}")
     if len(normalized) <= FEEDBACK_TEXT_LIMIT:
         return normalized
 
     key_terms = (
         "bug", "broken", "crash", "refund", "payment", "billing", "checkout", "login",
         "export", "csv", "urgent", "blocked", "error", "slow", "pricing", "feature",
+        "security", "breach", "hack", "stolen", "fraud", "outage", "down",
     )
     sentences = _sentence_split(normalized)
     selected: list[str] = []
@@ -552,7 +848,8 @@ async def _enforce_feedback_limit(user: User, incoming_count: int, session: Asyn
 
 
 def _serialize(entry: FeedbackEntry) -> dict:
-    analyzed_at = entry.created_at.isoformat() if entry.sentiment else None
+    created_at = _as_aware_utc(entry.created_at) or _utc_now()
+    analyzed_at = created_at.isoformat() if entry.sentiment else None
     return {
         "id": entry.id,
         "text": entry.text,
@@ -563,7 +860,7 @@ def _serialize(entry: FeedbackEntry) -> dict:
         "draft_reply": entry.draft_reply,
         "analysis_engine": entry.analysis_engine,
         "analyzed_at": analyzed_at,
-        "created_at": entry.created_at.isoformat(),
+        "created_at": created_at.isoformat(),
         "source": getattr(entry, "source", "manual"),
         "author": getattr(entry, "author", ""),
         "source_url": getattr(entry, "source_url", ""),
@@ -622,7 +919,109 @@ def _semantic_similarity(left: str, right: str) -> float:
     return max(sequence_ratio, jaccard, weighted_overlap)
 
 
+def _simhash_tokens(text: str) -> list[str]:
+    tokens = sorted(_feedback_tokens(text))
+    bigrams = [f"{tokens[index]}:{tokens[index + 1]}" for index in range(len(tokens) - 1)]
+    return tokens + bigrams
+
+
+def _simhash(text: str) -> int:
+    features = _simhash_tokens(text)
+    if not features:
+        return 0
+    weights = [0] * 64
+    for feature in features:
+        digest = hashlib.sha256(feature.encode("utf-8")).digest()
+        value = int.from_bytes(digest[:8], "big")
+        for bit in range(64):
+            weights[bit] += 1 if value & (1 << bit) else -1
+    fingerprint = 0
+    for bit, weight in enumerate(weights):
+        if weight >= 0:
+            fingerprint |= 1 << bit
+    return fingerprint
+
+
+def _hamming_distance(left: int, right: int) -> int:
+    return (left ^ right).bit_count()
+
+
+def _find_duplicate_simhash(text: str, candidates: list[FeedbackEntry]) -> FeedbackEntry | None:
+    text_hash = _simhash(text)
+    text_features = set(_simhash_tokens(text))
+    best_match = None
+    best_score = 0.0
+    best_distance = 65
+
+    for candidate in candidates:
+        candidate_text = getattr(candidate, "text", "") or ""
+        candidate_features = set(_simhash_tokens(candidate_text))
+        if not text_features or not candidate_features:
+            continue
+
+        distance = _hamming_distance(text_hash, _simhash(candidate_text))
+        intersection = text_features & candidate_features
+        overlap = len(intersection) / min(len(text_features), len(candidate_features))
+        semantic_score = _semantic_similarity(text, candidate_text)
+
+        if distance <= SIMHASH_HAMMING_THRESHOLD or (len(intersection) >= 3 and overlap >= 0.55):
+            candidate_score = max(semantic_score, overlap, 1 - (distance / 64))
+            if candidate_score > best_score or (candidate_score == best_score and distance < best_distance):
+                best_score = candidate_score
+                best_distance = distance
+                best_match = candidate
+
+    if best_match and best_score >= 0.55:
+        return best_match
+    return None
+
+
+def _get_embedder():
+    global _embedder
+    if _embedder is None:
+        from transformers import AutoModel, AutoTokenizer
+        model_name = os.getenv("FEEDBACKLENS_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModel.from_pretrained(model_name)
+        _embedder = (tokenizer, model)
+    return _embedder
+
+
+async def _find_duplicate_embedding(text: str, candidates: list[FeedbackEntry]) -> FeedbackEntry | None:
+    if not candidates or len(candidates) > 50:
+        return None
+    try:
+        tokenizer, model = _get_embedder()
+        import torch
+
+        def embed(value: str):
+            encoded = tokenizer(value, return_tensors="pt", truncation=True, max_length=256)
+            with torch.no_grad():
+                output = model(**encoded)
+            vector = output.last_hidden_state.mean(dim=1)
+            return vector / vector.norm(dim=1, keepdim=True)
+
+        text_vector = await _run_in_thread(embed, text)
+        best_match = None
+        best_score = 0.0
+        for candidate in candidates:
+            candidate_vector = await _run_in_thread(embed, getattr(candidate, "text", "") or "")
+            score = float((text_vector @ candidate_vector.T).item())
+            if score > best_score:
+                best_score = score
+                best_match = candidate
+        if best_match and best_score >= 0.86:
+            return best_match
+    except Exception as exc:
+        logger.debug("Feedback embedding dedupe unavailable: %s", exc)
+    return None
+
+
 def _find_semantic_duplicate(text: str, candidates: list[FeedbackEntry]) -> FeedbackEntry | None:
+    simhash_duplicate = _find_duplicate_simhash(text, candidates)
+    if simhash_duplicate:
+        return simhash_duplicate
+
     best_match = None
     best_score = 0.0
     for candidate in candidates:
@@ -741,10 +1140,13 @@ def _build_cluster_payloads(entries: list[object]) -> list[dict]:
             }
             for member in members[:5]
         ]
-        last_seen = max((getattr(member, "created_at", _utc_now()) for member in members), default=_utc_now())
+        last_seen = max(
+            (_as_aware_utc(getattr(member, "created_at", None)) or _utc_now() for member in members),
+            default=_utc_now(),
+        )
         payloads.append({
             "id": cluster_id,
-            "label": cluster_id.replace("-", " "),
+            "label": cluster_id.replace("-", " ").title(),
             "priority": priority,
             "mention_count": len(members),
             "last_activity": last_seen.isoformat() if hasattr(last_seen, "isoformat") else str(last_seen),
@@ -765,7 +1167,7 @@ def _build_digest_payload(entries: list[object]) -> dict:
     high = [cluster for cluster in clusters if cluster["priority"] == "high"]
     low = [cluster for cluster in clusters if cluster["priority"] == "low"]
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": _utc_now().isoformat(),
         "urgent": urgent,
         "high": high,
         "low": low,
@@ -925,8 +1327,11 @@ def _source_is_due(source: FeedbackSource, now: datetime | None = None) -> bool:
         return False
     if not source.last_polled_at:
         return True
-    current = now or _utc_now()
-    return source.last_polled_at <= current - timedelta(hours=frequency)
+    current = _as_aware_utc(now) or _utc_now()
+    last_polled = _as_aware_utc(source.last_polled_at)
+    if not last_polled:
+        return True
+    return last_polled <= current - timedelta(hours=frequency)
 
 
 async def poll_feedback_sources() -> dict:
@@ -1040,6 +1445,9 @@ async def update_feedback_prefs(body: FeedbackPrefsUpdate, user: User = Depends(
 
 def _serialize_source(source: FeedbackSource) -> dict:
     config = json.loads(source.config_json or "{}")
+    created_at = _as_aware_utc(source.created_at) or _utc_now()
+    updated_at = _as_aware_utc(source.updated_at) or created_at
+    last_polled_at = _as_aware_utc(source.last_polled_at)
     payload = {
         "id": source.id,
         "source_type": source.source_type,
@@ -1048,9 +1456,9 @@ def _serialize_source(source: FeedbackSource) -> dict:
         "status": source.status,
         "poll_frequency_hours": _source_poll_frequency_hours(source.source_type),
         "config": config,
-        "created_at": source.created_at.isoformat(),
-        "updated_at": source.updated_at.isoformat(),
-        "last_polled_at": source.last_polled_at.isoformat() if source.last_polled_at else None,
+        "created_at": created_at.isoformat(),
+        "updated_at": updated_at.isoformat(),
+        "last_polled_at": last_polled_at.isoformat() if last_polled_at else None,
     }
     if source.source_type == "email":
         payload["forward_address"] = f"feedback-{source.forward_token}@feedbacklens.devforgeapp.pro"
@@ -1145,7 +1553,7 @@ async def _create_processed_feedback(
         source_url=source_url,
         source_message_id=source_message_id,
     )
-    _apply_local_processing(entry, mention_count=1)
+    await _apply_local_processing_async(entry, mention_count=1)
     session.add(entry)
     await session.flush()
     await session.refresh(entry)
@@ -1434,7 +1842,7 @@ async def connect_twitter(body: TwitterConnectRequest, user: User = Depends(get_
     client_id = _twitter_client_id()
     redirect_uri = body.redirect_uri or os.getenv("FEEDBACKLENS_TWITTER_REDIRECT_URI", "")
     if not client_id or not redirect_uri:
-        raise HTTPException(status_code=500, detail="Twitter/X OAuth client is not configured.")
+        raise HTTPException(status_code=503, detail="Twitter/X OAuth client is not configured.")
     state = uuid.uuid4().hex
     code_verifier, code_challenge = _pkce_pair()
     query = body.query or body.handle
@@ -1477,7 +1885,7 @@ async def connect_reddit(body: RedditConnectRequest, user: User = Depends(get_cu
     client_id = _reddit_client_id()
     redirect_uri = body.redirect_uri or os.getenv("FEEDBACKLENS_REDDIT_REDIRECT_URI", "")
     if not client_id or not redirect_uri:
-        raise HTTPException(status_code=500, detail="Reddit OAuth client is not configured.")
+        raise HTTPException(status_code=503, detail="Reddit OAuth client is not configured.")
     state = uuid.uuid4().hex
     query = body.query or body.subreddit
     config = {
@@ -1517,7 +1925,7 @@ async def connect_github(body: GitHubConnectRequest, user: User = Depends(get_cu
     client_id = os.getenv("FEEDBACKLENS_GITHUB_CLIENT_ID") or os.getenv("GITHUB_CLIENT_ID")
     redirect_uri = body.redirect_uri or os.getenv("FEEDBACKLENS_GITHUB_REDIRECT_URI", "")
     if not client_id:
-        raise HTTPException(status_code=500, detail="GitHub OAuth client is not configured.")
+        raise HTTPException(status_code=503, detail="GitHub OAuth client is not configured.")
     state = uuid.uuid4().hex
     config = {"repo": body.repo, "oauth_state": state, "redirect_uri": redirect_uri}
     source = FeedbackSource(
@@ -1540,7 +1948,7 @@ def _exchange_oauth_code(provider: str, code: str, redirect_uri: str = "", code_
         client_id = os.getenv("FEEDBACKLENS_GITHUB_CLIENT_ID") or os.getenv("GITHUB_CLIENT_ID", "")
         client_secret = os.getenv("FEEDBACKLENS_GITHUB_CLIENT_SECRET") or os.getenv("GITHUB_CLIENT_SECRET", "")
         if not client_id or not client_secret:
-            raise HTTPException(status_code=500, detail="GitHub OAuth client is not configured.")
+            raise HTTPException(status_code=503, detail="GitHub OAuth client is not configured.")
         payload = {"client_id": client_id, "client_secret": client_secret, "code": code}
         if redirect_uri:
             payload["redirect_uri"] = redirect_uri
@@ -1549,7 +1957,7 @@ def _exchange_oauth_code(provider: str, code: str, redirect_uri: str = "", code_
     if provider == "twitter":
         client_id = _twitter_client_id()
         if not client_id or not redirect_uri or not code_verifier:
-            raise HTTPException(status_code=500, detail="Twitter/X OAuth client is not configured.")
+            raise HTTPException(status_code=503, detail="Twitter/X OAuth client is not configured.")
         payload = {
             "grant_type": "authorization_code",
             "client_id": client_id,
@@ -1568,7 +1976,7 @@ def _exchange_oauth_code(provider: str, code: str, redirect_uri: str = "", code_
         client_id = _reddit_client_id()
         client_secret = _reddit_client_secret()
         if not client_id or not client_secret or not redirect_uri:
-            raise HTTPException(status_code=500, detail="Reddit OAuth client is not configured.")
+            raise HTTPException(status_code=503, detail="Reddit OAuth client is not configured.")
         return _http_form_json(
             "https://www.reddit.com/api/v1/access_token",
             payload={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri},
@@ -1669,7 +2077,7 @@ async def analyze_feedback(entry_id: int, user: User = Depends(get_current_user)
 
     prefs_result = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == user.id))
     prefs = prefs_result.scalar_one_or_none()
-    analysis = _analyze_feedback_locally(entry.text, getattr(prefs, "custom_prompt", ""))
+    analysis = await _analyze_feedback_locally_async(entry.text, getattr(prefs, "custom_prompt", ""))
 
     entry.sentiment = analysis["sentiment"]
     entry.confidence = analysis["confidence"]
@@ -1704,7 +2112,7 @@ async def process_feedback_analysis(payload: dict):
         prefs = s_res.scalar_one_or_none()
         custom_prompt = getattr(prefs, "custom_prompt", "")
 
-        analysis = _analyze_feedback_locally(entry.text, custom_prompt)
+        analysis = await _analyze_feedback_locally_async(entry.text, custom_prompt)
 
         entry.sentiment = analysis["sentiment"]
         entry.confidence = analysis["confidence"]
@@ -1773,7 +2181,7 @@ async def get_weekly_summary(user: User = Depends(get_current_user), session: As
         return {
             "summary_text": "No feedback received this week.",
             "total": 0,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": _utc_now().isoformat(),
             "sentiment_stats": {"positive": 0, "negative": 0, "neutral": 0},
             "top_themes": [],
             "urgent_count": 0,
@@ -1809,7 +2217,7 @@ async def get_weekly_summary(user: User = Depends(get_current_user), session: As
     return {
         "summary_text": summary,
         "total": len(entries),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": _utc_now().isoformat(),
         "sentiment_stats": sentiments,
         "top_themes": top_themes,
         "urgent_count": urgent_count,
@@ -1818,7 +2226,7 @@ async def get_weekly_summary(user: User = Depends(get_current_user), session: As
 
 
 def _aware_utc(now: datetime | None = None) -> datetime:
-    current = now or datetime.now(timezone.utc)
+    current = now or _utc_now()
     if current.tzinfo is None:
         return current.replace(tzinfo=timezone.utc)
     return current.astimezone(timezone.utc)
@@ -1854,7 +2262,7 @@ async def weekly_summary_cron(now: datetime | None = None):
         )
         all_prefs = prefs_result.scalars().all()
 
-        one_week_ago = _utc_now() - timedelta(days=7)
+        one_week_ago = current_utc - timedelta(days=7)
 
         for prefs in all_prefs:
             if not prefs.alert_email:
@@ -1895,7 +2303,7 @@ async def weekly_summary_cron(now: datetime | None = None):
             """
             try:
                 send_email(to=prefs.alert_email, subject="📊 Your Weekly Feedback Digest", html_body=html)
-                prefs.last_weekly_digest_at = current_utc.replace(tzinfo=None)
+                prefs.last_weekly_digest_at = current_utc
                 session.add(prefs)
             except Exception as e:
                 logger.error(f"Failed to send weekly digest to {prefs.alert_email}: {e}")
@@ -1936,17 +2344,20 @@ async def export_feedback(
     )
     entries = result.scalars().all()
 
-    rows = [{
-        "id": e.id,
-        "text": e.text,
-        "sentiment": e.sentiment or "",
-        "confidence": round(e.confidence * 100, 1) if e.confidence else None,
-        "themes": ", ".join(json.loads(e.themes_json or "[]")),
-        "is_urgent": e.is_urgent,
-        "draft_reply": e.draft_reply or "",
-        "analysis_engine": e.analysis_engine or "",
-        "created_at": e.created_at.isoformat(),
-    } for e in entries]
+    rows = []
+    for e in entries:
+        created_at = _as_aware_utc(e.created_at) or _utc_now()
+        rows.append({
+            "id": e.id,
+            "text": e.text,
+            "sentiment": e.sentiment or "",
+            "confidence": round(e.confidence * 100, 1) if e.confidence else None,
+            "themes": ", ".join(json.loads(e.themes_json or "[]")),
+            "is_urgent": e.is_urgent,
+            "draft_reply": e.draft_reply or "",
+            "analysis_engine": e.analysis_engine or "",
+            "created_at": created_at.isoformat(),
+        })
 
     if format == "json":
         return StreamingResponse(
@@ -2127,7 +2538,7 @@ async def generate_draft_reply(
 
 app = create_app(
     title="Feedback Lens",
-    description="Local sentiment analysis with VADER and deterministic fallbacks.",
+    description="Enhanced local sentiment analysis with optional DistilBERT transformers and deterministic fallbacks.",
     domain_routers=[
         feedback_router,
         settings_router,

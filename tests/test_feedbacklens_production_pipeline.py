@@ -1,6 +1,6 @@
 import sys
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -114,10 +114,71 @@ class FeedbackLensProductionPipelineTests(unittest.TestCase):
 
         self.assertEqual(analyzed.status_code, 200)
         self.assertEqual(drafted.status_code, 200)
-        self.assertIn(analyzed.json()["analysis_engine"], {"vader", "keyword"})
+        self.assertIn(analyzed.json()["analysis_engine"], {"enhanced_keyword", "local_transformers", "keyword"})
         self.assertNotEqual(analyzed.json()["analysis_engine"], "gemini")
         self.assertTrue(drafted.json()["draft_reply"])
         self.assertNotIn("Gemini", drafted.json()["draft_reply"])
+
+    def test_software_failure_words_outweigh_single_positive_phrase(self):
+        analysis = feedback_main._analyze_feedback_locally(
+            "The mobile app crashes every time I try to export a PDF. "
+            "This is blocking our entire sales team. Also, dark mode is amazing "
+            "but the contrast is too low. Please fix the export ASAP."
+        )
+
+        self.assertEqual(analysis["sentiment"], "negative")
+        self.assertTrue(analysis["is_urgent"])
+        self.assertIn("export", analysis["themes"])
+
+    def test_refactor_uses_timezone_aware_enhanced_keyword_engine_without_vader(self):
+        backend = (ROOT / "apps" / "feedbacklens" / "backend" / "main.py").read_text(encoding="utf-8")
+
+        self.assertIsNotNone(feedback_main._utc_now().tzinfo)
+        self.assertEqual(feedback_main._utc_now().utcoffset(), timezone.utc.utcoffset(None))
+        self.assertNotIn("vaderSentiment", backend)
+
+        analysis = feedback_main._analyze_feedback_locally("The export flow is not bad and works perfectly.")
+        self.assertEqual(analysis["sentiment"], "positive")
+        self.assertEqual(analysis["engine"], "enhanced_keyword")
+
+    def test_spam_detector_returns_score_and_reasons(self):
+        result = feedback_main._is_spam_feedback_v2(
+            "BUY NOW click here limited offer http://spam.example http://bad.example !!!"
+        )
+
+        self.assertTrue(result["is_spam"])
+        self.assertGreaterEqual(result["score"], 3)
+        self.assertTrue(result["reasons"])
+
+    def test_simhash_duplicate_detector_catches_large_batch_duplicates(self):
+        candidates = [
+            feedback_main.FeedbackEntry(id=1, user_id=42, text="Checkout crashes when I add my card"),
+            feedback_main.FeedbackEntry(id=2, user_id=42, text="Weekly summary is useful"),
+        ]
+
+        duplicate = feedback_main._find_duplicate_simhash("The checkout crashed after adding a card", candidates)
+
+        self.assertIsNotNone(duplicate)
+        self.assertEqual(duplicate.id, 1)
+
+    def test_auth_failure_feedback_is_negative_and_urgent(self):
+        analysis = feedback_main._analyze_feedback_locally(
+            "I cannot login with my Google account. It says Unauthorized but I paid for Pro. Help!"
+        )
+
+        self.assertEqual(analysis["sentiment"], "negative")
+        self.assertTrue(analysis["is_urgent"])
+        self.assertIn("login", analysis["themes"])
+
+    def test_unconfigured_oauth_connectors_return_service_unavailable(self):
+        backend = (ROOT / "apps" / "feedbacklens" / "backend" / "main.py").read_text(encoding="utf-8")
+
+        self.assertIn('status_code=503, detail="Twitter/X OAuth client is not configured."', backend)
+        self.assertIn('status_code=503, detail="Reddit OAuth client is not configured."', backend)
+        self.assertIn('status_code=503, detail="GitHub OAuth client is not configured."', backend)
+        self.assertNotIn('status_code=500, detail="Twitter/X OAuth client is not configured."', backend)
+        self.assertNotIn('status_code=500, detail="Reddit OAuth client is not configured."', backend)
+        self.assertNotIn('status_code=500, detail="GitHub OAuth client is not configured."', backend)
 
     def test_dedupe_summary_endpoint_groups_near_duplicates(self):
         rows = [

@@ -18,9 +18,14 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+function minimumUsagePercentage(used: number, limit: number) {
+  if (limit <= 0 || used <= 0) return 0;
+  return Math.min(100, Math.max(1, Math.round((used / limit) * 100)));
+}
+
 export function UsageQuotaCard({ label, used, limit, unit = "", caption, mode = "usage", tone = "accent" }: UsageQuotaCardProps) {
   const isCapacity = mode === "capacity";
-  const percentage = limit <= 0 || isCapacity ? 0 : Math.min(100, Math.round((used / limit) * 100));
+  const percentage = isCapacity ? 0 : minimumUsagePercentage(used, limit);
   const displayValue = isCapacity ? limit : used;
   const color = toneColor[tone];
 
@@ -31,7 +36,7 @@ export function UsageQuotaCard({ label, used, limit, unit = "", caption, mode = 
           {label}
         </p>
         <span className="text-xs font-semibold" style={{ color }}>
-          {isCapacity ? "Plan limit" : `${percentage}%`}
+          {isCapacity ? "Included" : `${percentage}%`}
         </span>
       </div>
       {isCapacity ? (

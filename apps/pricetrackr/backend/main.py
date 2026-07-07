@@ -1,7 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,17 @@ from pydantic import BaseModel
 from typing import Optional, List, Literal
 from datetime import datetime, timezone, timedelta
 import asyncio, logging, io, json, random, uuid, re
+from collections import defaultdict
+from time import time as _monotonic_time
 import pandas as pd
+import httpx
+from bs4 import BeautifulSoup
+from botocore.config import Config as BotoConfig
+
+try:
+    from curl_cffi.requests import AsyncSession as CurlAsyncSession
+except Exception:  # pragma: no cover - optional dependency in local test envs
+    CurlAsyncSession = None
 
 from backend_core import create_app, get_current_user, get_session, User, scraper, require_product_access, get_settings
 from backend_core.database import get_managed_session
@@ -35,6 +45,11 @@ settings = get_settings()
 # (PriceHistory is a new table — created automatically by SQLModel)
 
 
+def _utc_now() -> datetime:
+    """Return timezone-aware UTC now, stripped to naive for DB compat."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class TrackedUrl(SQLModel, table=True):
     __tablename__ = "tracked_urls"
     __table_args__ = {"extend_existing": True}
@@ -51,7 +66,8 @@ class TrackedUrl(SQLModel, table=True):
     check_frequency_hours: int = Field(default=24)  # 1, 6, 12, or 24 hours
     alert_threshold: Optional[float] = None
     status: str = Field(default="active")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
+    deleted_at: Optional[datetime] = None      # soft delete timestamp
 
     # New fields for Rev. 3 spec
     selector_1: Optional[str] = None
@@ -61,7 +77,7 @@ class TrackedUrl(SQLModel, table=True):
     is_public: bool = Field(default=True)
     slack_webhook_url: Optional[str] = None
     discord_webhook_url: Optional[str] = None
-    slug: Optional[str] = None
+    slug: Optional[str] = Field(default=None, sa_column_kwargs={"unique": True})
 
     # Flagged review fields
     pending_price: Optional[float] = None
@@ -76,7 +92,7 @@ class PriceHistory(SQLModel, table=True):
     tracker_id: int = Field(index=True)
     price: Optional[float] = None
     in_stock: Optional[bool] = None
-    recorded_at: datetime = Field(default_factory=datetime.utcnow)
+    recorded_at: datetime = Field(default_factory=_utc_now, index=True)
     text_content: Optional[str] = None
     metadata_json: str = Field(default="{}")
 
@@ -94,7 +110,7 @@ class ScrapeLog(SQLModel, table=True):
     __table_args__ = {"extend_existing": True}
     id: Optional[int] = Field(default=None, primary_key=True)
     tracker_id: int = Field(index=True)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=_utc_now)
     user_agent: str
     status_code: int
     retry: bool
@@ -117,7 +133,7 @@ class PriceTrackrExportJob(SQLModel, table=True):
     format: str = Field(default="csv")      # csv, xlsx, json
     r2_url: Optional[str] = None
     error_message: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
     completed_at: Optional[datetime] = None
 
 
@@ -212,15 +228,17 @@ async def run_price_updates():
     """Cron job: enqueues price checks for trackers whose next_check_at <= NOW()."""
     from datetime import timedelta
     async with get_managed_session() as session:
-        # Check control lock
-        ctrl_res = await session.execute(select(ScrapeControl).where(ScrapeControl.id == 1))
+        # Check control lock with FOR UPDATE to prevent race conditions
+        ctrl_res = await session.execute(
+            select(ScrapeControl).where(ScrapeControl.id == 1).with_for_update()
+        )
         ctrl = ctrl_res.scalar_one_or_none()
         if not ctrl:
             ctrl = ScrapeControl(id=1, locked_at=None)
             session.add(ctrl)
             await session.flush()
 
-        now = datetime.utcnow()
+        now = _utc_now()
         if ctrl.locked_at is not None:
             if now - ctrl.locked_at < timedelta(minutes=5):
                 logger.info("Scraping lock is active and younger than 5 minutes. Skipping.")
@@ -233,82 +251,83 @@ async def run_price_updates():
         session.add(ctrl)
         await session.flush()
 
-        # Only fetch trackers that are due for a check
-        result = await session.execute(
-            select(TrackedUrl).where(
-                TrackedUrl.status == "active",
-                (TrackedUrl.next_check_at == None) | (TrackedUrl.next_check_at <= now),  # noqa: E711
+        try:
+            # Queue pressure check BEFORE updating next_check_at
+            pending_res = await session.execute(
+                select(func.count(TrackedUrl.id)).where(
+                    TrackedUrl.status == "active",
+                    TrackedUrl.deleted_at == None,  # noqa: E711
+                    (TrackedUrl.next_check_at == None) | (TrackedUrl.next_check_at <= now),
+                )
             )
-        )
-        trackers = result.scalars().all()
-        logger.info(f"Price cron: {len(trackers)} trackers due for check, enqueueing jobs...")
+            pending_count = pending_res.scalar_one()
 
-        for t in trackers:
-            job = SystemOutbox(
-                app_name="pricetrackr",
-                job_type="price_check",
-                payload={"tracker_id": t.id, "url": t.url},
-                status="pending"
+            # Only fetch trackers that are due for a check
+            result = await session.execute(
+                select(TrackedUrl).where(
+                    TrackedUrl.status == "active",
+                    TrackedUrl.deleted_at == None,  # noqa: E711
+                    (TrackedUrl.next_check_at == None) | (TrackedUrl.next_check_at <= now),  # noqa: E711
+                )
             )
-            session.add(job)
+            trackers = result.scalars().all()
+            logger.info(f"Price cron: {len(trackers)} trackers due for check, enqueueing jobs...")
 
-            # Anti-duplicate: Set next check to future immediately
-            t.next_check_at = datetime.utcnow() + timedelta(hours=t.check_frequency_hours)
-            session.add(t)
+            for t in trackers:
+                job = SystemOutbox(
+                    app_name="pricetrackr",
+                    job_type="price_check",
+                    payload={"tracker_id": t.id, "url": t.url},
+                    status="pending"
+                )
+                session.add(job)
 
-        # Queue pressure check
-        one_hour_ago = now - timedelta(hours=1)
-        # Pendientes
-        pending_res = await session.execute(
-            select(func.count(TrackedUrl.id)).where(
-                TrackedUrl.status == "active",
-                (TrackedUrl.next_check_at == None) | (TrackedUrl.next_check_at <= now)
+                # Anti-duplicate: Set next check to future immediately
+                t.next_check_at = _utc_now() + timedelta(hours=t.check_frequency_hours)
+                session.add(t)
+
+            # Procesadas
+            one_hour_ago = now - timedelta(hours=1)
+            processed_res = await session.execute(
+                select(func.count(ScrapeLog.id)).where(ScrapeLog.timestamp >= one_hour_ago)
             )
-        )
-        pending_count = pending_res.scalar_one()
+            processed_count = processed_res.scalar_one()
 
-        # Procesadas
-        processed_res = await session.execute(
-            select(func.count(ScrapeLog.id)).where(ScrapeLog.timestamp >= one_hour_ago)
-        )
-        processed_count = processed_res.scalar_one()
+            # Ensure we have at least 3 runs of history to calculate pressure
+            total_logs_res = await session.execute(select(func.count(ScrapeLog.id)))
+            total_logs_count = total_logs_res.scalar_one()
 
-        # Ensure we have at least 3 runs of history to calculate pressure (to prevent division by zero or noisy alerts at bootstrap)
-        total_logs_res = await session.execute(select(func.count(ScrapeLog.id)))
-        total_logs_count = total_logs_res.scalar_one()
+            if total_logs_count >= 3 and processed_count > 0:
+                pressure = pending_count / processed_count
+                logger.info(f"Queue pressure: {pressure:.2f} (pending: {pending_count}, processed last hour: {processed_count})")
+                if pressure > 1.5:
+                    logger.warning(f"High queue pressure detected: {pressure:.2f}")
 
-        if total_logs_count >= 3 and processed_count > 0:
-            pressure = pending_count / processed_count
-            logger.info(f"Queue pressure: {pressure:.2f} (pending: {pending_count}, processed last hour: {processed_count})")
-            if pressure > 1.5:
-                logger.warning(f"High queue pressure detected: {pressure:.2f}")
-
-            if pressure > 2.0:
-                ctrl.consecutive_high_pressure += 1
-                if ctrl.consecutive_high_pressure >= 3:
-                    # Alert admin
-                    admin_email = os.getenv("SMTP_FROM", "admin@pricetrackr.com")
-                    try:
-                        await asyncio.to_thread(
-                            send_email,
-                            to=admin_email,
-                            subject="⚠️ CRITICAL: High Queue Pressure in PriceTrackr",
-                            html_body=(
-                                f"<p>Queue pressure has been above 2.0 for 3 consecutive runs.</p>"
-                                f"<p>Current pressure: <strong>{pressure:.2f}</strong></p>"
-                                f"<p>Please consider upgrading to Render Starter or reducing check frequencies.</p>"
+                if pressure > 2.0:
+                    ctrl.consecutive_high_pressure += 1
+                    if ctrl.consecutive_high_pressure >= 3:
+                        admin_email = os.getenv("SMTP_FROM", "admin@pricetrackr.com")
+                        try:
+                            await asyncio.to_thread(
+                                send_email,
+                                to=admin_email,
+                                subject="⚠️ CRITICAL: High Queue Pressure in PriceTrackr",
+                                html_body=(
+                                    f"<p>Queue pressure has been above 2.0 for 3 consecutive runs.</p>"
+                                    f"<p>Current pressure: <strong>{pressure:.2f}</strong></p>"
+                                    f"<p>Please consider upgrading to Render Starter or reducing check frequencies.</p>"
+                                )
                             )
-                        )
-                        logger.critical("High queue pressure alert sent to admin.")
-                    except Exception as e:
-                        logger.error(f"Failed to send admin pressure alert: {e}")
-            else:
-                ctrl.consecutive_high_pressure = 0
-
-        # Release lock at the end of enqueuing
-        ctrl.locked_at = None
-        session.add(ctrl)
-        await session.commit()
+                            logger.critical("High queue pressure alert sent to admin.")
+                        except Exception as e:
+                            logger.error(f"Failed to send admin pressure alert: {e}")
+                else:
+                    ctrl.consecutive_high_pressure = 0
+        finally:
+            # Release lock even on exception (Bug 11 fix)
+            ctrl.locked_at = None
+            session.add(ctrl)
+            await session.commit()
 
 
 PRICE_REGEX = re.compile(
@@ -320,7 +339,10 @@ def extract_price(text: str) -> float | None:
     cleaned = text.strip().replace("\xa0", " ")
     match = PRICE_REGEX.search(cleaned)
     if match:
-        num_str = match.group(1).replace(" ", "")
+        num_str = match.group(1)
+        # Handle European space-separated thousands: "1 234,56" -> "1234.56"
+        if " " in num_str:
+            num_str = num_str.replace(" ", "")
         if "," in num_str and "." in num_str:
             if num_str.rfind(",") > num_str.rfind("."):
                 num_str = num_str.replace(".", "").replace(",", ".")
@@ -340,10 +362,88 @@ def extract_price(text: str) -> float | None:
     return None
 
 
-ALERT_CACHE = {}  # Deprecated in favor of DB rate limiting, kept for backward compatibility
+# Rate limiting for public SVG endpoint (per-IP, in-memory token bucket)
+_SVG_RATE_LIMITS: dict[str, list[float]] = defaultdict(list)
+_SVG_RATE_WINDOW = 60  # seconds
+_SVG_RATE_MAX = 30     # max requests per window
+_TAKEDOWN_RATE_LIMITS: dict[str, list[float]] = defaultdict(list)
+_TAKEDOWN_RATE_WINDOW = 60 * 60
+_TAKEDOWN_RATE_MAX = 5
+MAX_HTML_BYTES = 1024 * 1024
+
+
+def _rate_limit_or_429(bucket: dict[str, list[float]], key: str, *, window: int, max_requests: int) -> None:
+    now_ts = _monotonic_time()
+    bucket[key] = [ts for ts in bucket[key] if now_ts - ts < window]
+    if len(bucket[key]) >= max_requests:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    bucket[key].append(now_ts)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip() or "unknown"
+    return request.client.host if request.client else "unknown"
+
+
+def _validate_webhook_url(value: str | None, field_name: str) -> str | None:
+    if not value:
+        return None
+    cleaned = value.strip()
+    if not is_public_http_url(cleaned):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a public http(s) URL")
+    return cleaned
+
+
+def _detect_scrape_block(status_code: int, html_text: str) -> str | None:
+    text_lower = (html_text or "").lower()
+    if status_code in {401, 403, 429}:
+        return "blocked"
+    block_markers = [
+        "captcha",
+        "cf-challenge",
+        "cloudflare",
+        "datadome",
+        "perimeterx",
+        "verify you are human",
+        "access denied",
+        "unusual traffic",
+    ]
+    if any(marker in text_lower for marker in block_markers):
+        return "blocked"
+    return None
+
+
+async def _fetch_product_html(url: str, headers: dict[str, str], *, timeout: float = 15.0) -> tuple[int, str, bool]:
+    """Fetch static product HTML using curl_cffi impersonation when available, then httpx fallback."""
+    if CurlAsyncSession is not None:
+        try:
+            async with CurlAsyncSession(impersonate="chrome120", timeout=timeout) as client:
+                response = await client.get(url, headers=headers, allow_redirects=True)
+                return response.status_code, response.text[:MAX_HTML_BYTES], True
+        except Exception as exc:
+            logger.info("curl_cffi fetch failed for %s, falling back to httpx: %s", url, exc)
+
+    async with httpx.AsyncClient(
+        headers=headers,
+        follow_redirects=True,
+        timeout=timeout,
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+    ) as client:
+        response = await client.get(url)
+        return response.status_code, response.text[:MAX_HTML_BYTES], False
+
+
+def _select_one(soup: BeautifulSoup, selector: str):
+    try:
+        return soup.select_one(selector)
+    except Exception:
+        logger.warning("Ignoring invalid CSS selector: %s", selector)
+        return None
 
 async def trigger_alerts(t: TrackedUrl, previous_price: float | None, new_price: float | None, previous_stock: bool | None, new_stock: bool | None, last_text: str | None, new_text: str | None, session: AsyncSession):
-    now = datetime.utcnow()
+    now = _utc_now()
 
     # 1. Determine alert conditions
     alerts_to_send = [] # list of (change_type, direction, subject, html_body, slack_body, discord_body)
@@ -399,13 +499,14 @@ async def trigger_alerts(t: TrackedUrl, previous_price: float | None, new_price:
     # Stock alert: Back in stock
     if previous_stock is False and new_stock is True:
         subject = f"✅ Volvió al stock: {t.label}"
+        price_line = f"<p>Precio actual: <strong>${new_price:,.2f}</strong></p>" if new_price else ""
         html = (
             f"<p><strong>{t.label}</strong> volvió a estar disponible.</p>"
-            f"<p>Precio actual: <strong>${new_price:,.2f}</strong></p>" if new_price else ""
-            f"<p><a href='{t.url}'>Ver producto</a></p>"
+            + price_line
+            + f"<p><a href='{t.url}'>Ver producto</a></p>"
         )
-        slack = f"*✅ Volvió al stock: {t.label}*\n<{t.url}|{t.label}> volvió a estar disponible. Precio actual: *${new_price:,.2f}*."
-        discord = f"**{t.label}** volvió a estar disponible."
+        slack = f"*✅ Volvió al stock: {t.label}*\n<{t.url}|{t.label}> volvió a estar disponible." + (f" Precio actual: *${new_price:,.2f}*." if new_price else "")
+        discord = f"**{t.label}** volvió a estar disponible." + (f" Precio actual: **${new_price:,.2f}**." if new_price else "")
         alerts_to_send.append(("stock", "disponible", subject, html, slack, discord))
 
     # Text structural change
@@ -435,12 +536,28 @@ async def trigger_alerts(t: TrackedUrl, previous_price: float | None, new_price:
             discord = f"🏷️ Promoción detectada en **{t.label}**:\nTexto: `{new_text}`"
             alerts_to_send.append(("promo", "detected", subject, html, slack, discord))
 
-    # Get alert email from TrackerSettings
+    # Get alert email: prefer TrackerSettings.alert_email, fallback to User.email
     settings_res = await session.execute(
         select(TrackerSettings).where(TrackerSettings.user_id == t.user_id)
     )
     user_settings = settings_res.scalar_one_or_none()
-    alert_email = user_settings.alert_email if user_settings else ""
+    alert_email = (user_settings.alert_email if user_settings and user_settings.alert_email else "")
+    if not alert_email:
+        # Fallback to User.email
+        user_res = await session.execute(select(User).where(User.id == t.user_id))
+        owner = user_res.scalar_one_or_none()
+        if owner:
+            alert_email = getattr(owner, "email", "")
+
+    # Deduplicate contradictory alerts (e.g. price up AND target reached simultaneously)
+    seen_types = set()
+    deduped_alerts = []
+    for alert in alerts_to_send:
+        change_key = (alert[0], alert[1])
+        if change_key not in seen_types:
+            seen_types.add(change_key)
+            deduped_alerts.append(alert)
+    alerts_to_send = deduped_alerts
 
     # 2. Process rate limits & Send
     for change_type, direction, subject, html_body, slack_body, discord_body in alerts_to_send:
@@ -539,7 +656,8 @@ async def process_price_check(payload: dict):
     async with get_managed_session() as session:
         result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id))
         t = result.scalar_one_or_none()
-        if not t or t.status != "active":
+        if not t or t.status not in ("active",) or t.deleted_at is not None:
+            # Bug 8: Mark as completed for deleted/inactive trackers to prevent infinite retries
             return {"status": "skipped", "reason": "Tracker inactive or deleted"}
 
         # Removed 2s delay to avoid blocking the queue worker
@@ -560,36 +678,36 @@ async def process_price_check(payload: dict):
         html_text = ""
 
         try:
-            async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=15.0) as client:
-                resp = await client.get(t.url)
-                status_code = resp.status_code
-                if resp.status_code in (403, 500, 502, 503, 504):
-                    retry = True
-                    ua2 = random.choice([u for u in USER_AGENTS if u != ua])
-                    headers["User-Agent"] = ua2
-                    await asyncio.sleep(1.0)
-                    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=15.0) as client2:
-                        resp2 = await client2.get(t.url)
-                        status_code = resp2.status_code
-                        html_text = resp2.text
-                else:
-                    html_text = resp.text
+            status_code, html_text, used_impersonation = await _fetch_product_html(t.url, headers, timeout=15.0)
+            if status_code in (403, 429, 500, 502, 503, 504):
+                retry = True
+                ua2 = random.choice([u for u in USER_AGENTS if u != ua])
+                headers["User-Agent"] = ua2
+                await asyncio.sleep(1.0)
+                status_code, html_text, used_impersonation = await _fetch_product_html(t.url, headers, timeout=15.0)
         except Exception as e:
             status_code = 500
             logger.error(f"Error fetching {t.url}: {e}")
 
-        # Log UA vs response status code
-        log = ScrapeLog(
-            tracker_id=t.id,
-            user_agent=headers["User-Agent"],
-            status_code=status_code,
-            retry=retry,
-            timestamp=datetime.utcnow()
-        )
-        session.add(log)
-        await session.flush()
+
+
+        log_ua = headers["User-Agent"]
+
+        block_reason = _detect_scrape_block(status_code, html_text)
+        if block_reason:
+            t.status = "blocked"
+            t.last_checked = _utc_now()
+            session.add(t)
+            log = ScrapeLog(tracker_id=t.id, user_agent=log_ua, status_code=status_code, retry=retry, timestamp=_utc_now())
+            session.add(log)
+            await session.commit()
+            return {"status": "blocked", "reason": "Anti-bot or CAPTCHA challenge detected"}
 
         if not html_text:
+            # Bug 20: Only log ScrapeLog when we actually got a response
+            if status_code != 500:
+                log = ScrapeLog(tracker_id=t.id, user_agent=log_ua, status_code=status_code, retry=retry, timestamp=_utc_now())
+                session.add(log)
             await session.commit()
             return {"status": "failed", "reason": "No HTML returned"}
 
@@ -608,7 +726,7 @@ async def process_price_check(payload: dict):
             selectors = [t.selector_1, t.selector_2, t.selector_3]
             for sel in selectors:
                 if sel:
-                    el = soup.select_one(sel)
+                    el = _select_one(soup, sel)
                     if el:
                         new_text = el.get_text(separator=" ").strip()
                         new_price = extract_price(new_text)
@@ -636,7 +754,7 @@ async def process_price_check(payload: dict):
             if new_price is None:
                 from backend_core.scraper import _GENERIC_SELECTORS
                 for sel in _GENERIC_SELECTORS:
-                    el = soup.select_one(sel)
+                    el = _select_one(soup, sel)
                     if el:
                         raw = el.get("content") or el.get("value") or el.get_text()
                         new_price = extract_price(str(raw))
@@ -660,7 +778,7 @@ async def process_price_check(payload: dict):
 
             # Change detection
             if new_price is not None:
-                now = datetime.utcnow()
+                now = _utc_now()
                 previous_price = t.current_price
                 previous_stock = t.in_stock
                 previous_text = t.last_text
@@ -706,9 +824,20 @@ async def process_price_check(payload: dict):
                     )
                     session.add(history)
 
+                    # Bug 7: Log ScrapeLog AFTER successful price processing (not before)
+                    log = ScrapeLog(tracker_id=t.id, user_agent=log_ua, status_code=status_code, retry=retry, timestamp=_utc_now())
+                    session.add(log)
+
                     # Trigger alerts
                     await session.flush()
                     await trigger_alerts(t, previous_price, new_price, previous_stock, new_stock, previous_text, new_text, session)
+            else:
+                t.last_checked = _utc_now()
+                if len(body_text) < 500:
+                    t.status = "needs_selector"
+                session.add(t)
+                log = ScrapeLog(tracker_id=t.id, user_agent=log_ua, status_code=status_code, retry=retry, timestamp=_utc_now())
+                session.add(log)
 
         except Exception as e:
             logger.error(f"Error updating {t.url}: {e}")
@@ -732,20 +861,20 @@ async def process_csv_export(payload: dict):
 
     job_uuid = uuid.UUID(job_id_str)
 
-    async with get_managed_session() as session:
-        # Update job to processing
-        job_res = await session.execute(select(PriceTrackrExportJob).where(PriceTrackrExportJob.id == job_uuid))
-        job = job_res.scalar_one_or_none()
-        if not job:
-            return {"status": "error", "message": "Job not found"}
-        job.status = "processing"
-        session.add(job)
-        await session.commit()
-
     try:
         async with get_managed_session() as session:
+            job_res = await session.execute(select(PriceTrackrExportJob).where(PriceTrackrExportJob.id == job_uuid))
+            job = job_res.scalar_one_or_none()
+            if not job:
+                return {"status": "error", "message": "Job not found"}
+            job.status = "processing"
+            session.add(job)
+            await session.flush()
+
             result = await session.execute(
-                select(TrackedUrl).where(TrackedUrl.user_id == user_id).order_by(TrackedUrl.created_at.desc())
+                select(TrackedUrl)
+                .where(TrackedUrl.user_id == user_id, TrackedUrl.deleted_at == None)  # noqa: E711
+                .order_by(TrackedUrl.created_at.desc())
             )
             trackers = result.scalars().all()
 
@@ -763,60 +892,59 @@ async def process_csv_export(payload: dict):
                     "last_checked": t.last_checked.isoformat() if t.last_checked else None,
                     "check_frequency_hours": t.check_frequency_hours,
                     "status": t.status,
+                    "slug": t.slug,
+                    "is_public": t.is_public,
                 })
 
-        if fmt == "json":
-            content_bytes = json.dumps(rows, indent=2).encode()
-            media_type = "application/json"
-            file_ext = "json"
-        else:
-            df = pd.DataFrame(rows)
-            buf = io.BytesIO()
-            if fmt == "xlsx":
-                df.to_excel(buf, index=False, engine="openpyxl")
-                media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                file_ext = "xlsx"
+            if fmt == "json":
+                content_bytes = json.dumps(rows, indent=2).encode()
+                media_type = "application/json"
+                file_ext = "json"
             else:
-                df.to_csv(buf, index=False)
-                media_type = "text/csv"
-                file_ext = "csv"
-            content_bytes = buf.getvalue()
+                df = pd.DataFrame(rows)
+                buf = io.BytesIO()
+                if fmt == "xlsx":
+                    df.to_excel(buf, index=False, engine="openpyxl")
+                    media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    file_ext = "xlsx"
+                else:
+                    df.to_csv(buf, index=False)
+                    media_type = "text/csv"
+                    file_ext = "csv"
+                content_bytes = buf.getvalue()
 
-        import boto3
-        s3 = boto3.client(
-            's3',
-            endpoint_url=settings.s3_endpoint_url,
-            aws_access_key_id=settings.s3_access_key_id,
-            aws_secret_access_key=settings.s3_secret_access_key,
-            region_name="auto"
-        )
+            import boto3
+            s3 = boto3.client(
+                's3',
+                endpoint_url=settings.s3_endpoint_url,
+                aws_access_key_id=settings.s3_access_key_id,
+                aws_secret_access_key=settings.s3_secret_access_key,
+                region_name="auto",
+                config=BotoConfig(connect_timeout=5, read_timeout=20, retries={"max_attempts": 2}),
+            )
 
-        object_name = f"pricetrackr/exports/{user_id}/{job_id_str}.{file_ext}"
-        bucket_name = settings.s3_bucket_name
+            object_name = f"pricetrackr/exports/{user_id}/{job_id_str}.{file_ext}"
+            bucket_name = settings.s3_bucket_name
 
-        await asyncio.to_thread(
-            s3.put_object,
-            Bucket=bucket_name,
-            Key=object_name,
-            Body=content_bytes,
-            ContentType=media_type
-        )
+            await asyncio.to_thread(
+                s3.put_object,
+                Bucket=bucket_name,
+                Key=object_name,
+                Body=content_bytes,
+                ContentType=media_type
+            )
 
-        r2_url = s3.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': bucket_name, 'Key': object_name},
-            ExpiresIn=3600 * 24 * 7
-        )
+            r2_url = s3.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': bucket_name, 'Key': object_name},
+                ExpiresIn=3600 * 24 * 7
+            )
 
-        async with get_managed_session() as session:
-            job_res = await session.execute(select(PriceTrackrExportJob).where(PriceTrackrExportJob.id == job_uuid))
-            job = job_res.scalar_one_or_none()
-            if job:
-                job.status = "completed"
-                job.r2_url = r2_url
-                job.completed_at = datetime.utcnow()
-                session.add(job)
-                await session.commit()
+            job.status = "completed"
+            job.r2_url = r2_url
+            job.completed_at = _utc_now()
+            session.add(job)
+            await session.commit()
 
     except Exception as e:
         logger.error(f"Error processing export job {job_id_str}: {e}")
@@ -826,7 +954,7 @@ async def process_csv_export(payload: dict):
             if job:
                 job.status = "failed"
                 job.error_message = str(e)
-                job.completed_at = datetime.utcnow()
+                job.completed_at = _utc_now()
                 session.add(job)
                 await session.commit()
         raise e
@@ -853,26 +981,29 @@ async def detect_url_metadata(body: DetectRequest, user: User = Depends(get_curr
     }
 
     try:
-        import httpx
-        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=10.0) as client:
-            resp = await client.get(body.url)
-            resp.raise_for_status()
-            html = resp.text
+        status_code, html, used_impersonation = await _fetch_product_html(body.url, headers, timeout=10.0)
+        if status_code >= 400:
+            raise HTTPException(status_code=400, detail=f"Product URL returned HTTP {status_code}")
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {str(e)}")
 
     soup = BeautifulSoup(html, "html.parser")
     body_len = len(soup.body.get_text(separator=" ").strip()) if soup.body else 0
     is_js_rendered = body_len < 500
+    block_reason = _detect_scrape_block(status_code, html)
 
     suggested_price = None
     matched_selector = None
 
-    # Try store specific
-    store = scraper._detect_store(body.url)
-    if store:
+    # Try store specific (Bug 9: guard against _detect_store returning None)
+    store = None
+    if hasattr(scraper, '_detect_store'):
+        store = scraper._detect_store(body.url)
+    if store and hasattr(scraper, '_STORE_SELECTORS') and store in scraper._STORE_SELECTORS:
         for sel in scraper._STORE_SELECTORS[store]:
-            el = soup.select_one(sel)
+            el = _select_one(soup, sel)
             if el:
                 raw = el.get("content") or el.get_text()
                 price = scraper._extract_price_from_text(str(raw))
@@ -883,8 +1014,8 @@ async def detect_url_metadata(body: DetectRequest, user: User = Depends(get_curr
 
     # Try generic
     if not suggested_price:
-        for sel in scraper._GENERIC_SELECTORS:
-            el = soup.select_one(sel)
+        for sel in getattr(scraper, "_GENERIC_SELECTORS", []):
+            el = _select_one(soup, sel)
             if el:
                 raw = el.get("content") or el.get("value") or el.get_text()
                 price = scraper._extract_price_from_text(str(raw))
@@ -921,7 +1052,10 @@ async def detect_url_metadata(body: DetectRequest, user: User = Depends(get_curr
         "selector": matched_selector,
         "in_stock": in_stock,
         "is_js_rendered": is_js_rendered,
-        "body_length": body_len
+        "body_length": body_len,
+        "blocked": bool(block_reason),
+        "fetch_engine": "curl_cffi" if used_impersonation else "httpx",
+        "status_code": status_code,
     }
 
 
@@ -932,7 +1066,10 @@ async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_u
     if not is_public_http_url(body.url):
         raise HTTPException(status_code=400, detail="Only public http(s) product URLs are allowed")
 
-    freq_hours = body.check_frequency_hours if body.check_frequency_hours in (1, 6, 12, 24) else 24
+    # Bug 15: Reject invalid frequencies explicitly instead of silent coercion
+    freq_hours = body.check_frequency_hours
+    if freq_hours not in (1, 6, 12, 24):
+        raise HTTPException(status_code=400, detail="Frequency must be 1, 6, 12, or 24 hours")
     plan, limits = await get_pricetrackr_limits(user, session)
     reject_price_frequency_if_needed(plan, limits, freq_hours)
 
@@ -940,23 +1077,24 @@ async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_u
         select(func.count(TrackedUrl.id)).where(
             TrackedUrl.user_id == user.id,
             TrackedUrl.status == "active",
+            TrackedUrl.deleted_at == None,  # noqa: E711
         )
     )
     reject_tracker_count_if_needed(plan, limits, count_result.scalar_one())
 
     initial_price = await scraper.fetch_price(body.url)
-    initial_stock = await scraper.fetch_stock(body.url)
+    # Bug 3: Guard against missing fetch_stock method
+    initial_stock = None
+    if hasattr(scraper, 'fetch_stock'):
+        try:
+            initial_stock = await scraper.fetch_stock(body.url)
+        except Exception:
+            logger.warning(f"fetch_stock failed for {body.url}, defaulting to None")
     from datetime import timedelta
 
-    # Generate unique slug
+    # Generate unique slug with IntegrityError retry (Bug O1)
+    from sqlalchemy.exc import IntegrityError
     slug = generate_slug(body.label)
-    for _ in range(5):
-        existing = await session.execute(
-            select(TrackedUrl).where(TrackedUrl.slug == slug)
-        )
-        if not existing.scalar_one_or_none():
-            break
-        slug = generate_slug(body.label)
 
     t = TrackedUrl(
         user_id=user.id,
@@ -965,18 +1103,27 @@ async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_u
         current_price=initial_price,
         min_price=initial_price,
         in_stock=initial_stock,
-        last_checked=datetime.utcnow() if initial_price else None,
+        last_checked=_utc_now() if initial_price else None,
         check_frequency_hours=freq_hours,
-        next_check_at=datetime.utcnow() + timedelta(hours=freq_hours),
+        next_check_at=_utc_now() + timedelta(hours=freq_hours),
         selector_1=body.selector_1,
         selector_2=body.selector_2,
         selector_3=body.selector_3,
-        slack_webhook_url=body.slack_webhook_url,
-        discord_webhook_url=body.discord_webhook_url,
+        slack_webhook_url=_validate_webhook_url(body.slack_webhook_url, "slack_webhook_url"),
+        discord_webhook_url=_validate_webhook_url(body.discord_webhook_url, "discord_webhook_url"),
         slug=slug,
     )
-    session.add(t)
-    await session.flush()
+    for attempt in range(5):
+        try:
+            session.add(t)
+            await session.flush()
+            break
+        except IntegrityError:
+            await session.rollback()
+            slug = generate_slug(body.label)
+            t.slug = slug
+    else:
+        raise HTTPException(status_code=500, detail="Failed to generate unique slug")
     await session.refresh(t)
 
     # Record initial price history point
@@ -989,20 +1136,35 @@ async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_u
 
 
 @tracker_router.get("/list")
-async def list_trackers(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    result = await session.execute(select(TrackedUrl).where(TrackedUrl.user_id == user.id).order_by(TrackedUrl.created_at.desc()))
+async def list_trackers(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(50, le=100, ge=1),
+    offset: int = Query(0, ge=0),
+):
+    result = await session.execute(
+        select(TrackedUrl)
+        .where(TrackedUrl.user_id == user.id, TrackedUrl.deleted_at == None)  # noqa: E711
+        .order_by(TrackedUrl.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     return result.scalars().all()
 
 
 @tracker_router.get("/summary")
 async def tracker_summary(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    result = await session.execute(select(TrackedUrl).where(TrackedUrl.user_id == user.id))
+    result = await session.execute(
+        select(TrackedUrl).where(TrackedUrl.user_id == user.id, TrackedUrl.deleted_at == None)  # noqa: E711
+    )
     return summarize_trackers(result.scalars().all())
 
 
 @tracker_router.get("/health")
 async def tracker_health(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    result = await session.execute(select(TrackedUrl).where(TrackedUrl.user_id == user.id))
+    result = await session.execute(
+        select(TrackedUrl).where(TrackedUrl.user_id == user.id, TrackedUrl.deleted_at == None)  # noqa: E711
+    )
     return build_tracker_health(result.scalars().all())
 
 
@@ -1010,7 +1172,13 @@ async def tracker_health(user: User = Depends(get_current_user), session: AsyncS
 async def get_price_history(tracker_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     """Retorna los últimos 30 puntos del historial de precios para graficar."""
     # Verify ownership
-    t_res = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id))
+    t_res = await session.execute(
+        select(TrackedUrl).where(
+            TrackedUrl.id == tracker_id,
+            TrackedUrl.user_id == user.id,
+            TrackedUrl.deleted_at == None,  # noqa: E711
+        )
+    )
     t = t_res.scalar_one_or_none()
     if not t:
         raise HTTPException(status_code=404, detail="Tracker not found")
@@ -1049,7 +1217,11 @@ async def update_tracker_frequency(
     reject_price_frequency_if_needed(plan, limits, body.hours)
 
     result = await session.execute(
-        select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id)
+        select(TrackedUrl).where(
+            TrackedUrl.id == tracker_id,
+            TrackedUrl.user_id == user.id,
+            TrackedUrl.deleted_at == None,  # noqa: E711
+        )
     )
     t = result.scalar_one_or_none()
     if not t:
@@ -1057,7 +1229,7 @@ async def update_tracker_frequency(
 
     from datetime import timedelta
     t.check_frequency_hours = body.hours
-    t.next_check_at = datetime.utcnow() + timedelta(hours=body.hours)
+    t.next_check_at = _utc_now() + timedelta(hours=body.hours)
     session.add(t)
     await session.flush()
     return {
@@ -1070,11 +1242,21 @@ async def update_tracker_frequency(
 
 @tracker_router.delete("/{tracker_id}")
 async def delete_tracker(tracker_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id))
+    result = await session.execute(
+        select(TrackedUrl).where(
+            TrackedUrl.id == tracker_id,
+            TrackedUrl.user_id == user.id,
+            TrackedUrl.deleted_at == None,  # noqa: E711
+        )
+    )
     t = result.scalar_one_or_none()
     if not t:
         raise HTTPException(status_code=404, detail="Not found")
-    await session.delete(t)
+    # Bug O2: Soft delete instead of hard delete
+    t.deleted_at = _utc_now()
+    t.status = "deleted"
+    session.add(t)
+    await session.flush()
     return {"status": "deleted"}
 
 
@@ -1086,7 +1268,11 @@ async def update_tracker(
     session: AsyncSession = Depends(get_session),
 ):
     result = await session.execute(
-        select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id)
+        select(TrackedUrl).where(
+            TrackedUrl.id == tracker_id,
+            TrackedUrl.user_id == user.id,
+            TrackedUrl.deleted_at == None,  # noqa: E711
+        )
     )
     t = result.scalar_one_or_none()
     if not t:
@@ -1099,6 +1285,8 @@ async def update_tracker(
 
     if body.label is not None:
         t.label = body.label
+        # Bug 12: Regenerate slug when label changes
+        t.slug = generate_slug(body.label)
 
     if body.check_frequency_hours is not None:
         if body.check_frequency_hours not in (1, 6, 12, 24):
@@ -1107,7 +1295,7 @@ async def update_tracker(
         reject_price_frequency_if_needed(plan, limits, body.check_frequency_hours)
         t.check_frequency_hours = body.check_frequency_hours
         from datetime import timedelta
-        t.next_check_at = datetime.utcnow() + timedelta(hours=body.check_frequency_hours)
+        t.next_check_at = _utc_now() + timedelta(hours=body.check_frequency_hours)
 
     if body.alert_threshold is not None:
         t.alert_threshold = body.alert_threshold
@@ -1120,9 +1308,9 @@ async def update_tracker(
         t.selector_3 = body.selector_3
 
     if body.slack_webhook_url is not None:
-        t.slack_webhook_url = body.slack_webhook_url
+        t.slack_webhook_url = _validate_webhook_url(body.slack_webhook_url, "slack_webhook_url")
     if body.discord_webhook_url is not None:
-        t.discord_webhook_url = body.discord_webhook_url
+        t.discord_webhook_url = _validate_webhook_url(body.discord_webhook_url, "discord_webhook_url")
 
     if body.is_public is not None:
         t.is_public = body.is_public
@@ -1144,13 +1332,24 @@ async def confirm_tracker_change(
     session: AsyncSession = Depends(get_session),
 ):
     result = await session.execute(
-        select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id)
+        select(TrackedUrl).where(
+            TrackedUrl.id == tracker_id,
+            TrackedUrl.user_id == user.id,
+            TrackedUrl.deleted_at == None,  # noqa: E711
+        )
     )
     t = result.scalar_one_or_none()
     if not t:
         raise HTTPException(status_code=404, detail="Tracker not found")
 
+    if t.status != "flagged":
+        raise HTTPException(status_code=400, detail="Tracker is not in flagged state")
+
     if body.action == "confirm":
+        # Bug 1: Validate pending_price is not None before applying
+        if t.pending_price is None:
+            raise HTTPException(status_code=400, detail="No pending price to confirm")
+
         # Apply the pending changes
         previous_price = t.current_price
         previous_stock = t.in_stock
@@ -1160,7 +1359,7 @@ async def confirm_tracker_change(
         t.current_price = t.pending_price
         t.in_stock = t.pending_stock
         t.last_text = t.pending_text
-        t.last_checked = datetime.utcnow()
+        t.last_checked = _utc_now()
 
         if t.pending_price is not None:
             if t.min_price is None or t.pending_price < t.min_price:
@@ -1171,7 +1370,7 @@ async def confirm_tracker_change(
             tracker_id=t.id,
             price=t.pending_price,
             in_stock=t.pending_stock,
-            recorded_at=datetime.utcnow(),
+            recorded_at=_utc_now(),
             text_content=t.pending_text,
         )
         session.add(history)
@@ -1278,7 +1477,13 @@ async def update_alert_threshold(
     session: AsyncSession = Depends(get_session),
 ):
     """Set a price alert threshold. Stores alert_email in TrackerSettings (no extra migration)."""
-    result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id))
+    result = await session.execute(
+        select(TrackedUrl).where(
+            TrackedUrl.id == tracker_id,
+            TrackedUrl.user_id == user.id,
+            TrackedUrl.deleted_at == None,  # noqa: E711
+        )
+    )
     t = result.scalar_one_or_none()
     if not t:
         raise HTTPException(status_code=404, detail="Tracker not found")
@@ -1306,7 +1511,13 @@ async def test_price_alert(
     session: AsyncSession = Depends(get_session),
 ):
     """Send a test alert email immediately to validate alert configuration."""
-    result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id, TrackedUrl.user_id == user.id))
+    result = await session.execute(
+        select(TrackedUrl).where(
+            TrackedUrl.id == tracker_id,
+            TrackedUrl.user_id == user.id,
+            TrackedUrl.deleted_at == None,  # noqa: E711
+        )
+    )
     t = result.scalar_one_or_none()
     if not t:
         raise HTTPException(status_code=404, detail="Tracker not found")
@@ -1419,8 +1630,11 @@ def generate_svg_chart(history_points: list) -> str:
     date_labels = []
     if len(history_points) > 1:
         try:
-            first_date = datetime.fromisoformat(history_points[0]["recorded_at"]).strftime("%b %d")
-            last_date = datetime.fromisoformat(history_points[-1]["recorded_at"]).strftime("%b %d")
+            # Bug 14: Handle Z suffix in ISO datetime (Python < 3.11)
+            raw_first = history_points[0]["recorded_at"].replace("Z", "+00:00")
+            raw_last = history_points[-1]["recorded_at"].replace("Z", "+00:00")
+            first_date = datetime.fromisoformat(raw_first).strftime("%b %d")
+            last_date = datetime.fromisoformat(raw_last).strftime("%b %d")
         except Exception:
             first_date = "Start"
             last_date = "End"
@@ -1455,11 +1669,23 @@ def generate_svg_chart(history_points: list) -> str:
 @public_router.post("/slug/{slug}/takedown")
 async def request_takedown(
     slug: str,
+    request: Request,
     body: TakedownRequest,
     session: AsyncSession = Depends(get_session)
 ):
     """Public takedown request: unpublishes the product and triggers Vercel ISR revalidation."""
-    result = await session.execute(select(TrackedUrl).where(TrackedUrl.slug == slug))
+    _rate_limit_or_429(
+        _TAKEDOWN_RATE_LIMITS,
+        _client_ip(request),
+        window=_TAKEDOWN_RATE_WINDOW,
+        max_requests=_TAKEDOWN_RATE_MAX,
+    )
+    result = await session.execute(
+        select(TrackedUrl).where(
+            TrackedUrl.slug == slug,
+            TrackedUrl.deleted_at == None,  # noqa: E711
+        )
+    )
     t = result.scalar_one_or_none()
     if not t:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -1468,19 +1694,54 @@ async def request_takedown(
     session.add(t)
     await session.commit()
 
+    # Bug 17: Notify owner about the takedown
+    try:
+        owner_res = await session.execute(select(User).where(User.id == t.user_id))
+        owner = owner_res.scalar_one_or_none()
+        if owner and getattr(owner, 'email', None):
+            await asyncio.to_thread(
+                send_email,
+                to=owner.email,
+                subject=f"⚠️ Takedown: {t.label} ha sido despublicado",
+                html_body=(
+                    f"<p>Tu producto <strong>{t.label}</strong> ha sido despublicado por una solicitud de takedown.</p>"
+                    f"<p>Razón: {body.reason}</p>"
+                    f"<p>Email del solicitante: {body.email}</p>"
+                    f"<p>Si crees que esto es un error, contacta a soporte.</p>"
+                )
+            )
+    except Exception as e:
+        logger.error(f"Failed to notify owner about takedown: {e}")
+
     await trigger_vercel_revalidation(t.slug)
     return {"status": "success", "message": "Product unpublished immediately."}
 
 @public_router.get("/trackers/{tracker_id}/history.svg")
 async def get_public_tracker_svg(
     tracker_id: int,
+    request: Request,
+    slug: str = Query(..., min_length=3, max_length=140),
     session: AsyncSession = Depends(get_session)
 ):
     """Generates an SVG chart for the price history of a tracker."""
-    # Verify the tracker is public
-    result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id))
+    _rate_limit_or_429(
+        _SVG_RATE_LIMITS,
+        _client_ip(request),
+        window=_SVG_RATE_WINDOW,
+        max_requests=_SVG_RATE_MAX,
+    )
+
+    # Verify the tracker is public and that the embed knows the public slug, not only an id.
+    result = await session.execute(
+        select(TrackedUrl).where(
+            TrackedUrl.id == tracker_id,
+            TrackedUrl.slug == slug,
+            TrackedUrl.is_public == True,  # noqa: E712
+            TrackedUrl.deleted_at == None,  # noqa: E711
+        )
+    )
     t = result.scalar_one_or_none()
-    if not t or not t.is_public:
+    if not t:
         raise HTTPException(status_code=404, detail="Tracker not found or not public")
 
     hist_res = await session.execute(

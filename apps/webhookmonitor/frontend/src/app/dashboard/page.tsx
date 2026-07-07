@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { apiClient, downloadFile, getProduct, trackEvent } from "@devforge/core";
+import { apiClient, downloadFile, getProduct, trackEvent, type PlanSlug } from "@devforge/core";
 import {
   ActionToast,
   DashboardPlanPanel,
@@ -39,6 +39,8 @@ interface WebhookRequest {
   replay_target_url?: string;
   replay_status?: string;
   auto_retry_enabled: boolean;
+  schema_valid?: boolean | null;
+  schema_error?: string;
 }
 
 interface WebhookEndpoint {
@@ -56,13 +58,15 @@ const methodColors: Record<string, string> = {
 };
 
 type ExportFormat = "csv" | "xlsx" | "json";
-type EventExportFormat = "curl" | "postman";
+type EventExportFormat = "curl" | "postman" | "har" | "openapi";
 type LogStatusFilter = "all" | "failed" | "successful" | "pending" | "auto_retry";
 type ReplayMode = "exact" | "modified" | "alternate";
 
 const eventExportQueries: Record<EventExportFormat, string> = {
   curl: "/export?format=curl",
   postman: "/export?format=postman",
+  har: "/export?format=har",
+  openapi: "/export?format=openapi",
 };
 
 interface WebhookSummary {
@@ -71,6 +75,13 @@ interface WebhookSummary {
   retry_pressure: number;
   failed_forwards: number;
   auto_retry_enabled: number;
+}
+
+interface ProfilePlanResponse {
+  plans_by_product?: { webhookmonitor?: PlanSlug };
+  dashboard_limits_by_product?: {
+    webhookmonitor?: Partial<Record<PlanSlug, { max_endpoints?: number }>>;
+  };
 }
 
 interface DiffItem {
@@ -136,6 +147,8 @@ export default function DashboardPage() {
   const [exportOpen, setExportOpen]   = useState(false);
   const [eventExporting, setEventExporting] = useState<EventExportFormat | null>(null);
   const [summary, setSummary]         = useState<WebhookSummary | null>(null);
+  const [endpointLimit, setEndpointLimit] = useState(1);
+  const [endpointPlan, setEndpointPlan] = useState<PlanSlug>("free");
   const [logStatus, setLogStatus]     = useState<LogStatusFilter>("all");
   const [loading, setLoading]         = useState(true);
   const [loadError, setLoadError]     = useState(false);
@@ -152,17 +165,24 @@ export default function DashboardPage() {
   const refreshWebhooks = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
     setLoadError(false);
-    const [configResult, endpointResult, summaryResult, logsResult] = await Promise.allSettled([
+    const [configResult, endpointResult, summaryResult, logsResult, profileResult] = await Promise.allSettled([
       apiClient.get<{ endpoint_url: string }>("/webhooks/config"),
       apiClient.get<WebhookEndpoint[]>("/webhooks/endpoints"),
       apiClient.get<WebhookSummary>("/webhooks/summary"),
       apiClient.get<WebhookRequest[]>(`/webhooks/logs?status=${logStatus}`),
+      apiClient.get<ProfilePlanResponse>("/auth/profile"),
     ]);
 
     if (configResult.status === "fulfilled") setEndpointUrl(configResult.value.data.endpoint_url);
     if (endpointResult.status === "fulfilled") setEndpoints(endpointResult.value.data);
     if (summaryResult.status === "fulfilled") setSummary(summaryResult.value.data);
     if (logsResult.status === "fulfilled") setRequests(logsResult.value.data);
+    if (profileResult.status === "fulfilled") {
+      const nextPlan = profileResult.value.data.plans_by_product?.webhookmonitor || "free";
+      const nextLimit = profileResult.value.data.dashboard_limits_by_product?.webhookmonitor?.[nextPlan]?.max_endpoints;
+      setEndpointPlan(nextPlan);
+      if (typeof nextLimit === "number") setEndpointLimit(nextLimit);
+    }
     if (
       configResult.status === "rejected" &&
       endpointResult.status === "rejected" &&
@@ -323,6 +343,7 @@ export default function DashboardPage() {
         provider: providerFilter,
         date_from: dateFrom || null,
         date_to: dateTo || null,
+        query: search || null,
       });
       setRequests(data.items);
       setSelected(data.items[0] || null);
@@ -369,6 +390,7 @@ export default function DashboardPage() {
 
   const selectedIndex = selected ? requests.findIndex(req => req.id === selected.id) : -1;
   const previousRequest = selectedIndex >= 0 ? requests[selectedIndex + 1] : null;
+  const endpointLimitLabel = `${endpoints.length}/${endpointLimit} ${endpointPlan.charAt(0).toUpperCase()}${endpointPlan.slice(1)}`;
 
   const handleCompareWithPrevious = async () => {
     if (!selected || !previousRequest) return;
@@ -437,11 +459,22 @@ export default function DashboardPage() {
       const filename =
         format === "curl"
           ? `webhook-request-${selected.id}.curl.sh`
-          : `webhook-request-${selected.id}.postman_collection.json`;
+          : format === "postman"
+          ? `webhook-request-${selected.id}.postman_collection.json`
+          : format === "har"
+          ? `webhook-request-${selected.id}.har`
+          : `webhook-request-${selected.id}.openapi.json`;
       await downloadFile(`/webhooks/requests/${selected.id}${eventExportQueries[format]}`, filename);
       showToast({
         tone: "success",
-        message: format === "curl" ? "cURL export downloaded." : "Postman collection downloaded.",
+        message:
+          format === "curl"
+            ? "cURL export downloaded."
+            : format === "postman"
+            ? "Postman collection downloaded."
+            : format === "har"
+            ? "HAR export downloaded."
+            : "OpenAPI spec downloaded.",
       });
     } catch {
       showToast({ tone: "error", message: "We could not export this delivery. Retry from the inspector." });
@@ -563,7 +596,7 @@ export default function DashboardPage() {
               </p>
             </div>
             <span className="rounded px-2 py-1 font-mono text-xs text-[var(--color-accent)] bg-black/10">
-              {endpoints.length}/1 Free
+              {endpointLimitLabel}
             </span>
           </div>
           <div className="grid gap-2 md:grid-cols-2">
@@ -977,13 +1010,44 @@ export default function DashboardPage() {
               </section>
 
               <section>
+                <h3 className="text-[10px] font-bold uppercase tracking-widest mb-3 opacity-50">Schema Ingestion Validation</h3>
+                <div className="rounded-lg bg-black/20 p-4 text-xs">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono opacity-60">Schema match</span>
+                    <span
+                      className="rounded px-2 py-0.5 text-[10px] font-bold uppercase"
+                      style={{
+                        backgroundColor:
+                          selected.schema_valid === true
+                            ? "rgba(16,185,129,0.12)"
+                            : selected.schema_valid === false
+                              ? "rgba(239,68,68,0.12)"
+                              : "rgba(148,163,184,0.12)",
+                        color:
+                          selected.schema_valid === true
+                            ? "#10B981"
+                            : selected.schema_valid === false
+                              ? "#EF4444"
+                              : "var(--color-text-secondary)",
+                      }}
+                    >
+                      {selected.schema_valid === true ? "valid" : selected.schema_valid === false ? "invalid" : "unchecked"}
+                    </span>
+                  </div>
+                  {selected.schema_error ? (
+                    <p className="mt-2 break-all font-mono text-[10px] text-red-400">{selected.schema_error}</p>
+                  ) : null}
+                </div>
+              </section>
+
+              <section>
                 <h3 className="text-[10px] font-bold uppercase tracking-widest mb-3 opacity-50">Event Export</h3>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
+                    aria-label="Export cURL"
                     onClick={() => handleEventExport("curl")}
                     disabled={eventExporting !== null}
-                    aria-label="Export cURL - Copy as cURL"
                     className="rounded-lg bg-black/10 px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {eventExporting === "curl" ? "Exporting..." : "Copy as cURL"}
@@ -995,6 +1059,22 @@ export default function DashboardPage() {
                     className="rounded-lg bg-black/10 px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {eventExporting === "postman" ? "Exporting..." : "Export Postman"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleEventExport("har")}
+                    disabled={eventExporting !== null}
+                    className="rounded-lg bg-black/10 px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {eventExporting === "har" ? "Exporting..." : "Export HAR"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleEventExport("openapi")}
+                    disabled={eventExporting !== null}
+                    className="rounded-lg bg-black/10 px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {eventExporting === "openapi" ? "Exporting..." : "Export OpenAPI"}
                   </button>
                 </div>
               </section>

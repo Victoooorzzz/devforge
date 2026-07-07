@@ -33,8 +33,9 @@ FeedbackLens turns raw feedback into a triage dashboard without external generat
 
 ## Local sentiment analysis
 
-- VADER is the preferred local engine.
-- Keyword scoring is the always-available fallback.
+- Local transformers can be enabled with `FEEDBACKLENS_ANALYSIS_ENGINE=local_transformers`.
+- `FEEDBACKLENS_SENTIMENT_MODEL` defaults to `distilbert-base-uncased-finetuned-sst-2-english`.
+- Enhanced keyword scoring is the always-available fallback.
 - Output is `sentiment`, `confidence`, `themes`, `is_urgent`, `draft_reply`, and `analysis_engine`.
 - Theme focus terms from settings can bias local theme extraction.
 - No provider key is required and no external generation request is made.

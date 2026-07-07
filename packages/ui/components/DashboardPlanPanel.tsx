@@ -188,8 +188,8 @@ export function DashboardPlanPanel({
         </div>
         <div className="flex flex-wrap gap-2">
           <StatusBadge tone={activePlan === "free" ? "neutral" : activePlan === "pro" ? "accent" : "success"}>{activePlan}</StatusBadge>
-          <StatusBadge tone="accent">{proPlan?.priceLabel || "$9.99"} Pro</StatusBadge>
-          <StatusBadge tone="success">{teamPlan?.priceLabel || "$49"} Team</StatusBadge>
+          <StatusBadge tone="accent">{activePlan === "pro" ? "Current Pro" : `${proPlan?.priceLabel || "$9.99"} Pro`}</StatusBadge>
+          <StatusBadge tone="success">{activePlan === "team" ? "Current Team" : `${teamPlan?.priceLabel || "$49"} Team`}</StatusBadge>
         </div>
       </div>
 
@@ -210,7 +210,7 @@ export function DashboardPlanPanel({
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {activeLocked.slice(0, 4).map((feature) => (
-            <IntegrationCard key={feature} name={feature} description="Available based on your current paid plan and backend limits." status="Unlocked" tone="success" />
+            <IntegrationCard key={feature} name={feature} description="Active on your current plan." status="Unlocked" tone="success" />
           ))}
         </div>
       )}

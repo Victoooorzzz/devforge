@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
@@ -9,6 +9,10 @@ from sqlmodel import Field, SQLModel, select
 from .auth import User, get_current_user
 from .database import get_session
 from .product_catalog import normalize_app_slug
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class UserProductAccess(SQLModel, table=True):
@@ -22,8 +26,8 @@ class UserProductAccess(SQLModel, table=True):
     app_name: str = Field(index=True, max_length=50)
     polar_product_id: Optional[str] = Field(default=None, index=True)
     is_active: bool = Field(default=False, index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
+    updated_at: datetime = Field(default_factory=_utc_now)
 
 
 async def user_has_product_access(user: User, app_name: str, session: AsyncSession) -> bool:
@@ -74,7 +78,7 @@ async def set_user_product_access(
 
     access.polar_product_id = polar_product_id
     access.is_active = is_active
-    access.updated_at = datetime.utcnow()
+    access.updated_at = _utc_now()
     session.add(access)
 
     other_active_count_result = await session.execute(

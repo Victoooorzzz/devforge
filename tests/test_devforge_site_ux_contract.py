@@ -84,6 +84,14 @@ class DevForgeSiteUXContractTest(unittest.TestCase):
         self.assertIn("demo-pulse", demos)
         self.assertIn("demo-scanline", demo_shell)
 
+    def test_dense_product_demos_wait_for_wide_viewports(self):
+        demos = (ROOT / "packages" / "ui" / "components" / "ProductDemos.tsx").read_text()
+
+        self.assertNotIn("lg:grid-cols-[0.9fr_1.1fr]", demos)
+        self.assertGreaterEqual(demos.count("xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]"), 2)
+        self.assertIn("min-w-0", demos)
+        self.assertIn("xl:grid-cols-1 2xl:grid-cols-3", demos)
+
 
 if __name__ == "__main__":
     unittest.main()

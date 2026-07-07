@@ -72,6 +72,22 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: MICROSOFT_REDIRECT_URI
+        sync: false
+      - key: FEEDBACKLENS_TWITTER_REDIRECT_URI
+        sync: false
+      - key: FEEDBACKLENS_REDDIT_REDIRECT_URI
+        sync: false
+      - key: FEEDBACKLENS_GITHUB_REDIRECT_URI
+        sync: false
+      - key: FEEDBACKLENS_ANALYSIS_ENGINE
+        sync: false
+      - key: FEEDBACKLENS_SENTIMENT_MODEL
+        sync: false
+      - key: FEEDBACKLENS_URGENCY_MODEL
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: S3_ENDPOINT_URL

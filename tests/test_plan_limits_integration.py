@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 import apps.pricetrackr.backend.main as tracker_main
 import apps.webhookmonitor.backend.main as webhook_main
+from backend_core import db_migrations
 from backend_core.plan_limits import build_dashboard_limits_by_product, resolve_user_plan
 from backend_core.auth import ProfileResponse, User, get_current_user
 from backend_core.database import get_session
@@ -249,6 +250,14 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
         self.assertEqual(limits["invoicefollow"]["team"]["max_active_invoices"], 200)
         self.assertEqual(limits["pricetrackr"]["team"]["min_check_frequency_minutes"], 10)
         self.assertEqual(limits["feedbacklens"]["team"]["max_sources"], 50)
+
+    def test_webhook_endpoint_migration_drops_legacy_user_unique_index(self):
+        statements = "\n".join(db_migrations.MIGRATION_STATEMENTS)
+
+        self.assertIn("webhook_endpoints", statements)
+        self.assertIn("DROP CONSTRAINT", statements)
+        self.assertIn("DROP INDEX IF EXISTS", statements)
+        self.assertIn("%(user_id)%", statements)
 
 
 if __name__ == "__main__":

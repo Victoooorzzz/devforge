@@ -1,6 +1,5 @@
 "use client";
 import { useState } from "react";
-import { apiClient } from "@devforge/core";
 import { Search, Loader2, ArrowRight, ArrowLeft, Plus, Globe, Check, AlertTriangle } from "lucide-react";
 import { TrackedUrl } from "./DashboardClient";
 
@@ -10,6 +9,9 @@ interface DetectedMetadata {
   in_stock: boolean;
   is_js_rendered: boolean;
   body_length: number;
+  blocked?: boolean;
+  fetch_engine?: "curl_cffi" | "httpx";
+  status_code?: number;
 }
 
 interface AddUrlFormProps {
@@ -25,6 +27,7 @@ export default function AddUrlForm({ onSuccess, onCancel, showToast }: AddUrlFor
 
   // Step 1 values
   const [url, setUrl] = useState("");
+  const [urlError, setUrlError] = useState("");
 
   // Step 2 values (populated from detection)
   const [label, setLabel] = useState("");
@@ -36,22 +39,72 @@ export default function AddUrlForm({ onSuccess, onCancel, showToast }: AddUrlFor
   const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState("");
 
+  const analyzeUrl = async (targetUrl: string): Promise<DetectedMetadata> => {
+    const response = await fetch("/api/trackers/detect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: targetUrl }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({ detail: "Failed to parse product." }));
+      throw { detail: errorBody.detail || "Failed to parse product.", status: response.status };
+    }
+
+    return response.json();
+  };
+
+  const createTracker = async (payload: Record<string, unknown>): Promise<TrackedUrl> => {
+    const response = await fetch("/api/trackers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({ detail: "Failed to create tracker." }));
+      throw { detail: errorBody.detail || "Failed to create tracker.", status: response.status };
+    }
+
+    return response.json();
+  };
+
   const handleAnalyzeUrl = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      showToast({ tone: "error", message: "Please enter a valid HTTP or HTTPS URL." });
+    const normalizedUrl = url.trim();
+    if (!normalizedUrl) {
+      const message = "URL is required.";
+      setUrlError(message);
+      showToast({ tone: "error", message });
+      return;
+    }
+    if (!normalizedUrl.startsWith("http://") && !normalizedUrl.startsWith("https://")) {
+      const message = "Please enter a valid HTTP or HTTPS URL.";
+      setUrlError(message);
+      showToast({ tone: "error", message });
       return;
     }
 
+    try {
+      new URL(normalizedUrl);
+    } catch {
+      const message = "Please enter a valid HTTP or HTTPS URL.";
+      setUrlError(message);
+      showToast({ tone: "error", message });
+      return;
+    }
+
+    setUrlError("");
+    setUrl(normalizedUrl);
     setLoading(true);
     try {
-      const { data } = await apiClient.post<DetectedMetadata>("/trackers/detect", { url });
+      const data = await analyzeUrl(normalizedUrl);
       setDetectedData(data);
       setSelector1(data.selector || "");
 
       // Attempt to generate a nice default label from URL domain + path
       try {
-        const parsedUrl = new URL(url);
+        const parsedUrl = new URL(normalizedUrl);
         const domain = parsedUrl.hostname.replace("www.", "");
         const pathParts = parsedUrl.pathname.split("/").filter(Boolean);
         const namePart = pathParts[pathParts.length - 1] || pathParts[0] || "Product";
@@ -89,7 +142,7 @@ export default function AddUrlForm({ onSuccess, onCancel, showToast }: AddUrlFor
 
     setSaving(true);
     try {
-      const { data } = await apiClient.post<TrackedUrl>("/trackers", {
+      const data = await createTracker({
         url,
         label,
         check_frequency_hours: checkFrequencyHours,
@@ -135,11 +188,21 @@ export default function AddUrlForm({ onSuccess, onCancel, showToast }: AddUrlFor
                 type="url"
                 required
                 value={url}
-                onChange={(e) => setUrl(e.target.value)}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  if (urlError) setUrlError("");
+                }}
                 placeholder="https://www.bestbuy.com/site/example-product/1234567.p"
+                aria-invalid={urlError ? "true" : "false"}
+                aria-describedby={urlError ? "product-url-error" : undefined}
                 className="input-field w-full pl-10 text-sm"
               />
             </div>
+            {urlError ? (
+              <p id="product-url-error" className="text-[11px] font-semibold text-red-300">
+                {urlError}
+              </p>
+            ) : null}
             <p className="text-[10px] text-zinc-500">
               Paste a product page with visible price HTML. Shopify-friendly URLs, Best Buy, Newegg, Gymshark, Allbirds, and Casper pages work best; Shopify JSON-LD helps detection stay stable.
             </p>
@@ -177,6 +240,18 @@ export default function AddUrlForm({ onSuccess, onCancel, showToast }: AddUrlFor
                 <p className="text-xs font-bold">JavaScript-Rendered (SPA) Page Detected</p>
                 <p className="text-[10px] text-zinc-400">
                   This page has very low static HTML content and requires JavaScript execution. If automatic pricing fails, make sure to customize the CSS selectors below.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {detectedData?.blocked && (
+            <div className="flex gap-2.5 bg-red-500/5 border border-red-500/10 p-3 rounded-lg text-red-300">
+              <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <div className="space-y-0.5 text-left">
+                <p className="text-xs font-bold">Anti-bot challenge detected</p>
+                <p className="text-[10px] text-zinc-400">
+                  This store returned a CAPTCHA, Cloudflare, or access-denied page. You can still save the monitor, but reliable tracking may require a different product page or a managed scraping provider.
                 </p>
               </div>
             </div>
@@ -236,6 +311,9 @@ export default function AddUrlForm({ onSuccess, onCancel, showToast }: AddUrlFor
                 </span>
               </div>
             </div>
+            <p className="text-[10px] text-zinc-500">
+              Fetch engine: {detectedData?.fetch_engine === "curl_cffi" ? "Chrome impersonation" : "standard HTTP"}{detectedData?.status_code ? ` · HTTP ${detectedData.status_code}` : ""}
+            </p>
           </div>
 
           <details className="group border border-white/5 rounded-lg">

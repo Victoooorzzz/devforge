@@ -33,6 +33,10 @@ type WebhookSettings = {
   signature_provider: string;
   signature_secret: string;
   signature_secret_set?: boolean;
+  ip_whitelist: string;
+  ip_blacklist: string;
+  json_schema: string;
+  schema_validation_enabled: boolean;
 };
 
 type ForwardRule = {
@@ -82,6 +86,10 @@ export default function SettingsPage() {
     signature_provider: "",
     signature_secret: "",
     signature_secret_set: false,
+    ip_whitelist: "",
+    ip_blacklist: "",
+    json_schema: "",
+    schema_validation_enabled: false,
   });
   const [forwardRules, setForwardRules] = useState<ForwardRule[]>([]);
   const [newForwardRule, setNewForwardRule] = useState<ForwardRuleDraft>(emptyForwardRule);
@@ -132,6 +140,10 @@ export default function SettingsPage() {
           signature_provider: webhookResponse.data.signature_provider || "",
           signature_secret: "",
           signature_secret_set: Boolean(webhookResponse.data.signature_secret_set),
+          ip_whitelist: webhookResponse.data.ip_whitelist || "",
+          ip_blacklist: webhookResponse.data.ip_blacklist || "",
+          json_schema: webhookResponse.data.json_schema || "",
+          schema_validation_enabled: Boolean(webhookResponse.data.schema_validation_enabled),
         });
         setForwardRules(rulesResponse.data);
       } catch (error) {
@@ -191,6 +203,10 @@ export default function SettingsPage() {
         forward_timeout_seconds: webhookSettings.forward_timeout_seconds,
         signature_provider: webhookSettings.signature_provider,
         signature_secret: webhookSettings.signature_secret,
+        ip_whitelist: webhookSettings.ip_whitelist,
+        ip_blacklist: webhookSettings.ip_blacklist,
+        json_schema: webhookSettings.json_schema,
+        schema_validation_enabled: webhookSettings.schema_validation_enabled,
       });
       setToast({ tone: "success", message: "Webhook preferences updated successfully." });
     } catch (error) {
@@ -585,6 +601,90 @@ export default function SettingsPage() {
                 </div>
               </div>
 
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                    IP Whitelist
+                  </label>
+                  <input
+                    value={webhookSettings.ip_whitelist}
+                    onChange={(event) => setWebhookSettings({ ...webhookSettings, ip_whitelist: event.target.value })}
+                    className="input-field w-full"
+                    placeholder="1.2.3.4, 5.6.7.0/24"
+                    disabled={savingWebhook}
+                  />
+                  <p className="mt-1.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                    Comma-separated IPs/CIDRs. Only allowed IPs can post.
+                  </p>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                    IP Blacklist
+                  </label>
+                  <input
+                    value={webhookSettings.ip_blacklist}
+                    onChange={(event) => setWebhookSettings({ ...webhookSettings, ip_blacklist: event.target.value })}
+                    className="input-field w-full"
+                    placeholder="9.9.9.9"
+                    disabled={savingWebhook}
+                  />
+                  <p className="mt-1.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                    Blocked IPs/CIDRs.
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                  JSON Schema Validation
+                </label>
+                <textarea
+                  value={webhookSettings.json_schema}
+                  onChange={(event) => setWebhookSettings({ ...webhookSettings, json_schema: event.target.value })}
+                  className="input-field w-full font-mono text-xs"
+                  rows={6}
+                  placeholder='{ "type": "object", "properties": { "event": { "type": "string" } } }'
+                  disabled={savingWebhook}
+                />
+                <p className="mt-1.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                  Validate payload structure at ingestion.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+                    Enforce Schema Validation
+                  </p>
+                  <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                    Flag ingested requests matching the schema.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={webhookSettings.schema_validation_enabled}
+                  onClick={() =>
+                    setWebhookSettings({
+                      ...webhookSettings,
+                      schema_validation_enabled: !webhookSettings.schema_validation_enabled,
+                    })
+                  }
+                  className="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{
+                    backgroundColor: webhookSettings.schema_validation_enabled
+                      ? "var(--color-accent)"
+                      : "var(--color-border)",
+                  }}
+                  disabled={savingWebhook}
+                >
+                  <span
+                    className="inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200"
+                    style={{ transform: webhookSettings.schema_validation_enabled ? "translateX(20px)" : "translateX(0)" }}
+                  />
+                </button>
+              </div>
+
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
@@ -628,7 +728,7 @@ export default function SettingsPage() {
                 Conditional Forwarding
               </h3>
               <p className="mb-4 text-sm leading-6" style={{ color: "var(--color-text-secondary)" }}>
-                Route matched payloads to a primary URL and optionally fail over to a fallback URL.
+                Route matched payloads to a primary URL and optionally fail over to a fallback URL. Rules are matched sequentially in order of creation.
               </p>
 
               <form onSubmit={handleForwardRuleSave} className="max-w-2xl space-y-4">

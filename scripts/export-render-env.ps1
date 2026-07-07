@@ -25,6 +25,18 @@ if (-not $renderApiKey) {
     exit 1
 }
 
+$feedbackLensDefaults = @{
+    FEEDBACKLENS_ANALYSIS_ENGINE = "local_transformers"
+    FEEDBACKLENS_SENTIMENT_MODEL = "distilbert-base-uncased-finetuned-sst-2-english"
+    FEEDBACKLENS_URGENCY_MODEL   = "cross-encoder/nli-deberta-v3-xsmall"
+}
+
+foreach ($entry in $feedbackLensDefaults.GetEnumerator()) {
+    if (-not [Environment]::GetEnvironmentVariable($entry.Key, "Process")) {
+        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+    }
+}
+
 $headers = @{
     Authorization = "Bearer $renderApiKey"
     Accept        = "application/json"
@@ -75,6 +87,9 @@ $keys = @(
     "SMTP_USER",
     "SMTP_PASSWORD",
     "SMTP_FROM",
+    "FEEDBACKLENS_ANALYSIS_ENGINE",
+    "FEEDBACKLENS_SENTIMENT_MODEL",
+    "FEEDBACKLENS_URGENCY_MODEL",
     "GEMINI_API_KEY",
     "S3_ENDPOINT_URL",
     "S3_ACCESS_KEY_ID",

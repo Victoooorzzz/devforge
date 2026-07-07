@@ -4,6 +4,7 @@ Protected by ADMIN_SECRET environment variable (passed as Bearer token or X-Admi
 """
 import os
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import text
 from backend_core.database import get_managed_session
@@ -11,6 +12,10 @@ from backend_core.database import get_managed_session
 logger = logging.getLogger(__name__)
 
 admin_router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _verify_admin(request: Request):
@@ -124,7 +129,8 @@ async def get_admin_stats(request: Request):
                     COUNT(*) FILTER (WHERE sentiment = 'positive') as positive_count,
                     COUNT(*) FILTER (WHERE is_urgent = true) as urgent_count,
                     COUNT(*) FILTER (WHERE analysis_engine = 'gemini') as gemini_analyses,
-                    COUNT(*) FILTER (WHERE analysis_engine = 'vader') as vader_analyses
+                    COUNT(*) FILTER (WHERE analysis_engine = 'local_transformers') as transformer_analyses,
+                    COUNT(*) FILTER (WHERE analysis_engine = 'enhanced_keyword') as enhanced_keyword_analyses
                 FROM feedback_entries
             """))
             row = r.mappings().first()
@@ -146,6 +152,6 @@ async def get_admin_stats(request: Request):
 
         return {
             "status": "ok",
-            "generated_at": __import__("datetime").datetime.utcnow().isoformat(),
+            "generated_at": _utc_now().isoformat(),
             "stats": stats_serialized,
         }

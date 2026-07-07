@@ -9,7 +9,11 @@ class Settings(BaseSettings):
     app_name: str = "DevForge Product"
     debug: bool = False
     frontend_url: str = "http://localhost:3000"
-    allowed_origins: str = "http://localhost:3000,http://localhost:3001"
+    allowed_origins: str = (
+        "http://localhost:3000,http://localhost:3001,http://localhost:3002,"
+        "http://localhost:3003,http://localhost:3004,http://localhost:3005,"
+        "http://localhost:3006"
+    )
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 

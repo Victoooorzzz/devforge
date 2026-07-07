@@ -67,6 +67,9 @@ class _FakeSession:
     async def commit(self):
         self.committed = True
 
+    async def delete(self, item):
+        self.deleted = item
+
 
 def _trial_user():
     return User(
@@ -168,6 +171,29 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
         self.assertFalse(parsed["creates_invoice_document"])
         self.assertEqual(missed["status"], "not_detected")
         self.assertIn("forward an existing invoice email", missed["next_step"])
+
+    def test_detect_email_handles_amount_with_comma_and_textual_due_date(self):
+        parsed = invoice_main.parse_invoice_email(
+            subject="Invoice #INV-2041 from Clara Studio",
+            body="Hi, attached is invoice INV-2041 for $2,400 due July 31, 2026.",
+            sender_email="billing@clarastudio.com",
+            sender_name="Clara Studio Billing",
+        )
+
+        self.assertEqual(parsed["status"], "detected")
+        self.assertEqual(parsed["client_name"], "Clara Studio")
+        self.assertEqual(parsed["invoice_number"], "INV-2041")
+        self.assertEqual(parsed["amount"], 2400.0)
+        self.assertEqual(parsed["currency"], "USD")
+        self.assertEqual(parsed["due_date"], "2026-07-31")
+        self.assertGreaterEqual(parsed["confidence"], 0.75)
+
+    def test_digest_has_invoicefollow_alias_to_avoid_universal_route_collision(self):
+        route_paths = {getattr(route, "path", "") for route in invoice_main.app.routes}
+        dashboard = (ROOT / "apps" / "invoicefollow" / "frontend" / "src" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("/invoicefollow/digest", route_paths)
+        self.assertIn('apiClient.get<DigestSummary>("/invoicefollow/digest")', dashboard)
 
     def test_schedule_and_templates_are_fixed_not_ai_generated(self):
         schedule = invoice_main.build_reminder_schedule(
@@ -314,6 +340,27 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
         self.assertEqual(digest["invoices_at_risk"], 1)
         self.assertEqual(digest["month_summary"]["recovered_amount"], 1200)
 
+    def test_metrics_ignore_unreasonable_issued_date_for_average_payment_time(self):
+        paid_invoice = invoice_main.Invoice(
+            id=20,
+            user_id=1,
+            client_name="Victor",
+            client_email="victor@example.test",
+            amount=10,
+            currency="PEN",
+            due_date=date(2026, 10, 3),
+            issued_date=date(2005, 11, 2),
+            status="paid",
+            cron_paused=True,
+            paid_at=datetime(2026, 7, 4, 12, 0),
+            created_at=datetime(2026, 7, 4, 9, 0),
+        )
+
+        response = _client(_FakeSession(responses=[[paid_invoice]])).get("/metrics")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["avg_payment_time_days"], 0)
+
     def test_contract_endpoints_and_frontend_markdown_are_present(self):
         route_paths = {getattr(route, "path", "") for route in invoice_main.app.routes}
         expected_paths = {
@@ -349,6 +396,7 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
         self.assertIn("/connect/stripe", content)
 
     def test_gmail_oauth_start_does_not_mark_connected_until_callback(self):
+        backend = (ROOT / "apps" / "invoicefollow" / "backend" / "main.py").read_text(encoding="utf-8")
         session = _FakeSession()
         response = _client(session).post("/connect/gmail", json={"email": "owner@example.com"})
 
@@ -357,9 +405,12 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
         integration = next(item for item in session.added if isinstance(item, invoice_main.InvoiceIntegrationSettings))
         self.assertFalse(integration.gmail_connected)
         self.assertEqual(integration.gmail_email, "owner@example.com")
+        self.assertNotIn("https://api.devforgeapp.pro", backend)
+        self.assertNotIn("https://api.devforgeapp.pro", response.json()["oauth_url"])
 
     def test_gmail_oauth_callback_exchanges_code_and_stores_tokens(self):
-        integration = invoice_main.InvoiceIntegrationSettings(user_id=1, gmail_state="STATE")
+        state = invoice_main._make_oauth_state()
+        integration = invoice_main.InvoiceIntegrationSettings(user_id=1, gmail_state=state)
         session = _FakeSession(responses=[[integration]])
         original_exchange = getattr(invoice_main, "exchange_gmail_oauth_code", None)
 
@@ -373,7 +424,7 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
 
         invoice_main.exchange_gmail_oauth_code = fake_exchange
         try:
-            response = _client(session).get("/connect/gmail/callback?code=CODE&state=STATE")
+            response = _client(session).get(f"/connect/gmail/callback?code=CODE&state={state}")
         finally:
             if original_exchange is not None:
                 invoice_main.exchange_gmail_oauth_code = original_exchange
@@ -383,6 +434,55 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
         self.assertEqual(invoice_main.decrypt_val(integration.gmail_access_token), "access-token")
         self.assertEqual(invoice_main.decrypt_val(integration.gmail_refresh_token), "refresh-token")
         self.assertEqual(integration.gmail_email, "owner@example.com")
+
+    def test_oauth_callback_rejects_expired_state(self):
+        expired_state = f"token:{int(invoice_main._utc_now().timestamp()) - 601}"
+        integration = invoice_main.InvoiceIntegrationSettings(user_id=1, gmail_state=expired_state)
+        session = _FakeSession(responses=[[integration]])
+
+        response = _client(session).get(f"/connect/gmail/callback?code=CODE&state={expired_state}")
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_create_invoice_uses_high_entropy_promise_token(self):
+        session = _FakeSession()
+        response = _client(session).post(
+            "/invoices",
+            json={
+                "client_name": "Acme",
+                "client_email": "billing@acme.com",
+                "amount": 1200,
+                "currency": "USD",
+                "due_date": "2026-07-15",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        invoice = next(item for item in session.added if isinstance(item, invoice_main.Invoice))
+        self.assertGreaterEqual(len(invoice.promise_token), 32)
+
+    def test_weekly_digest_ignores_undated_events(self):
+        digest = invoice_main.build_weekly_digest(
+            invoices=[],
+            reminder_logs=[SimpleNamespace(status="sent", sent_at=None)],
+            payment_events=[SimpleNamespace(status="succeeded", detected_at=None)],
+            today=date(2026, 7, 6),
+        )
+
+        self.assertEqual(digest["payments_detected_this_week"], 0)
+        self.assertEqual(digest["reminders_sent"], 0)
+        self.assertEqual(digest["month_summary"]["invoices_sent"], 0)
+
+    def test_stripe_webhook_ignores_missing_invoice_id_without_scanning_invoices(self):
+        session = _FakeSession(responses=[])
+        response = _client(session).post(
+            "/invoices/webhooks/stripe",
+            json={"id": "evt_1", "type": "payment_intent.succeeded", "data": {"object": {"metadata": {}}}},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["reason"], "missing_invoice_id")
+        self.assertEqual(session.responses, [])
 
     def test_reply_and_payment_crons_call_real_pollers(self):
         calls = []

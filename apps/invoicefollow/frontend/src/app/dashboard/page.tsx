@@ -141,6 +141,12 @@ function nextStep(invoice: Invoice) {
   return "Invoice Original";
 }
 
+function formatAvgPaymentTime(value: number | null | undefined) {
+  if (value == null || value <= 0) return "0d";
+  if (value > 365) return "N/A";
+  return `${value}d`;
+}
+
 export default function DashboardPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [metrics, setMetrics] = useState<MetricSummary | null>(null);
@@ -189,7 +195,7 @@ export default function DashboardPage() {
     const [invoiceResult, metricResult, digestResult, scoreResult, settingsResult] = await Promise.allSettled([
       apiClient.get<Invoice[]>("/invoices"),
       apiClient.get<MetricSummary>("/metrics"),
-      apiClient.get<DigestSummary>("/digest"),
+      apiClient.get<DigestSummary>("/invoicefollow/digest"),
       apiClient.get<ClientScore[]>("/invoices/client-scores"),
       apiClient.get<InvoiceSettingsSummary>("/settings"),
     ]);
@@ -461,7 +467,7 @@ export default function DashboardPage() {
             { label: "Recovery rate", value: hasInvoiceData && metrics ? `${metrics.recovery_rate}%` : "—", icon: CheckCircle2, color: "#059669" },
             { label: "Pending", value: hasInvoiceData ? money(metrics?.pending_amount ?? totals.pendingAmount, "USD") : "—", icon: Clock, color: "#B45309" },
             { label: "At risk", value: hasInvoiceData ? String(metrics?.at_risk_count ?? totals.atRisk) : "—", icon: AlertTriangle, color: "#DC2626" },
-            { label: "Avg payment", value: hasInvoiceData && metrics ? `${metrics.avg_payment_time_days}d` : "—", icon: FileText, color: "#0284C7" },
+            { label: "Avg payment", value: hasInvoiceData && metrics ? formatAvgPaymentTime(metrics.avg_payment_time_days) : "—", icon: FileText, color: "#0284C7" },
           ].map((item) => (
             <div key={item.label} className="rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)" }}>
               <div className="mb-2 flex items-center gap-2 text-xs" style={{ color: "var(--color-text-secondary)" }}>
@@ -588,7 +594,7 @@ export default function DashboardPage() {
               <tbody>
                 {invoices.map((invoice) => {
                   const late = daysOverdue(invoice.due_date);
-                  const rowStatus = invoice.status === "pending" && late > 0 ? "overdue" : invoice.cron_paused ? "paused" : invoice.status;
+                  const rowStatus = invoice.status === "paid" ? "paid" : invoice.status === "pending" && late > 0 ? "overdue" : invoice.cron_paused ? "paused" : invoice.status;
                   return (
                     <tr key={invoice.id} style={{ borderBottom: "1px solid rgba(38,38,38,0.12)" }}>
                       <td className="px-4 py-3">

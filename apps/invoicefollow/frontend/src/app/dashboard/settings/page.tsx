@@ -294,7 +294,7 @@ export default function SettingsPage() {
                           value={paymentCredentials.stripe_api_key}
                           onChange={(event) => setPaymentCredentials((current) => ({ ...current, stripe_api_key: event.target.value }))}
                           className="input-field h-9 w-44 text-xs"
-                          placeholder="Restricted key"
+                          placeholder="rk_live_..."
                           autoComplete="off"
                         />
                       ) : null}

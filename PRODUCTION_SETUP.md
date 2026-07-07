@@ -103,7 +103,7 @@ Render installs from the root `requirements.txt`. Keep production-only packages 
 
 | Package | Used by |
 |---|---|
-| `vaderSentiment` | FeedbackLens fallback analysis. |
+| `transformers` / `optimum[onnxruntime]` | FeedbackLens optional local DistilBERT analysis. |
 | `thefuzz[speedup]` | FileCleaner fuzzy duplicate checks. |
 | `boto3` | FileCleaner R2/S3 storage. |
 | `google-genai` | AI features. |

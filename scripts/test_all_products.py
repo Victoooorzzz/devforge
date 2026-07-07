@@ -101,15 +101,15 @@ async def test_filecleaner():
 async def test_feedbacklens():
     """
     FeedbackLens: Recibe texto → analiza sentimiento → devuelve
-    sentiment + score + keywords. Usa VADER local -> keyword fallback.
+    sentiment + score + themes. Uses optional local transformers with enhanced keyword fallback.
     """
     print("\n" + "="*60)
     print("💬 FEEDBACKLENS — Análisis de Sentimiento")
     print("="*60)
 
-    from apps.feedbacklens.backend.main import _analyze_with_vader, _analyze_with_keywords
+    from apps.feedbacklens.backend.main import _analyze_feedback_locally
 
-    # Test VADER (offline, always available)
+    # Test local deterministic fallback.
     test_cases = [
         ("This product is absolutely terrible, it crashes every time!", "negative"),
         ("Amazing tool! It saved me 10 hours of work this week.", "positive"),
@@ -119,26 +119,18 @@ async def test_feedbacklens():
     ]
 
     for text, expected in test_cases:
-        result = _analyze_with_vader(text)
-        if result:
-            sentiment = result["sentiment"]
-            score = result.get("score", result.get("confidence", 0.0))
-            log_result("FeedbackLens", f"VADER: '{text[:40]}...'",
-                       "PASS" if sentiment == expected else "WARN",
-                       f"Got: {sentiment} (score={score:.2f}), expected: {expected}")
-        else:
-            # VADER not installed, test keyword fallback
-            result = _analyze_with_keywords(text)
-            sentiment = result["sentiment"]
-            log_result("FeedbackLens", f"Keyword: '{text[:40]}...'",
-                       "PASS" if sentiment == expected else "WARN",
-                       f"Got: {sentiment}, expected: {expected} (VADER not installed, using keywords)")
+        result = _analyze_feedback_locally(text)
+        sentiment = result["sentiment"]
+        score = result.get("confidence", 0.0)
+        log_result("FeedbackLens", f"Local analysis: '{text[:40]}...'",
+                   "PASS" if sentiment == expected else "WARN",
+                   f"Got: {sentiment} (confidence={score:.2f}), expected: {expected}")
 
     # Test urgency detection via keywords
     urgent_text = "URGENT: Our payment system is completely broken and customers can't buy anything!"
-    kw_result = _analyze_with_keywords(urgent_text)
+    kw_result = _analyze_feedback_locally(urgent_text)
     log_result("FeedbackLens", "Urgency keyword detection",
-               "PASS", f"Keywords found: {kw_result.get('keywords', [])}")
+               "PASS", f"Themes found: {kw_result.get('themes', [])}")
 
 
 async def test_pricetrackr():

@@ -22,6 +22,10 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 # --- Models ---
 
 class User(SQLModel, table=True):
@@ -39,7 +43,7 @@ class User(SQLModel, table=True):
     is_email_verified: bool = Field(default=False)
     verification_code: Optional[str] = Field(default=None)
     trial_ends_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
 
     @property
     def is_on_trial(self) -> bool:
@@ -47,7 +51,7 @@ class User(SQLModel, table=True):
         if self.trial_ends_at is None:
             return False
         
-        now = datetime.utcnow()
+        now = _utc_now()
         trial_end = self.trial_ends_at
         if trial_end.tzinfo is not None:
             now = now.replace(tzinfo=timezone.utc)
@@ -138,7 +142,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 # --- JWT Utilities ---
 
 def create_access_token(user_id: int, email: str) -> str:
-    expire = datetime.utcnow() + timedelta(minutes=settings.jwt_expiration_minutes)
+    expire = _utc_now() + timedelta(minutes=settings.jwt_expiration_minutes)
     payload = {
         "sub": str(user_id),
         "email": email,
@@ -244,7 +248,7 @@ async def register(body: RegisterRequest, background_tasks: BackgroundTasks, res
         is_active=False,
         is_email_verified=False,
         verification_code=v_code,
-        trial_ends_at=datetime.utcnow() + timedelta(days=7)
+        trial_ends_at=_utc_now() + timedelta(days=7)
     )
     session.add(user)
     await session.flush()

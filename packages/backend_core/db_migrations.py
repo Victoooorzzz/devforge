@@ -116,6 +116,18 @@ MIGRATION_STATEMENTS = [
         "EXECUTE format('ALTER TABLE webhook_endpoints DROP CONSTRAINT %I', constraint_name); "
         "END IF; END $$;"
     ),
+    (
+        "DO $$ DECLARE index_name text; BEGIN "
+        "FOR index_name IN "
+        "SELECT indexname FROM pg_indexes "
+        "WHERE schemaname = current_schema() "
+        "AND tablename = 'webhook_endpoints' "
+        "AND indexdef ILIKE 'CREATE UNIQUE INDEX%' "
+        "AND indexdef LIKE '%(user_id)%' "
+        "LOOP "
+        "EXECUTE format('DROP INDEX IF EXISTS %I', index_name); "
+        "END LOOP; END $$;"
+    ),
     "CREATE EXTENSION IF NOT EXISTS pgcrypto",
     "ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS request_uuid VARCHAR",
     "UPDATE webhook_requests SET request_uuid = gen_random_uuid()::text WHERE request_uuid IS NULL",
@@ -155,22 +167,69 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS alert_email VARCHAR DEFAULT ''",
     "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS weekly_summary_enabled BOOLEAN DEFAULT TRUE",
     "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS timezone VARCHAR DEFAULT 'UTC'",
-    "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS last_weekly_digest_at TIMESTAMP",
+    "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS last_weekly_digest_at TIMESTAMPTZ",
     "ALTER TABLE feedback_settings ALTER COLUMN negative_threshold TYPE DOUBLE PRECISION USING negative_threshold::double precision",
     "ALTER TABLE feedback_settings ALTER COLUMN negative_threshold SET DEFAULT 0.5",
     "UPDATE feedback_settings SET negative_threshold = 0.5 WHERE negative_threshold > 1",
+    (
+        "DO $$ BEGIN "
+        "IF to_regclass('feedback_entries') IS NOT NULL AND EXISTS ("
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'feedback_entries' AND column_name = 'created_at' "
+        "AND data_type <> 'timestamp with time zone'"
+        ") THEN "
+        "ALTER TABLE feedback_entries ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC'; "
+        "END IF; END $$;"
+    ),
+    (
+        "DO $$ BEGIN "
+        "IF to_regclass('feedback_settings') IS NOT NULL AND EXISTS ("
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'feedback_settings' AND column_name = 'last_weekly_digest_at' "
+        "AND data_type <> 'timestamp with time zone'"
+        ") THEN "
+        "ALTER TABLE feedback_settings ALTER COLUMN last_weekly_digest_at TYPE TIMESTAMPTZ USING last_weekly_digest_at AT TIME ZONE 'UTC'; "
+        "END IF; END $$;"
+    ),
     (
         "CREATE TABLE IF NOT EXISTS feedback_sources ("
         "id SERIAL PRIMARY KEY, user_id INTEGER, source_type VARCHAR DEFAULT 'manual', display_name VARCHAR DEFAULT '', "
         "handle VARCHAR DEFAULT '', status VARCHAR DEFAULT 'connected', access_token VARCHAR DEFAULT '', refresh_token VARCHAR DEFAULT '', "
         "webhook_secret VARCHAR DEFAULT '', config_json TEXT DEFAULT '{}', forward_token VARCHAR DEFAULT '', "
-        "last_polled_at TIMESTAMP, created_at TIMESTAMP, updated_at TIMESTAMP)"
+        "last_polled_at TIMESTAMPTZ, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)"
     ),
     "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS access_token TEXT DEFAULT ''",
     "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS refresh_token TEXT DEFAULT ''",
     "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS webhook_secret TEXT DEFAULT ''",
     "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS config_json TEXT DEFAULT '{}'",
     "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'connected'",
+    "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS last_polled_at TIMESTAMPTZ",
+    "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ",
+    "ALTER TABLE feedback_sources ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
+    (
+        "DO $$ BEGIN "
+        "IF to_regclass('feedback_sources') IS NOT NULL AND EXISTS ("
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'feedback_sources' AND column_name = 'last_polled_at' "
+        "AND data_type <> 'timestamp with time zone'"
+        ") THEN "
+        "ALTER TABLE feedback_sources ALTER COLUMN last_polled_at TYPE TIMESTAMPTZ USING last_polled_at AT TIME ZONE 'UTC'; "
+        "END IF; "
+        "IF to_regclass('feedback_sources') IS NOT NULL AND EXISTS ("
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'feedback_sources' AND column_name = 'created_at' "
+        "AND data_type <> 'timestamp with time zone'"
+        ") THEN "
+        "ALTER TABLE feedback_sources ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC'; "
+        "END IF; "
+        "IF to_regclass('feedback_sources') IS NOT NULL AND EXISTS ("
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'feedback_sources' AND column_name = 'updated_at' "
+        "AND data_type <> 'timestamp with time zone'"
+        ") THEN "
+        "ALTER TABLE feedback_sources ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at AT TIME ZONE 'UTC'; "
+        "END IF; END $$;"
+    ),
     (
         "CREATE UNIQUE INDEX IF NOT EXISTS "
         "uq_user_product_access_user_app_idx "
@@ -194,6 +253,10 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS pending_price DOUBLE PRECISION",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS pending_stock BOOLEAN",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS pending_text VARCHAR",
+    "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_tracked_urls_slug_unique ON tracked_urls (slug) WHERE slug IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_tracked_urls_user_status_deleted ON tracked_urls (user_id, status, deleted_at)",
+    "CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history (recorded_at)",
     (
         "CREATE TABLE IF NOT EXISTS scrape_control ("
         "id INTEGER PRIMARY KEY DEFAULT 1, locked_at TIMESTAMP, "
@@ -212,7 +275,19 @@ MIGRATION_STATEMENTS = [
         "sent_at TIMESTAMP NOT NULL DEFAULT NOW())"
     ),
     "CREATE INDEX IF NOT EXISTS idx_invoices_cron_paused ON invoices (cron_paused)",
+    "CREATE INDEX IF NOT EXISTS idx_invoices_user_status_due ON invoices (user_id, status, due_date)",
+    "CREATE INDEX IF NOT EXISTS idx_invoices_client_identity ON invoices (client_email, client_name)",
+    "CREATE INDEX IF NOT EXISTS idx_invoice_drafts_user_status ON invoice_detected_drafts (user_id, status)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_payment_provider_event ON invoice_payment_events (provider, provider_event_id) WHERE provider_event_id <> ''",
+    "CREATE INDEX IF NOT EXISTS idx_invoice_reminder_invoice_stage_status ON invoice_reminder_logs (invoice_id, template_key, status)",
     "ALTER TABLE webhook_settings ADD COLUMN IF NOT EXISTS last_silence_alert_sent_at TIMESTAMP",
+    "ALTER TABLE processed_files ADD COLUMN IF NOT EXISTS ip_address VARCHAR",
+    "ALTER TABLE webhook_settings ADD COLUMN IF NOT EXISTS ip_whitelist VARCHAR DEFAULT ''",
+    "ALTER TABLE webhook_settings ADD COLUMN IF NOT EXISTS ip_blacklist VARCHAR DEFAULT ''",
+    "ALTER TABLE webhook_settings ADD COLUMN IF NOT EXISTS json_schema VARCHAR DEFAULT ''",
+    "ALTER TABLE webhook_settings ADD COLUMN IF NOT EXISTS schema_validation_enabled BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS schema_valid BOOLEAN",
+    "ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS schema_error VARCHAR DEFAULT ''",
 ]
 
 

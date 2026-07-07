@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { useState, useRef } from "react";
 import Link from "next/link";
 
@@ -51,23 +51,53 @@ export default function DemoPage() {
       const formData = new FormData();
       formData.append("file", file);
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
-      const res = await fetch(`${apiUrl}/files/upload`, {
+
+      const uploadRes = await fetch(`${apiUrl}/files/demo/upload`, {
         method: "POST",
         body: formData,
       });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.detail || "Error al procesar el archivo");
+      if (!uploadRes.ok) {
+        const data = await uploadRes.json();
+        throw new Error(data.detail || "Error al subir el archivo");
       }
-      const data = await res.json();
+      const uploadData = await uploadRes.json();
+      const fileId = uploadData.id;
+
+      // Poll status until completed, failed or canceled
+      let status = "pending";
+      let statusData: any = null;
+      while (status === "pending" || status === "queued" || status === "processing") {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const statusRes = await fetch(`${apiUrl}/files/demo/${fileId}/status`);
+        if (!statusRes.ok) {
+          throw new Error("Error al obtener estado de procesamiento");
+        }
+        statusData = await statusRes.json();
+        status = statusData.status;
+      }
+
+      if (status === "failed" || status === "error") {
+        throw new Error(statusData?.error || "Error al procesar el archivo");
+      }
+
+      // Fetch the execution report
+      const reportRes = await fetch(`${apiUrl}/files/demo/${fileId}/report`);
+      if (!reportRes.ok) {
+        throw new Error("Error al obtener reporte de limpieza");
+      }
+      const reportData = await reportRes.json();
+
       setResult({
-        rows_before:          data.rows_before          ?? 0,
-        rows_after:           data.rows_after           ?? 0,
-        duplicates_removed:   data.duplicates_removed   ?? 0,
-        nulls_removed:        data.nulls_removed        ?? 0,
-        columns_normalized:   data.columns_normalized   ?? 0,
-        download_url:         `${apiUrl}${data.download_url}`,
-        file_name:            data.file_name            ?? file.name,
+        rows_before:          reportData.rows_original          ?? 0,
+        rows_after:           reportData.rows_clean           ?? 0,
+        duplicates_removed:   reportData.duplicates_removed   ?? 0,
+        nulls_removed:        reportData.empty_removed        ?? 0,
+        columns_normalized:   ((reportData.normalization?.countries_normalized ?? 0) +
+                               (reportData.normalization?.phones_normalized ?? 0) +
+                               (reportData.normalization?.currencies_normalized ?? 0) +
+                               (reportData.normalization?.dates_normalized ?? 0)),
+        download_url:         `${apiUrl}/files/demo/${fileId}/download`,
+        file_name:            uploadData.name            ?? file.name,
       });
     } catch (err: any) {
       setError(err.message || "Unknown error");

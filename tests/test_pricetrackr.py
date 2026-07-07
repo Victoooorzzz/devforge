@@ -15,6 +15,7 @@ from apps.pricetrackr.backend.main import (
     trigger_alerts,
     TrackedUrl,
     generate_slug,
+    _detect_scrape_block,
 )
 from backend_core.plan_limits import (
     PRICETRACKR_LIMITS,
@@ -50,6 +51,22 @@ class PriceTrackrUnitTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(generate_slug("iPhone 15 Pro").startswith("iphone-15-pro-"))
         self.assertTrue(generate_slug("Súper Laptop 2024!!!").startswith("s-per-laptop-2024-"))
         self.assertEqual(len(generate_slug("Simple Label").split("-")[-1]), 6) # hex suffix length
+
+    def test_price_extraction_handles_space_thousands(self):
+        self.assertEqual(extract_price("1 234,56 EUR"), 1234.56)
+
+    def test_scrape_block_detection_and_lightweight_fetch_contract(self):
+        backend = (ROOT / "apps" / "pricetrackr" / "backend" / "main.py").read_text(encoding="utf-8")
+        requirements = (ROOT / "apps" / "pricetrackr" / "backend" / "requirements.txt").read_text(encoding="utf-8")
+        public_page = (ROOT / "apps" / "pricetrackr" / "frontend" / "src" / "app" / "p" / "[slug]" / "page.tsx").read_text(encoding="utf-8")
+
+        self.assertEqual(_detect_scrape_block(403, ""), "blocked")
+        self.assertEqual(_detect_scrape_block(200, "<title>Cloudflare CAPTCHA</title>"), "blocked")
+        self.assertIn("curl_cffi", requirements)
+        self.assertIn("CurlAsyncSession", backend)
+        self.assertNotIn("playwright", backend.lower())
+        self.assertNotIn("selenium", backend.lower())
+        self.assertIn("history.svg?slug=", public_page)
 
     def test_plan_limits_enforcement(self):
         free_limits = PRICETRACKR_LIMITS["free"]

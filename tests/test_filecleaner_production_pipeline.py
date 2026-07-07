@@ -172,6 +172,39 @@ class FileCleanerProductionPipelineTests(unittest.TestCase):
         self.assertIn("amount_currency", result.dataframe.columns)
         self.assertEqual(result.report["normalization"]["countries_normalized"], 3)
 
+    def test_basic_clean_trims_text_values_in_non_object_columns_without_stringifying_numbers(self):
+        df = file_main.pd.DataFrame({
+            "sku": file_main.pd.Series([" 001 ", " 002 "], dtype="category"),
+            "amount": file_main.pd.Series([1000, 2000], dtype="int64"),
+        })
+
+        cleaned, report = file_main._basic_clean(df, {
+            "drop_empty_rows": True,
+            "trim_whitespace": True,
+            "normalize_text": True,
+            "drop_duplicates": True,
+        })
+
+        self.assertEqual(cleaned["sku"].astype(str).tolist(), ["001", "002"])
+        self.assertEqual(cleaned["amount"].tolist(), [1000, 2000])
+        self.assertEqual(str(cleaned["amount"].dtype), "int64")
+        self.assertEqual(report["whitespace_fixed"], 2)
+
+    def test_currency_parser_handles_peruvian_and_european_thousands(self):
+        self.assertEqual(file_main._parse_currency("S/ 1,500"), (1500.0, "PEN"))
+        self.assertEqual(file_main._parse_currency("1.234,56 \u20ac"), (1234.56, "EUR"))
+        self.assertEqual(file_main._magic_clean_price("$1,500.25"), 1500.25)
+
+    def test_schema_regex_requires_full_value_match(self):
+        df = file_main.pd.DataFrame({"code": ["123", "123abc"]})
+        report = file_main._run_schema_validation(
+            df,
+            {"rules": [{"column": "code", "type": "regex", "pattern": r"\d+"}]},
+        )
+
+        self.assertEqual(report["invalid_rows"], 1)
+        self.assertEqual(report["columns"]["code"]["errors"][0]["row_index"], 1)
+
     def test_upload_rejects_free_files_over_plan_limit(self):
         oversized_free_file = b"0" * (10 * 1024 * 1024 + 1)
         response = _client(_FakeSession()).post(

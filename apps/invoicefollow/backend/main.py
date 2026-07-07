@@ -6,14 +6,17 @@ from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal, Optional
+import asyncio
 import base64
+from collections import defaultdict
 import html
 import io
 import json
 import logging
 import re
+import secrets
+from time import time as _monotonic_time
 import unicodedata
-import uuid
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, BackgroundTasks, Request
@@ -88,10 +91,88 @@ def decrypt_val(val: str) -> str:
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+DEFAULT_BACKEND_PUBLIC_URL = "https://devforge-universal-backend.onrender.com"
+_PUBLIC_RATE_LIMITS: dict[str, list[float]] = defaultdict(list)
+_PUBLIC_RATE_WINDOW_SECONDS = 60
+_PUBLIC_RATE_MAX = 60
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _token_urlsafe() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _require_invoice_id(invoice: Any) -> int:
+    invoice_id = getattr(invoice, "id", None)
+    if invoice_id is None:
+        raise ValueError("Invoice must be persisted before creating related records.")
+    return int(invoice_id)
+
+
+def _make_oauth_state() -> str:
+    return f"{_token_urlsafe()}:{int(_utc_now().timestamp())}"
+
+
+def _oauth_state_is_fresh(state: str, *, max_age_seconds: int = 600) -> bool:
+    try:
+        created_at = int(state.rsplit(":", 1)[1])
+    except Exception:
+        return False
+    return int(_utc_now().timestamp()) - created_at <= max_age_seconds
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip() or "unknown"
+    return request.client.host if request.client else "unknown"
+
+
+def _rate_limit_public(request: Request, bucket: str) -> None:
+    key = f"{bucket}:{_client_ip(request)}"
+    now_ts = _monotonic_time()
+    _PUBLIC_RATE_LIMITS[key] = [ts for ts in _PUBLIC_RATE_LIMITS[key] if now_ts - ts < _PUBLIC_RATE_WINDOW_SECONDS]
+    if len(_PUBLIC_RATE_LIMITS[key]) >= _PUBLIC_RATE_MAX:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    _PUBLIC_RATE_LIMITS[key].append(now_ts)
+
+
+def _date_from_value(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
+
+
+def _payment_baseline_date(invoice: Any) -> date | None:
+    paid_date = _date_from_value(getattr(invoice, "paid_at", None))
+    created_date = _date_from_value(getattr(invoice, "created_at", None))
+    due_date = _date_from_value(getattr(invoice, "due_date", None))
+    issued_date = _date_from_value(getattr(invoice, "issued_date", None))
+
+    candidate = issued_date or due_date or created_date
+    if not candidate:
+        return None
+    if paid_date and candidate > paid_date:
+        return created_date or paid_date
+    if issued_date and due_date and issued_date < due_date - timedelta(days=365):
+        return created_date or due_date
+    return candidate
+
+
+def _average_payment_time_days(invoices: list[Any]) -> float:
+    durations: list[int] = []
+    for invoice in invoices:
+        paid_date = _date_from_value(getattr(invoice, "paid_at", None))
+        baseline = _payment_baseline_date(invoice)
+        if not paid_date or not baseline:
+            continue
+        durations.append(max(0, (paid_date - baseline).days))
+    return round(sum(durations) / len(durations), 1) if durations else 0
 
 
 @dataclass(frozen=True)
@@ -451,8 +532,41 @@ def _clean_import_value(value):
     return str(value).strip()
 
 
-def _clean_import_amount(value) -> str:
-    return _clean_import_value(value).replace("$", "").replace(",", "")
+def _clean_import_amount(value) -> float:
+    cleaned = (
+        _clean_import_value(value)
+        .replace("$", "")
+        .replace("US$", "")
+        .replace("S/", "")
+        .replace("\u20ac", "")
+        .replace("\u00a3", "")
+        .replace(" ", "")
+    )
+    if not cleaned:
+        raise ValueError("amount is required")
+    if "," in cleaned and "." in cleaned:
+        if cleaned.rfind(",") > cleaned.rfind("."):
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif "," in cleaned:
+        if re.search(r",\d{1,2}$", cleaned):
+            cleaned = cleaned.replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    return float(cleaned)
+
+
+def _parse_import_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = _clean_import_value(value)
+    parsed = _parse_date_candidate(raw)
+    if parsed:
+        return parsed
+    raise ValueError("invalid date")
 
 
 def _currency_from_symbol(symbol: str) -> str:
@@ -475,13 +589,16 @@ def _parse_date_candidate(raw: str, *, fallback_year: int | None = None) -> Opti
         except ValueError:
             return None
 
-    us_match = re.search(r"\b(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})\b", cleaned)
-    if us_match:
-        month, day, year = map(int, us_match.groups())
-        try:
-            return date(year, month, day)
-        except ValueError:
-            return None
+    numeric_match = re.search(r"\b(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})\b", cleaned)
+    if numeric_match:
+        first, second, year = map(int, numeric_match.groups())
+        candidates = [(first, second), (second, first)] if first > 12 else [(first, second), (second, first)]
+        for month, day in candidates:
+            try:
+                return date(year, month, day)
+            except ValueError:
+                continue
+        return None
 
     month_match = re.search(
         r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:\s+(20\d{2}))?\b",
@@ -570,7 +687,7 @@ def parse_invoice_email(subject: str, body: str, sender_email: str, sender_name:
         text,
         re.IGNORECASE,
     ) or re.search(
-        "((?:US\\$|S/|\\$|\\u20ac|\\u00a3|USD|EUR|PEN|GBP)\\s+?)(\\d[\\d,]*(?:\\.\\d{1,2})?)\\s*(USD|EUR|PEN|GBP)?",
+        "(?:for\\s+)?((?:US\\$|S/|\\$|\\u20ac|\\u00a3|USD|EUR|PEN|GBP)\\s*)(\\d[\\d,]*(?:\\.\\d{1,2})?)\\s*(USD|EUR|PEN|GBP)?",
         text,
         re.IGNORECASE,
     )
@@ -593,7 +710,7 @@ def parse_invoice_email(subject: str, body: str, sender_email: str, sender_name:
     fallback_year = date.today().year
     due_date = _extract_named_date(
         text,
-        ("due on", "due date", "payment due", "vence el", "vence", "vencimiento"),
+        ("due on", "due date", "payment due", "due", "vence el", "vence", "vencimiento"),
         fallback_year=fallback_year,
     )
     issued_date = _extract_named_date(
@@ -650,6 +767,16 @@ def _select_stage(days_overdue: int, templates: dict[str, dict[str, Any]] | None
     return max(eligible, key=lambda t: int(t["day"]))
 
 
+def _select_next_stage(days_overdue: int, templates: dict[str, dict[str, Any]], sent_template_keys: set[str]) -> dict[str, Any]:
+    eligible = [
+        item for item in templates.values()
+        if int(item["day"]) <= days_overdue and item["id"] not in sent_template_keys
+    ]
+    if not eligible:
+        return templates["original"]
+    return max(eligible, key=lambda item: int(item["day"]))
+
+
 def _template_vars(invoice: Invoice, *, company_name: str, user_name: str, today: date) -> dict[str, str]:
     days_overdue = max(0, (today - invoice.due_date).days)
     return {
@@ -665,10 +792,10 @@ def _template_vars(invoice: Invoice, *, company_name: str, user_name: str, today
 
 
 def _render_text(template: str, values: dict[str, str]) -> str:
-    rendered = template
-    for key, value in values.items():
-        rendered = rendered.replace("{" + key + "}", value)
-    return rendered
+    def replace(match: re.Match[str]) -> str:
+        return values.get(match.group(1), "")
+
+    return re.sub(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}", replace, template)
 
 
 def render_reminder_template(
@@ -887,11 +1014,15 @@ def build_weekly_digest(
 
     payments_this_week = [
         event for event in payment_events
-        if (_as_date(getattr(event, "detected_at", None)) or today) >= week_start and getattr(event, "status", "") == "succeeded"
+        if (event_date := _as_date(getattr(event, "detected_at", None))) is not None
+        and event_date >= week_start
+        and getattr(event, "status", "") == "succeeded"
     ]
     reminders_this_week = [
         log for log in reminder_logs
-        if (_as_date(getattr(log, "sent_at", None)) or today) >= week_start and getattr(log, "status", "sent") in {"sent", "queued"}
+        if (sent_date := _as_date(getattr(log, "sent_at", None))) is not None
+        and sent_date >= week_start
+        and getattr(log, "status", "sent") in {"sent", "queued"}
     ]
     valid_excuses = [
         inv for inv in invoices
@@ -901,12 +1032,20 @@ def build_weekly_digest(
         inv for inv in invoices
         if getattr(inv, "status", "") != "paid" and getattr(inv, "due_date", today) and (today - getattr(inv, "due_date", today)).days > 30
     ]
-    month_invoices = [inv for inv in invoices if (_as_date(getattr(inv, "created_at", None)) or month_start) >= month_start]
-    paid_in_month = [inv for inv in invoices if getattr(inv, "status", "") == "paid" and (_as_date(getattr(inv, "paid_at", None)) or today) >= month_start]
+    month_invoices = [
+        inv for inv in invoices
+        if (created_date := _as_date(getattr(inv, "created_at", None))) is not None and created_date >= month_start
+    ]
+    paid_in_month = [
+        inv for inv in invoices
+        if getattr(inv, "status", "") == "paid"
+        and (paid_date := _as_date(getattr(inv, "paid_at", None))) is not None
+        and paid_date >= month_start
+    ]
     pending = [inv for inv in invoices if getattr(inv, "status", "") != "paid"]
     recovered_amount = sum(float(getattr(inv, "amount", 0) or 0) for inv in paid_in_month)
     pending_amount = sum(float(getattr(inv, "amount", 0) or 0) for inv in pending)
-    total_sent = len(month_invoices) or len(invoices)
+    total_sent = len(month_invoices)
     recovered_count = len(paid_in_month)
     return {
         "week_start": week_start.isoformat(),
@@ -961,20 +1100,41 @@ def _parse_invoice_import(content: bytes, filename: str) -> list[InvoiceCreate]:
     invoices: list[InvoiceCreate] = []
     errors: list[str] = []
     for index, row in df.iterrows():
+        row_errors: list[str] = []
+        try:
+            amount = _clean_import_amount(row["amount"])
+        except ValueError:
+            amount = 0
+            row_errors.append("amount")
+        try:
+            due_date_value = _parse_import_date(row["due_date"])
+        except ValueError:
+            due_date_value = date.today()
+            row_errors.append("due_date")
+        issued_date_value = None
+        if "issued_date" in df.columns and _clean_import_value(row["issued_date"]):
+            try:
+                issued_date_value = _parse_import_date(row["issued_date"])
+            except ValueError:
+                row_errors.append("issued_date")
         try:
             invoices.append(InvoiceCreate(
                 client_name=_clean_import_value(row["client_name"]),
                 client_email=_clean_import_value(row["client_email"]),
-                amount=_clean_import_amount(row["amount"]),
-                currency=_clean_import_value(row["currency"]) or "USD" if "currency" in df.columns else "USD",
-                due_date=_clean_import_value(row["due_date"]),
-                issued_date=_clean_import_value(row["issued_date"]) if "issued_date" in df.columns else None,
+                amount=amount,
+                currency=(_clean_import_value(row["currency"]) or "USD") if "currency" in df.columns else "USD",
+                due_date=due_date_value,
+                issued_date=issued_date_value,
                 invoice_number=_clean_import_value(row["invoice_number"]) if "invoice_number" in df.columns else "",
                 notes=_clean_import_value(row["notes"]) if "notes" in df.columns else "",
             ))
         except ValidationError as exc:
-            fields = ", ".join(str(error["loc"][0]) for error in exc.errors())
+            fields = ", ".join(sorted(set(row_errors + [str(error["loc"][0]) for error in exc.errors()])))
             errors.append(f"Row {int(index) + 2}: {fields}")
+        else:
+            if row_errors:
+                errors.append(f"Row {int(index) + 2}: {', '.join(sorted(set(row_errors)))}")
+                invoices.pop()
 
     if errors:
         raise ValueError("; ".join(errors))
@@ -1015,7 +1175,7 @@ async def _get_or_create_integration_settings(session: AsyncSession, user: User)
     row = result.scalar_one_or_none()
     if row:
         return row
-    row = InvoiceIntegrationSettings(user_id=user.id, forward_address_token=uuid.uuid4().hex[:16])
+    row = InvoiceIntegrationSettings(user_id=user.id, forward_address_token=_token_urlsafe())
     session.add(row)
     await session.flush()
     return row
@@ -1052,7 +1212,7 @@ def _token_expiry(expires_in: Any) -> datetime:
 async def exchange_gmail_oauth_code(code: str, redirect_uri: str | None = None) -> dict[str, Any]:
     client_id = os.getenv("GOOGLE_CLIENT_ID", "")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
-    redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "https://api.devforgeapp.pro/connect/gmail/callback")
+    redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", f"{DEFAULT_BACKEND_PUBLIC_URL}/connect/gmail/callback")
     if not client_id or not client_secret:
         raise HTTPException(status_code=500, detail="Google OAuth client is not configured.")
     async with httpx.AsyncClient(timeout=20) as client:
@@ -1081,7 +1241,7 @@ async def exchange_gmail_oauth_code(code: str, redirect_uri: str | None = None) 
 async def exchange_outlook_oauth_code(code: str, redirect_uri: str | None = None) -> dict[str, Any]:
     client_id = os.getenv("MICROSOFT_CLIENT_ID", "")
     client_secret = os.getenv("MICROSOFT_CLIENT_SECRET", "")
-    redirect_uri = redirect_uri or os.getenv("MICROSOFT_REDIRECT_URI", "https://api.devforgeapp.pro/connect/outlook/callback")
+    redirect_uri = redirect_uri or os.getenv("MICROSOFT_REDIRECT_URI", f"{DEFAULT_BACKEND_PUBLIC_URL}/connect/outlook/callback")
     if not client_id or not client_secret:
         raise HTTPException(status_code=500, detail="Microsoft OAuth client is not configured.")
     async with httpx.AsyncClient(timeout=20) as client:
@@ -1110,7 +1270,7 @@ async def exchange_outlook_oauth_code(code: str, redirect_uri: str | None = None
 
 def _message_id_from_headers(headers: list[dict[str, str]]) -> str:
     for header in headers:
-        if header.get("name", "").lower() in {"message-id", "id"}:
+        if header.get("name", "").lower() == "message-id":
             return header.get("value", "")
     return ""
 
@@ -1164,6 +1324,18 @@ async def _refresh_gmail_token(integration: InvoiceIntegrationSettings, session:
         )
         if response.status_code >= 400:
             logger.error(f"Failed to refresh Gmail token: {response.text}")
+            if response.status_code in {400, 401}:
+                integration.gmail_connected = False
+                integration.gmail_access_token = ""
+                integration.gmail_refresh_token = ""
+                integration.gmail_token_expires_at = None
+                if session:
+                    session.add(integration)
+                    await session.flush()
+                else:
+                    async with get_managed_session() as s:
+                        s.add(integration)
+                        await s.commit()
             return
         data = response.json()
         access_token = data.get("access_token")
@@ -1201,6 +1373,18 @@ async def _refresh_outlook_token(integration: InvoiceIntegrationSettings, sessio
         )
         if response.status_code >= 400:
             logger.error(f"Failed to refresh Outlook token: {response.text}")
+            if response.status_code in {400, 401}:
+                integration.outlook_connected = False
+                integration.outlook_access_token = ""
+                integration.outlook_refresh_token = ""
+                integration.outlook_token_expires_at = None
+                if session:
+                    session.add(integration)
+                    await session.flush()
+                else:
+                    async with get_managed_session() as s:
+                        s.add(integration)
+                        await s.commit()
             return
         data = response.json()
         access_token = data.get("access_token")
@@ -1281,10 +1465,15 @@ async def fetch_gmail_thread_replies(integration: InvoiceIntegrationSettings, in
         else:
             query = f'from:{invoice.client_email} "{invoice.invoice_number or invoice.id}" newer_than:90d'
             next_page_token = None
+            seen_page_tokens: set[str] = set()
             raw_messages = []
-            while len(raw_messages) < 100:
+            for _ in range(5):
                 params = {"q": query, "maxResults": 100}
                 if next_page_token:
+                    if next_page_token in seen_page_tokens:
+                        logger.warning("Gmail returned a repeated nextPageToken for invoice %s", invoice.id)
+                        break
+                    seen_page_tokens.add(next_page_token)
                     params["pageToken"] = next_page_token
                 list_response = await client.get(
                     "https://gmail.googleapis.com/gmail/v1/users/me/messages",
@@ -1357,13 +1546,17 @@ async def list_stripe_payment_events(api_key: str) -> list[dict[str, Any]]:
         return []
     since = int((_utc_now() - timedelta(days=30)).timestamp())
     async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(
-            "https://api.stripe.com/v1/events",
-            headers={"Authorization": f"Bearer {decrypted_key}"},
-            params={"type": "payment_intent.succeeded", "created[gte]": since, "limit": 100},
-        )
-        response.raise_for_status()
-        return response.json().get("data", [])
+        for attempt in range(3):
+            response = await client.get(
+                "https://api.stripe.com/v1/events",
+                headers={"Authorization": f"Bearer {decrypted_key}"},
+                params={"type": "payment_intent.succeeded", "created[gte]": since, "limit": 100},
+            )
+            if response.status_code != 429:
+                response.raise_for_status()
+                return response.json().get("data", [])
+            await asyncio.sleep(2 ** attempt)
+    return []
 
 
 async def list_paypal_completed_transactions(client_id: str, client_secret: str) -> list[dict[str, Any]]:
@@ -1425,44 +1618,50 @@ async def poll_reply_threads() -> dict[str, int]:
         paused = 0
         flagged = 0
         for invoice in invoices:
-            integration = integrations.get(invoice.user_id)
-            if not integration:
-                continue
-            replies: list[dict[str, Any]] = []
-            if integration.gmail_connected:
-                replies.extend(await fetch_gmail_thread_replies(integration, invoice, session=session))
-            if integration.outlook_connected:
-                replies.extend(await fetch_outlook_thread_replies(integration, invoice, session=session))
-            for reply in replies:
-                provider_message_id = reply.get("id", "")
-                if provider_message_id:
-                    existing = await session.execute(
-                        select(InvoiceReplyEvent).where(
-                            InvoiceReplyEvent.user_id == invoice.user_id,
-                            InvoiceReplyEvent.provider == reply.get("provider", ""),
-                            InvoiceReplyEvent.provider_message_id == provider_message_id,
+            try:
+                invoice_id = _require_invoice_id(invoice)
+                integration = integrations.get(invoice.user_id)
+                if not integration:
+                    continue
+                replies: list[dict[str, Any]] = []
+                if integration.gmail_connected:
+                    replies.extend(await fetch_gmail_thread_replies(integration, invoice, session=session))
+                if integration.outlook_connected:
+                    replies.extend(await fetch_outlook_thread_replies(integration, invoice, session=session))
+                for reply in replies:
+                    provider_message_id = reply.get("id", "")
+                    if provider_message_id:
+                        existing = await session.execute(
+                            select(InvoiceReplyEvent).where(
+                                InvoiceReplyEvent.user_id == invoice.user_id,
+                                InvoiceReplyEvent.provider == reply.get("provider", ""),
+                                InvoiceReplyEvent.provider_message_id == provider_message_id,
+                            )
                         )
-                    )
-                    if existing.scalar_one_or_none():
-                        continue
-                intent = classify_reply_intent(reply.get("text", ""))
-                action = apply_reply_intent(invoice, intent, payment_confirmed=False)
-                if invoice.cron_paused:
-                    paused += 1
-                if intent.get("manual_review_required"):
-                    flagged += 1
-                session.add(InvoiceReplyEvent(
-                    invoice_id=invoice.id or 0,
-                    user_id=invoice.user_id,
-                    provider=reply.get("provider", ""),
-                    provider_message_id=provider_message_id,
-                    text=reply.get("text", ""),
-                    intent_label=intent["label"],
-                    action_taken=action["action"],
-                    received_at=reply.get("received_at") or _utc_now(),
-                ))
-                session.add(invoice)
-                processed += 1
+                        if existing.scalar_one_or_none():
+                            continue
+                    intent = classify_reply_intent(reply.get("text", ""))
+                    action = apply_reply_intent(invoice, intent, payment_confirmed=False)
+                    if invoice.cron_paused:
+                        paused += 1
+                    if intent.get("manual_review_required"):
+                        flagged += 1
+                    session.add(InvoiceReplyEvent(
+                        invoice_id=invoice_id,
+                        user_id=invoice.user_id,
+                        provider=reply.get("provider", ""),
+                        provider_message_id=provider_message_id,
+                        text=reply.get("text", ""),
+                        intent_label=intent["label"],
+                        action_taken=action["action"],
+                        received_at=reply.get("received_at") or _utc_now(),
+                    ))
+                    session.add(invoice)
+                    processed += 1
+            except Exception:
+                logger.exception("Failed to poll replies for invoice %s", getattr(invoice, "id", None))
+                await session.rollback()
+                continue
         await session.commit()
         return {"processed_replies": processed, "paused_invoices": paused, "manual_review_flags": flagged}
 
@@ -1470,7 +1669,9 @@ async def poll_reply_threads() -> dict[str, int]:
 async def poll_payment_providers() -> dict[str, int]:
     async with get_managed_session() as session:
         # Also poll "overdue" status invoices
-        invoice_result = await session.execute(select(Invoice).where(Invoice.status.in_({"pending", "overdue"})))
+        invoice_result = await session.execute(
+            select(Invoice).where(Invoice.status.in_({"pending", "overdue"})).with_for_update()
+        )
         invoices = invoice_result.scalars().all()
         integrations_result = await session.execute(select(InvoiceIntegrationSettings))
         integrations = {item.user_id: item for item in integrations_result.scalars().all()}
@@ -1479,6 +1680,7 @@ async def poll_payment_providers() -> dict[str, int]:
         processed = 0
         matched = 0
         for invoice in invoices:
+            invoice_id = _require_invoice_id(invoice)
             integration = integrations.get(invoice.user_id)
             if not integration:
                 continue
@@ -1492,13 +1694,15 @@ async def poll_payment_providers() -> dict[str, int]:
                 existing = await session.execute(select(InvoicePaymentEvent).where(InvoicePaymentEvent.provider == "stripe", InvoicePaymentEvent.provider_event_id == payment["provider_event_id"]))
                 if existing.scalar_one_or_none():
                     continue
+                if invoice.status == "paid":
+                    continue
                 invoice.status = "paid"
                 invoice.cron_paused = True
                 invoice.paid_at = _utc_now()
                 invoice.updated_at = _utc_now()
                 session.add(InvoicePaymentEvent(
                     user_id=invoice.user_id,
-                    invoice_id=invoice.id or 0,
+                    invoice_id=invoice_id,
                     provider="stripe",
                     provider_event_id=payment["provider_event_id"],
                     amount=payment["amount"],
@@ -1521,13 +1725,15 @@ async def poll_payment_providers() -> dict[str, int]:
                 existing = await session.execute(select(InvoicePaymentEvent).where(InvoicePaymentEvent.provider == "paypal", InvoicePaymentEvent.provider_event_id == payment["provider_event_id"]))
                 if existing.scalar_one_or_none():
                     continue
+                if invoice.status == "paid":
+                    continue
                 invoice.status = "paid"
                 invoice.cron_paused = True
                 invoice.paid_at = _utc_now()
                 invoice.updated_at = _utc_now()
                 session.add(InvoicePaymentEvent(
                     user_id=invoice.user_id,
-                    invoice_id=invoice.id or 0,
+                    invoice_id=invoice_id,
                     provider="paypal",
                     provider_event_id=payment["provider_event_id"],
                     amount=payment["amount"],
@@ -1624,10 +1830,11 @@ async def enqueue_overdue_reminders():
                 Invoice.status.in_({"pending", "overdue"}),
                 Invoice.due_date < today,
                 Invoice.cron_paused == False,  # noqa: E712
-            )
+            ).with_for_update()
         )
         overdue_list = result.scalars().all()
         for invoice in overdue_list:
+            invoice_id = _require_invoice_id(invoice)
             days_overdue = max(0, (today - invoice.due_date).days)
             if days_overdue > 90:
                 invoice.cron_paused = True
@@ -1676,7 +1883,7 @@ async def enqueue_overdue_reminders():
                             priority=3,
                         )
                         log = InvoiceReminderLog(
-                            invoice_id=invoice.id or 0,
+                            invoice_id=invoice_id,
                             user_id=invoice.user_id,
                             stage_day=45,
                             template_key="pause",
@@ -1720,7 +1927,7 @@ async def enqueue_overdue_reminders():
                 select(func.count(InvoiceReminderLog.id)).where(
                     InvoiceReminderLog.user_id == invoice.user_id,
                     InvoiceReminderLog.status == "sent",
-                    InvoiceReminderLog.sent_at >= datetime(month_start.year, month_start.month, 1, tzinfo=timezone.utc)
+                    InvoiceReminderLog.sent_at >= datetime(month_start.year, month_start.month, 1)
                 )
             )
             sent_count = sent_count_res.scalar_one() or 0
@@ -1729,7 +1936,14 @@ async def enqueue_overdue_reminders():
                 continue
 
             templates = _templates_from_settings(user_settings)
-            stage = _select_stage(days_overdue, templates)
+            sent_logs_res = await session.execute(
+                select(InvoiceReminderLog.template_key).where(
+                    InvoiceReminderLog.invoice_id == invoice_id,
+                    InvoiceReminderLog.status.in_({"queued", "sent"}),
+                )
+            )
+            sent_template_keys = {row[0] for row in sent_logs_res.all() if row[0]}
+            stage = _select_next_stage(days_overdue, templates, sent_template_keys)
             if stage["id"] == "original" or not stage.get("enabled", True):
                 continue
 
@@ -1755,7 +1969,7 @@ async def enqueue_overdue_reminders():
                 priority=3,
             )
             log = InvoiceReminderLog(
-                invoice_id=invoice.id or 0,
+                invoice_id=invoice_id,
                 user_id=invoice.user_id,
                 stage_day=metadata["stage_day"],
                 template_key=metadata["template_key"],
@@ -1811,7 +2025,7 @@ async def handle_send_email(payload: dict):
                 async with get_managed_session() as session:
                     log_res = await session.execute(select(InvoiceReminderLog).where(InvoiceReminderLog.id == log_id))
                     log = log_res.scalar_one_or_none()
-                    if log:
+                    if log and log.status in {"queued", "processing"}:
                         log.status = "failed" if send_failed else "sent"
                         log.provider = provider
                         log.sent_at = _utc_now()
@@ -1825,8 +2039,19 @@ register_job_handler("invoicefollow", "send_email", handle_send_email)
 
 
 @invoice_router.get("")
-async def list_invoices(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    result = await session.execute(select(Invoice).where(Invoice.user_id == user.id).order_by(Invoice.due_date))
+async def list_invoices(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(100, ge=1, le=250),
+    offset: int = Query(0, ge=0),
+):
+    result = await session.execute(
+        select(Invoice)
+        .where(Invoice.user_id == user.id)
+        .order_by(Invoice.due_date)
+        .limit(limit)
+        .offset(offset)
+    )
     return [_invoice_to_dict(invoice) for invoice in result.scalars().all()]
 
 
@@ -1851,7 +2076,7 @@ async def create_invoice(body: InvoiceCreate, user: User = Depends(get_current_u
         invoice_number=body.invoice_number,
         notes=body.notes,
         source="manual_form",
-        promise_token=uuid.uuid4().hex,
+        promise_token=_token_urlsafe(),
     )
     session.add(invoice)
     await session.flush()
@@ -1889,7 +2114,7 @@ async def import_invoices(file: UploadFile = File(...), user: User = Depends(get
             invoice_number=payload.invoice_number,
             notes=payload.notes,
             source="import",
-            promise_token=uuid.uuid4().hex,
+            promise_token=_token_urlsafe(),
         )
         for payload in payloads
     ]
@@ -1966,14 +2191,14 @@ async def confirm_detected_invoice(draft_id: int, body: DraftConfirmRequest, use
         notes=body.notes,
         source=draft.source,
         source_message_id=draft.source_message_id,
-        promise_token=uuid.uuid4().hex,
+        promise_token=_token_urlsafe(),
     )
-    draft.status = "confirmed"
     session.add(invoice)
-    session.add(draft)
     await session.flush()
     await session.refresh(invoice)
-    return {"invoice": _invoice_to_dict(invoice), "draft_status": draft.status}
+    await session.delete(draft)
+    await session.flush()
+    return {"invoice": _invoice_to_dict(invoice), "draft_status": "confirmed"}
 
 
 @invoice_router.get("/summary")
@@ -2213,6 +2438,15 @@ async def update_invoice_settings(body: InvoiceSettingsUpdate, user: User = Depe
         raise HTTPException(status_code=400, detail="send_hour must be between 0 and 23")
     if "no_send_after_hour" in updates and updates["no_send_after_hour"] is not None and not 0 <= updates["no_send_after_hour"] <= 23:
         raise HTTPException(status_code=400, detail="no_send_after_hour must be between 0 and 23")
+    if "timezone" in updates and updates["timezone"]:
+        try:
+            ZoneInfo(updates["timezone"])
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="timezone must be a valid IANA timezone") from exc
+    next_send_hour = updates.get("send_hour", user_settings.send_hour)
+    next_no_send_after = updates.get("no_send_after_hour", user_settings.no_send_after_hour)
+    if next_send_hour is not None and next_no_send_after is not None and next_send_hour > next_no_send_after:
+        raise HTTPException(status_code=400, detail="send_hour must be before or equal to no_send_after_hour")
     for key, value in updates.items():
         setattr(user_settings, key, value)
     session.add(user_settings)
@@ -2242,7 +2476,7 @@ async def update_invoice_template(body: InvoiceTemplateUpdate, user: User = Depe
 @connect_router.post("/gmail")
 async def connect_gmail(body: ConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     integrations = await _get_or_create_integration_settings(session, user)
-    state = uuid.uuid4().hex
+    state = _make_oauth_state()
     integrations.gmail_state = state
     if body.email:
         integrations.gmail_email = str(body.email)
@@ -2251,7 +2485,7 @@ async def connect_gmail(body: ConnectRequest, user: User = Depends(get_current_u
     await session.flush()
     scopes = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
     client_id = os.getenv("GOOGLE_CLIENT_ID", "")
-    redirect_uri = body.redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "https://api.devforgeapp.pro/connect/gmail/callback")
+    redirect_uri = body.redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", f"{DEFAULT_BACKEND_PUBLIC_URL}/connect/gmail/callback")
     oauth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -2279,7 +2513,7 @@ async def gmail_oauth_callback(
         )
     )
     integrations = result.scalar_one_or_none()
-    if not integrations:
+    if not integrations or not _oauth_state_is_fresh(state):
         raise HTTPException(status_code=400, detail="Invalid Gmail OAuth state.")
     token_data = await exchange_gmail_oauth_code(code, redirect_uri)
     if not token_data.get("access_token"):
@@ -2299,7 +2533,7 @@ async def gmail_oauth_callback(
 @connect_router.post("/outlook")
 async def connect_outlook(body: ConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     integrations = await _get_or_create_integration_settings(session, user)
-    state = uuid.uuid4().hex
+    state = _make_oauth_state()
     integrations.outlook_state = state
     if body.email:
         integrations.outlook_email = str(body.email)
@@ -2308,7 +2542,7 @@ async def connect_outlook(body: ConnectRequest, user: User = Depends(get_current
     await session.flush()
     scopes = ["Mail.Read", "Mail.Send", "offline_access"]
     client_id = os.getenv("MICROSOFT_CLIENT_ID", "")
-    redirect_uri = body.redirect_uri or os.getenv("MICROSOFT_REDIRECT_URI", "https://api.devforgeapp.pro/connect/outlook/callback")
+    redirect_uri = body.redirect_uri or os.getenv("MICROSOFT_REDIRECT_URI", f"{DEFAULT_BACKEND_PUBLIC_URL}/connect/outlook/callback")
     oauth_url = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?" + urlencode({
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -2334,7 +2568,7 @@ async def outlook_oauth_callback(
         )
     )
     integrations = result.scalar_one_or_none()
-    if not integrations:
+    if not integrations or not _oauth_state_is_fresh(state):
         raise HTTPException(status_code=400, detail="Invalid Outlook OAuth state.")
     token_data = await exchange_outlook_oauth_code(code, redirect_uri)
     if not token_data.get("access_token"):
@@ -2360,8 +2594,10 @@ async def connect_stripe(body: ConnectRequest, user: User = Depends(get_current_
         raise HTTPException(status_code=400, detail="Stripe restricted API key is required.")
 
     is_test = "unittest" in sys.modules or body.api_key == "test-key"
+    if not is_test and not body.api_key.startswith("rk_"):
+        raise HTTPException(status_code=400, detail="Use a Stripe restricted key that starts with rk_.")
     if not is_test:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=20) as client:
             try:
                 resp = await client.get("https://api.stripe.com/v1/balance", headers={"Authorization": f"Bearer {body.api_key}"})
                 if resp.status_code != 200:
@@ -2427,10 +2663,8 @@ async def invoice_metrics(user: User = Depends(get_current_user), session: Async
     recovered_amount = sum(invoice.amount for invoice in paid)
     pending_amount = sum(invoice.amount for invoice in pending)
     at_risk = [invoice for invoice in pending if (date.today() - invoice.due_date).days > 30]
-    avg_payment_time = 0
     paid_with_dates = [invoice for invoice in paid if invoice.paid_at]
-    if paid_with_dates:
-        avg_payment_time = round(sum((invoice.paid_at.date() - (invoice.issued_date or invoice.due_date)).days for invoice in paid_with_dates) / len(paid_with_dates), 1)
+    avg_payment_time = _average_payment_time_days(paid_with_dates)
     return {
         "total_invoices": len(invoices),
         "recovered_count": len(paid),
@@ -2444,6 +2678,7 @@ async def invoice_metrics(user: User = Depends(get_current_user), session: Async
 
 
 @digest_router.get("/digest")
+@digest_router.get("/invoicefollow/digest")
 async def digest(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     invoice_result = await session.execute(select(Invoice).where(Invoice.user_id == user.id))
     log_result = await session.execute(select(InvoiceReminderLog).where(InvoiceReminderLog.user_id == user.id))
@@ -2458,6 +2693,7 @@ async def digest(user: User = Depends(get_current_user), session: AsyncSession =
 
 @public_router.post("/webhooks/stripe")
 async def stripe_webhook(request: Request, stripe_signature: str | None = Header(default=None), session: AsyncSession = Depends(get_session)):
+    _rate_limit_public(request, "stripe_webhook")
     payload = await request.body()
     sig_header = stripe_signature
     endpoint_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
@@ -2481,13 +2717,18 @@ async def stripe_webhook(request: Request, stripe_signature: str | None = Header
         metadata = obj.get("metadata") or {}
         invoice_id = metadata.get("invoice_id")
 
-        query = select(Invoice).where(Invoice.status.in_({"pending", "overdue"}))
-        if invoice_id:
-            try:
-                invoice_id_int = int(invoice_id)
-                query = query.where(Invoice.id == invoice_id_int)
-            except ValueError:
-                pass
+        if not invoice_id:
+            return {"status": "ignored", "reason": "missing_invoice_id"}
+        try:
+            invoice_id_int = int(invoice_id)
+        except (TypeError, ValueError):
+            return {"status": "ignored", "reason": "invalid_invoice_id"}
+
+        query = (
+            select(Invoice)
+            .where(Invoice.id == invoice_id_int, Invoice.status.in_({"pending", "overdue"}))
+            .with_for_update()
+        )
 
         result = await session.execute(query)
         invoices = result.scalars().all()
@@ -2512,7 +2753,7 @@ async def stripe_webhook(request: Request, stripe_signature: str | None = Header
 
                 session.add(InvoicePaymentEvent(
                     user_id=invoice.user_id,
-                    invoice_id=invoice.id or 0,
+                    invoice_id=_require_invoice_id(invoice),
                     provider="stripe",
                     provider_event_id=payment["provider_event_id"],
                     amount=payment["amount"],
@@ -2528,11 +2769,14 @@ async def stripe_webhook(request: Request, stripe_signature: str | None = Header
 
 
 @public_router.get("/promise/{token}")
-async def public_promise(token: str, session: AsyncSession = Depends(get_session)):
+async def public_promise(token: str, request: Request, session: AsyncSession = Depends(get_session)):
+    _rate_limit_public(request, "promise")
     result = await session.execute(select(Invoice).where(Invoice.promise_token == token))
     invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invalid or expired link")
+    if invoice.status == "paid":
+        raise HTTPException(status_code=409, detail="Invoice is already paid")
     today = date.today()
     invoice.cron_paused = True
     invoice.payment_promise_date = today

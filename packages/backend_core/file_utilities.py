@@ -106,11 +106,10 @@ def process_image_file(
 
     try:
         image = Image.open(io.BytesIO(content))
-    except UnidentifiedImageError as exc:
-        raise ValueError("Unsupported image file. Use PNG, JPG, WEBP, HEIC, SVG, or PDF.") from exc
-
-    image.load()
-    image = ImageOps.exif_transpose(image)
+        image.load()
+        image = ImageOps.exif_transpose(image)
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("Unsupported or corrupt image file. Use PNG, JPG, WEBP, HEIC, SVG, or PDF.") from exc
 
     pillow_format, extension, media_type = _infer_output(filename, output_format)
     normalized_quality = max(1, min(int(quality or 82), 95))
@@ -127,7 +126,10 @@ def process_image_file(
     elif pillow_format == "PNG":
         save_kwargs.update({"optimize": True})
 
-    image.save(output, format=pillow_format, **save_kwargs)
+    try:
+        image.save(output, format=pillow_format, **save_kwargs)
+    except OSError as exc:
+        raise ValueError("Could not process image file. Try a larger or standard RGB image.") from exc
     processed = output.getvalue()
 
     return ProcessedImage(

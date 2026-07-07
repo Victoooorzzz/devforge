@@ -34,6 +34,17 @@ class InvoiceImportTests(unittest.TestCase):
         self.assertEqual(invoices[0].client_name, "Acme")
         self.assertEqual(invoices[0].amount, 120.50)
 
+    def test_parses_european_amounts_and_dates(self):
+        content = (
+            "client_name,client_email,amount,due_date\n"
+            "Euro Client,billing@example.com,\"1.234,56\",31/12/2026\n"
+        ).encode("utf-8")
+
+        invoices = _parse_invoice_import(content, "invoices.csv")
+
+        self.assertEqual(invoices[0].amount, 1234.56)
+        self.assertEqual(invoices[0].due_date.isoformat(), "2026-12-31")
+
     def test_import_reports_row_errors_without_silent_partial_success(self):
         content = (
             "client_name,client_email,amount,due_date\n"

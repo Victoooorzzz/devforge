@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
 
@@ -10,6 +10,10 @@ def _get(item: Any, key: str, default: Any = None) -> Any:
     if isinstance(item, dict):
         return item.get(key, default)
     return getattr(item, key, default)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _number(value: Any) -> float:
@@ -126,7 +130,7 @@ def summarize_trackers(trackers: Iterable[Any]) -> dict[str, Any]:
 
 
 def build_tracker_health(trackers: Iterable[Any], *, now: datetime | None = None) -> list[dict[str, Any]]:
-    current_time = now or datetime.utcnow()
+    current_time = now or _utc_now()
     results: list[dict[str, Any]] = []
 
     for item in trackers:
@@ -137,12 +141,21 @@ def build_tracker_health(trackers: Iterable[Any], *, now: datetime | None = None
         stale_after_hours = max(frequency_hours * 2, 24)
         current_price = _get(item, "current_price")
         in_stock = _get(item, "in_stock")
+        status = str(_get(item, "status", "active") or "active")
 
         health = "healthy"
         severity = "ok"
         detail = "Tracker is checking successfully."
 
-        if last_checked is None:
+        if status == "blocked":
+            health = "blocked"
+            severity = "critical"
+            detail = "The store returned an anti-bot, access-denied, or CAPTCHA challenge."
+        elif status == "needs_selector":
+            health = "needs_selector"
+            severity = "warning"
+            detail = "Static HTML did not expose a reliable price; add a CSS selector or use a different product URL."
+        elif last_checked is None:
             health = "never_checked"
             severity = "critical"
             detail = "Tracker has not completed an initial scrape."
@@ -175,7 +188,7 @@ def build_tracker_health(trackers: Iterable[Any], *, now: datetime | None = None
 
 def summarize_webhooks(requests: Iterable[Any], *, now: datetime | None = None) -> dict[str, Any]:
     items = list(requests)
-    current_time = now or datetime.utcnow()
+    current_time = now or _utc_now()
     recent_cutoff = current_time - timedelta(hours=24)
     recent_24h = 0
     retry_pressure = 0

@@ -178,8 +178,8 @@ function WebhookMonitorDemo() {
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-      <div className="space-y-4">
+    <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+      <div className="min-w-0 space-y-4">
         <div className="demo-pulse surface-card-raised border border-white/10 p-4">
           <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Terminal capture</p>
           <div className="mt-3 rounded-md bg-black/40 p-3 font-mono text-xs leading-relaxed" style={{ color: "var(--color-text)" }}>
@@ -209,7 +209,7 @@ function WebhookMonitorDemo() {
           ]}
         />
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid min-w-0 gap-4 md:grid-cols-2">
         <div className="surface-card-raised border border-white/10 p-4 md:col-span-2">
           <div className="flex flex-wrap gap-2">
             {["Overview", "Payload", "Headers", "Response", "Replay history"].map((tab) => (
@@ -222,7 +222,7 @@ function WebhookMonitorDemo() {
         <div className="surface-card-raised border border-white/10 p-4 md:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h4 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Response and replay history</h4>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button type="button" className="btn-secondary">Replay this event</button>
               <button type="button" className="btn-secondary">Copy cURL</button>
             </div>
@@ -329,8 +329,8 @@ function PriceTrackrDemo() {
   ];
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-      <div className="space-y-4">
+    <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+      <div className="min-w-0 space-y-4">
         <DemoDataTable
           rows={products}
           getRowKey={(row) => row.product}
@@ -356,7 +356,7 @@ function PriceTrackrDemo() {
           <p className="mt-2 text-xs" style={{ color: "var(--color-text-secondary)" }}>Team can run checks every 10 minutes; Pro starts at hourly checks.</p>
         </div>
       </div>
-      <div className="space-y-4">
+      <div className="min-w-0 space-y-4">
         <PriceChart points={chartPoints} />
         <div className="surface-card-raised border border-white/10 p-4">
           <h4 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Why this matters</h4>
@@ -364,7 +364,7 @@ function PriceTrackrDemo() {
             Competitor dropped 20% in 3 days while staying in stock. Review the campaign, but do not auto-match yet because the margin floor is close.
           </p>
         </div>
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
           <div className="surface-card-raised border border-white/10 p-4"><p className="text-xs text-neutral-400">Your price</p><p className="mt-1 font-semibold text-white">$99</p></div>
           <div className="surface-card-raised border border-white/10 p-4"><p className="text-xs text-neutral-400">Competitor</p><p className="mt-1 font-semibold text-white">$79</p></div>
           <div className="surface-card-raised border border-white/10 p-4"><p className="text-xs text-neutral-400">Recommended</p><p className="mt-1 font-semibold text-white">Watch, do not match</p></div>

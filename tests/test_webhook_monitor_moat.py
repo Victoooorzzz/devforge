@@ -192,6 +192,20 @@ class WebhookMonitorMoatTests(unittest.TestCase):
         self.assertEqual(exported_request["body"]["mode"], "raw")
         self.assertEqual(exported_request["body"]["raw"], '{"type":"invoice.paid","data":{"amount":9900}}')
 
+    def test_failed_log_status_includes_timeout_forward_errors(self):
+        timeout_request = SimpleNamespace(last_retry_status=None, forward_error="Request timed out", auto_retry_enabled=False)
+
+        self.assertTrue(webhook_main._matches_log_status(timeout_request, "failed"))
+
+    def test_forward_errors_are_sanitized_before_storage(self):
+        message = 'Forward failed: {"token":"sk_live_secret","authorization":"Bearer abc"}'
+
+        sanitized = webhook_main._safe_forward_error(message)
+
+        self.assertNotIn("sk_live_secret", sanitized)
+        self.assertNotIn("Bearer abc", sanitized)
+        self.assertIn("[redacted]", sanitized)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -42,6 +42,11 @@ try:
 except ImportError:
     Levenshtein = None
 
+try:
+    import phonenumbers
+except ImportError:
+    phonenumbers = None
+
 # In-memory rate limiting and concurrent job tracking for demo uploads
 DEMO_IP_LIMITS = {}
 DEMO_ACTIVE_JOBS = {}
@@ -49,20 +54,49 @@ DEMO_LIMIT_WINDOW = 60
 DEMO_MAX_PER_WINDOW = 5
 DEMO_MAX_CONCURRENT = 2
 
+def _clean_numeric_string(s: str) -> str:
+    s = s.strip()
+    if not s:
+        return ""
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        parts = s.split(",")
+        if len(parts) == 2 and len(parts[1]) in (1, 2):
+            s = s.replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    return s
+
 def _magic_norm_phone(v):
     if pd.isna(v):
         return v
-    d = re.sub(r"\D", "", str(v))
+    raw = str(v).strip()
+    if not raw:
+        return v
+    if phonenumbers is not None:
+        try:
+            region = "PE" if len(re.sub(r"\D", "", raw)) == 9 else "US"
+            parsed = phonenumbers.parse(raw, region if not raw.startswith("+") else None)
+            if phonenumbers.is_valid_number(parsed):
+                return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+        except Exception:
+            pass
+    d = re.sub(r"\D", "", raw)
     if len(d) == 9:
         return f"+51 {d[:3]} {d[3:6]} {d[6:]}"
     if len(d) == 10:
         return f"+1 ({d[:3]}) {d[3:6]}-{d[6:]}"
-    return d if d else str(v)
+    return d if d else raw
 
 def _magic_clean_price(v):
     if pd.isna(v):
         return v
-    cleaned = re.sub(r"[^\d.,]", "", str(v)).replace(",", ".")
+    num_str = re.sub(r"[^\d.,\-]", "", str(v))
+    cleaned = _clean_numeric_string(num_str)
     try:
         return float(cleaned)
     except (ValueError, TypeError):
@@ -148,6 +182,7 @@ class ProcessedFile(SQLModel, table=True):
     empty_removed: int = Field(default=0)
     whitespace_fixed: int = Field(default=0)
     error_message: Optional[str] = None
+    ip_address: Optional[str] = None
     created_at: datetime = Field(default_factory=_now_naive)
     updated_at: datetime = Field(default_factory=_now_naive)
     completed_at: Optional[datetime] = None
@@ -243,24 +278,40 @@ def _detect_delimiter(sample: str) -> str:
 
 def _detect_headers(sample: str, delimiter: str) -> bool:
     try:
-        sniffer_result = csv.Sniffer().has_header(sample[:65536])
-    except csv.Error:
-        sniffer_result = True
-    try:
         rows = list(csv.reader(io.StringIO(sample[:65536]), delimiter=delimiter))
     except csv.Error:
-        return sniffer_result
+        return True
     rows = [row for row in rows if any(cell.strip() for cell in row)]
     if len(rows) < 2:
-        return sniffer_result
+        return True
     first = [cell.strip() for cell in rows[0]]
     second = [cell.strip() for cell in rows[1]]
-    if len(first) != len(second) or not first:
-        return sniffer_result
+    if not first:
+        return False
+
+    def is_number(s: str) -> bool:
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
+    if any(is_number(cell) for cell in first):
+        return False
+
+    first_types = [1 if re.search(r"[A-Za-z]", cell) else 0 for cell in first]
+    second_types = [1 if re.search(r"[A-Za-z]", cell) else 0 for cell in second]
+    if sum(first_types) > sum(second_types):
+        return True
+
+    try:
+        return csv.Sniffer().has_header(sample[:65536])
+    except csv.Error:
+        pass
+
     first_unique = len(set(first)) == len(first)
     first_looks_named = sum(bool(re.search(r"[A-Za-z_]", cell)) for cell in first) >= max(1, len(first) // 2)
-    second_has_data = any(bool(re.search(r"\d|@|[$€]", cell)) for cell in second)
-    return bool(sniffer_result or (first_unique and first_looks_named and second_has_data))
+    return bool(first_unique and first_looks_named)
 
 
 def _manual_options(error: str) -> dict[str, Any]:
@@ -279,29 +330,52 @@ def _load_df(
     encoding: str | None = None,
     delimiter: str | None = None,
     headers: bool = True,
+    nrows: int | None = None,
 ) -> pd.DataFrame:
     normalized = filename.lower()
-    if normalized.endswith('.csv'):
-        if encoding is None:
-            decoded, encoding = _decode_content(content)
-            delimiter = delimiter or _detect_delimiter(decoded)
-            source: io.BytesIO | io.StringIO = io.StringIO(decoded)
-        else:
-            source = io.BytesIO(content)
-        header = 0 if headers else None
-        return pd.read_csv(
-            source,
-            sep=delimiter or ",",
-            encoding=None if isinstance(source, io.StringIO) else encoding,
-            header=header,
-            skip_blank_lines=True,
-        )
-    if normalized.endswith('.json'):
-        df = pd.read_json(io.BytesIO(content))
-        if isinstance(df, pd.Series):
-            df = df.to_frame().T
-        return df
-    return pd.read_excel(io.BytesIO(content))
+    if normalized.endswith((".csv", ".json")):
+        if content.startswith(b"%PDF"):
+            raise ValueError("Invalid file: File is a PDF document, not CSV/JSON.")
+        if content.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("Invalid file: File is a PNG image, not CSV/JSON.")
+        if content.startswith(b"\xff\xd8\xff"):
+            raise ValueError("Invalid file: File is a JPEG image, not CSV/JSON.")
+        if content.startswith(b"GIF8"):
+            raise ValueError("Invalid file: File is a GIF image, not CSV/JSON.")
+        if content.startswith(b"PK\x03\x04") and not normalized.endswith(".xlsx"):
+            raise ValueError("Invalid file: File is a ZIP archive or Excel file, not CSV/JSON.")
+        if content.startswith(b"MZ"):
+            raise ValueError("Invalid file: File is an executable, not CSV/JSON.")
+
+    try:
+        if normalized.endswith('.csv'):
+            if encoding is None:
+                decoded, encoding = _decode_content(content)
+                delimiter = delimiter or _detect_delimiter(decoded)
+                source: io.BytesIO | io.StringIO = io.StringIO(decoded)
+            else:
+                source = io.BytesIO(content)
+            header = 0 if headers else None
+            return pd.read_csv(
+                source,
+                sep=delimiter or ",",
+                encoding=None if isinstance(source, io.StringIO) else encoding,
+                header=header,
+                skip_blank_lines=True,
+                nrows=nrows,
+            )
+        if normalized.endswith('.json'):
+            df = pd.read_json(io.BytesIO(content))
+            if isinstance(df, pd.Series):
+                df = df.to_frame().T
+            if nrows is not None:
+                df = df.head(nrows)
+            return df
+        return pd.read_excel(io.BytesIO(content), nrows=nrows)
+    except (pd.errors.ParserError, pd.errors.EmptyDataError, csv.Error) as e:
+        raise ValueError(f"CSV parsing failed: {str(e)}")
+    except Exception as e:
+        raise ValueError(f"Failed to load file: {str(e)}")
 
 def _save_df(df: pd.DataFrame, filename: str) -> io.BytesIO:
     buf = io.BytesIO()
@@ -426,27 +500,39 @@ def _basic_clean(df: pd.DataFrame, config: dict[str, Any]) -> tuple[pd.DataFrame
     clean = df.copy()
     rows_original = len(clean)
     null_cells_initial = int(clean.isna().sum().sum())
-    text_columns = [col for col in clean.columns if clean[col].dtype == object or str(clean[col].dtype).startswith("string")]
     whitespace_fixed = 0
     text_normalized = 0
+
+    def has_text_values(series: pd.Series) -> bool:
+        return bool(series.dropna().map(lambda value: isinstance(value, str)).any())
+
+    text_columns = [col for col in clean.columns if has_text_values(clean[col])]
 
     if config.get("trim_whitespace", True):
         for col in text_columns:
             original = clean[col]
-            as_string = original.astype("string")
-            stripped = as_string.str.strip()
-            mask = original.notna() & (as_string != stripped)
-            whitespace_fixed += int(mask.sum())
-            clean[col] = stripped.where(original.notna(), original)
 
-    if config.get("normalize_text", True):
+            def strip_value(value: Any) -> Any:
+                return value.strip() if isinstance(value, str) else value
+
+            stripped = original.astype(object).map(strip_value)
+            mask = original.notna() & (original.astype(object) != stripped)
+            whitespace_fixed += int(mask.sum())
+            clean[col] = stripped
+
+    # collapse_spaces option (with normalize_text as fallback)
+    collapse_opt = config.get("collapse_spaces", config.get("normalize_text", True))
+    if collapse_opt:
         for col in text_columns:
             original = clean[col]
-            as_string = original.astype("string")
-            collapsed = as_string.str.replace(r"\s+", " ", regex=True)
-            mask = original.notna() & (as_string != collapsed)
+
+            def collapse_value(value: Any) -> Any:
+                return re.sub(r"\s+", " ", value) if isinstance(value, str) else value
+
+            collapsed = original.astype(object).map(collapse_value)
+            mask = original.notna() & (original.astype(object) != collapsed)
             text_normalized += int(mask.sum())
-            clean[col] = collapsed.where(original.notna(), original)
+            clean[col] = collapsed
 
     # Convert empty strings to NA so they can be dropped if drop_empty_rows is True
     for col in text_columns:
@@ -524,19 +610,18 @@ def _parse_currency(value: Any) -> tuple[Any, str | None]:
     raw = str(value).strip()
     upper = raw.upper()
     currency = None
-    if "$" in raw or "USD" in upper:
+    if "\u20ac" in raw:
+        currency = "EUR"
+    elif "$" in raw or "USD" in upper:
         currency = "USD"
-    elif "S/" in upper or "PEN" in upper:
+    elif "S/" in upper or "PEN" in upper or "SOL" in upper:
         currency = "PEN"
     elif "EUR" in upper or "€" in raw:
         currency = "EUR"
     number = re.sub(r"[^0-9,.\-]", "", raw)
-    if "," in number and "." in number:
-        number = number.replace(",", "")
-    elif "," in number and "." not in number:
-        number = number.replace(",", ".")
+    cleaned = _clean_numeric_string(number)
     try:
-        return float(number), currency
+        return float(cleaned), currency
     except ValueError:
         return value, currency
 
@@ -693,28 +778,75 @@ def _run_fuzzy_matching(df: pd.DataFrame, config: dict[str, Any], max_rows: int 
             if text:
                 value_rows.setdefault(text, []).append(int(row_index))
         values = list(value_rows.keys())
+
+        # Build matches graph (adjacency list)
+        adj: dict[str, list[tuple[str, int, dict[str, int]]]] = {v: [] for v in values}
+        for i, v1 in enumerate(values):
+            for j in range(i + 1, len(values)):
+                v2 = values[j]
+
+                # Length difference pruning:
+                len_diff = abs(len(v1) - len(v2))
+                max_len = max(len(v1), len(v2), 1)
+                # If length difference ratio exceeds 0.5, they are extremely unlikely to have similarity >= 85
+                if len_diff / max_len > 0.5:
+                    continue
+
+                scores = _score_similarity(v1, v2)
+                score = max(scores.values())
+                if score >= threshold:
+                    adj[v1].append((v2, score, scores))
+                    adj[v2].append((v1, score, scores))
+
+        # BFS Connected Components
         visited: set[str] = set()
         for value in values:
             if value in visited:
                 continue
-            members = [{"value": value, "rows": value_rows[value], "score": 100}]
-            for candidate in values:
-                if candidate == value or candidate in visited:
-                    continue
-                scores = _score_similarity(value, candidate)
-                score = max(scores.values())
-                if score >= threshold:
-                    members.append({"value": candidate, "rows": value_rows[candidate], "score": score, "scores": scores})
-                    visited.add(candidate)
-            if len(members) > 1:
-                visited.add(value)
-                representative = max(members, key=lambda item: (len(item["rows"]), -len(item["value"])))["value"]
-                clusters.append({
-                    "column": column,
-                    "representative": representative,
-                    "values": members,
-                    "row_count": int(sum(len(item["rows"]) for item in members)),
-                })
+
+            component = []
+            queue = [value]
+            visited.add(value)
+
+            while queue:
+                curr = queue.pop(0)
+                component.append(curr)
+                for neighbor, _, _ in adj[curr]:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+
+            if len(component) <= 1:
+                continue
+
+            # Choose representative: value with the most rows, breaking ties with shortest name length
+            representative = max(component, key=lambda val: (len(value_rows[val]), -len(val)))
+
+            members = []
+            for member in component:
+                if member == representative:
+                    members.append({
+                        "value": member,
+                        "rows": value_rows[member],
+                        "score": 100,
+                        "scores": {"levenshtein": 100, "jaro_winkler": 100, "token_set": 100}
+                    })
+                else:
+                    scores = _score_similarity(representative, member)
+                    score = max(scores.values())
+                    members.append({
+                        "value": member,
+                        "rows": value_rows[member],
+                        "score": score,
+                        "scores": scores
+                    })
+
+            clusters.append({
+                "column": column,
+                "representative": representative,
+                "values": members,
+                "row_count": int(sum(len(item["rows"]) for item in members)),
+            })
 
     return {
         "enabled": True,
@@ -768,7 +900,7 @@ def _schema_value_errors(value: Any, rule: dict[str, Any], df: pd.DataFrame, row
             errors.append("date")
     elif rule_type == "regex":
         pattern = rule.get("pattern")
-        if pattern and not re.match(str(pattern), text_value):
+        if pattern and not re.fullmatch(str(pattern), text_value):
             errors.append("regex")
 
     if numeric_value is None and ("min" in rule or "max" in rule):
@@ -908,9 +1040,12 @@ def _run_anomaly_detection(df: pd.DataFrame, config: dict[str, Any]) -> dict[str
         if len(values) < 3:
             continue
         counts = values.value_counts()
-        unique_ratio = len(counts) / max(len(values), 1)
-        if unique_ratio >= float(config.get("max_unique_ratio", 0.9)) and len(values) >= 10:
-            flags.append({"type": "unexpected_cardinality", "column": column, "unique_ratio": round(unique_ratio, 3)})
+        col_lower = str(column).lower()
+        is_id_col = col_lower in {"id", "uuid", "guid", "key", "pk", "fk", "identifier", "index"} or col_lower.endswith("_id") or col_lower.endswith("id")
+        if not is_id_col:
+            unique_ratio = len(counts) / max(len(values), 1)
+            if unique_ratio >= float(config.get("max_unique_ratio", 0.9)) and len(values) >= 10:
+                flags.append({"type": "unexpected_cardinality", "column": column, "unique_ratio": round(unique_ratio, 3)})
         null_ratio = df[column].isna().mean()
         if null_ratio >= float(config.get("null_cluster_threshold", 0.4)):
             flags.append({"type": "null_cluster", "column": column, "null_ratio": round(float(null_ratio), 3)})
@@ -979,6 +1114,18 @@ def run_filecleaner_pipeline(content: bytes, filename: str, config: dict[str, An
     )
 
 
+def _sanitize_error_message(msg: str | None) -> str | None:
+    if not msg:
+        return msg
+    msg = re.sub(r"[a-zA-Z0-9+._\-]+://[^@\s]+@[^\s]+", "[REDACTED_URL]", msg)
+    msg = re.sub(r"(?i)aws_access_key_id\s*=\s*[^\s&]+", "aws_access_key_id=[REDACTED]", msg)
+    msg = re.sub(r"(?i)aws_secret_access_key\s*=\s*[^\s&]+", "aws_secret_access_key=[REDACTED]", msg)
+    if any(keyword in msg.lower() for keyword in ("s3", "boto3", "bucket")):
+        return "Storage service error. Please contact support."
+    if any(keyword in msg.lower() for keyword in ("sqlalchemy", "psycopg2", "neon")):
+        return "Database service error. Please contact support."
+    return msg
+
 async def _notify_file_job(record: ProcessedFile, event: str) -> None:
     payload = {
         "event": f"filecleaner.job.{event}",
@@ -987,7 +1134,7 @@ async def _notify_file_job(record: ProcessedFile, event: str) -> None:
         "status": record.status,
         "download_url": record.download_url,
         "report_url": f"/files/{record.id}/report" if record.id else None,
-        "error": record.error_message,
+        "error": _sanitize_error_message(record.error_message),
     }
 
     if record.notify_email:
@@ -1075,6 +1222,11 @@ async def handle_process_csv(payload: dict):
             config = _parse_json_field(record.config_json)
             result = await run_in_threadpool(run_filecleaner_pipeline, content, filename, config)
 
+            # Check for cancellation before S3 upload
+            record = await session.get(ProcessedFile, record_id)
+            if not record or record.status == "canceled":
+                return {"status": "canceled"}
+
             object_name = f"cleaned/{record.id}_{filename}"
             report_name = f"reports/{record.id}.json"
             await run_in_threadpool(s3.upload_fileobj, result.output, bucket_name, object_name)
@@ -1082,6 +1234,9 @@ async def handle_process_csv(payload: dict):
 
             # Refetch because session might be modified/committed elsewhere
             record = await session.get(ProcessedFile, record_id)
+            if not record or record.status == "canceled":
+                return {"status": "canceled"}
+
             record.status = "completed"
             record.download_url = f"/files/{record.id}/download"
             record.cleaned_object_key = object_name
@@ -1104,7 +1259,7 @@ async def handle_process_csv(payload: dict):
             if hasattr(session, "rollback"):
                 await session.rollback()
             record = await session.get(ProcessedFile, record_id)
-            if record:
+            if record and record.status != "canceled":
                 await _mark_processing_failure(session, record, payload, str(e))
                 session.add(record)
                 await session.commit()
@@ -1190,8 +1345,12 @@ cron_router = APIRouter(prefix="/cron", tags=["cron"])
 
 @cron_router.post("/cleanup")
 async def cron_cleanup(authorization: str | None = Header(default=None)):
+    import hmac
     expected = os.getenv("CRON_SECRET")
-    if not expected or authorization != f"Bearer {expected}":
+    if not expected or not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = authorization.split(" ", 1)[1]
+    if not hmac.compare_digest(token, expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
     deleted = await cron_cleanup_files()
     return {"status": "success", "task": "cleanup", "deleted_count": deleted}
@@ -1221,6 +1380,7 @@ async def analyze_file_profile(
 
 @file_router.post("/upload")
 async def upload_file(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     config_json: str = Form("{}"),
@@ -1319,6 +1479,8 @@ async def upload_file(
     if not bucket_name:
         raise HTTPException(status_code=500, detail="Storage not configured")
 
+    ip = request.client.host if request.client else "unknown"
+
     record = ProcessedFile(
         user_id=user.id,
         original_name=file.filename or "unnamed",
@@ -1328,6 +1490,7 @@ async def upload_file(
         config_json=_dump_json_field(config),
         notify_email=notify_email or None,
         notify_webhook_url=notify_webhook_url or None,
+        ip_address=ip,
     )
     session.add(record)
     await session.commit()
@@ -1425,24 +1588,32 @@ async def demo_upload(
     Uses a hardcoded GUEST_USER_ID (0).
     """
     GUEST_USER_ID = 0
-    # Rate Limit & Concurrent Job Checks
     ip = request.client.host if request.client else "unknown"
-    now_ts = datetime.now(timezone.utc).timestamp()
-    ip_history = DEMO_IP_LIMITS.setdefault(ip, [])
-    ip_history = [t for t in ip_history if now_ts - t < DEMO_LIMIT_WINDOW]
-    DEMO_IP_LIMITS[ip] = ip_history
-    if len(ip_history) >= DEMO_MAX_PER_WINDOW:
+
+    # Query uploads in the last window
+    from datetime import timedelta
+    limit_cutoff = _now_naive() - timedelta(seconds=DEMO_LIMIT_WINDOW)
+    recent_uploads_res = await session.execute(
+        select(ProcessedFile).where(
+            ProcessedFile.user_id == 0,
+            ProcessedFile.ip_address == ip,
+            ProcessedFile.created_at >= limit_cutoff
+        )
+    )
+    recent_uploads_count = len(recent_uploads_res.scalars().all())
+    if recent_uploads_count >= DEMO_MAX_PER_WINDOW:
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 5 uploads per minute.")
 
-    active_guest_jobs_res = await session.execute(
-        select(ProcessedFile).where(ProcessedFile.user_id == 0, ProcessedFile.status.in_(["pending", "processing"]))
+    # Query active concurrent demo jobs
+    active_jobs_res = await session.execute(
+        select(ProcessedFile).where(
+            ProcessedFile.user_id == 0,
+            ProcessedFile.ip_address == ip,
+            ProcessedFile.status.in_(["pending", "processing"])
+        )
     )
-    active_guest_jobs = active_guest_jobs_res.scalars().all()
-    active_ids = {job.id for job in active_guest_jobs}
-    ip_jobs = DEMO_ACTIVE_JOBS.setdefault(ip, set())
-    ip_jobs = {jid for jid in ip_jobs if jid in active_ids}
-    DEMO_ACTIVE_JOBS[ip] = ip_jobs
-    if len(ip_jobs) >= DEMO_MAX_CONCURRENT:
+    active_jobs_count = len(active_jobs_res.scalars().all())
+    if active_jobs_count >= DEMO_MAX_CONCURRENT:
         raise HTTPException(status_code=429, detail="Too many concurrent demo jobs. Wait for previous to finish.")
 
     bucket_name = settings.s3_bucket_name
@@ -1469,14 +1640,11 @@ async def demo_upload(
         status="pending",
         detection_json=_dump_json_field(detection),
         config_json=_dump_json_field(_default_config()),
+        ip_address=ip,
     )
     session.add(record)
     await session.commit()
     await session.refresh(record)
-
-    # Record this request in rate limits and active jobs
-    ip_history.append(now_ts)
-    ip_jobs.add(record.id)
 
     s3 = _get_s3_client()
     raw_key = f"demo/{record.id}_{record.original_name}"
@@ -1566,6 +1734,20 @@ async def cancel_demo_job(
     return {"id": record.id, "status": record.status}
 
 
+@demo_router.get("/demo/{file_id}/report")
+async def get_demo_file_report(
+    file_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get report for a demo file."""
+    record = await session.get(ProcessedFile, file_id)
+    if not record or record.user_id != 0:
+        raise HTTPException(status_code=404, detail="Demo file not found")
+    if not _is_completed_status(record.status) and not _is_failed_status(record.status):
+        raise HTTPException(status_code=409, detail="Report is not available until the job finishes")
+    return _report_from_record(record)
+
+
 @file_router.get("/{file_id}/status")
 async def get_file_status(
     file_id: int,
@@ -1617,6 +1799,8 @@ async def cancel_file_job(
 
 @file_router.get("/list")
 async def list_files(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -1624,10 +1808,22 @@ async def list_files(
         select(ProcessedFile)
         .where(ProcessedFile.user_id == user.id)
         .order_by(ProcessedFile.created_at.desc())
-        .limit(50)
+        .limit(limit)
+        .offset(offset)
     )
     files = result.scalars().all()
-    return [_serialize_file(f) for f in files]
+
+    count_result = await session.execute(
+        select(ProcessedFile).where(ProcessedFile.user_id == user.id)
+    )
+    total = len(count_result.scalars().all())
+
+    return {
+        "items": [_serialize_file(f) for f in files],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @file_router.get("/summary")
@@ -1941,13 +2137,37 @@ async def export_files(
 # ---------------------------------------------------------------------------
 # AI Analyze endpoint — Skill: gemini-api-dev
 # ---------------------------------------------------------------------------
+def _validate_gemini_output(data: Any, total_rows: int, total_columns: int) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise ValueError("Gemini output is not a JSON object")
+
+    validated = {
+        "total_rows": int(data.get("total_rows", total_rows)),
+        "total_columns": int(data.get("total_columns", total_columns)),
+        "summary": str(data.get("summary", "No summary provided.")),
+        "suggestions": [],
+        "engine": "gemini"
+    }
+
+    suggestions = data.get("suggestions", [])
+    if isinstance(suggestions, list):
+        for sug in suggestions:
+            if isinstance(sug, dict) and "column" in sug:
+                validated["suggestions"].append({
+                    "column": str(sug.get("column", "")),
+                    "issue": str(sug.get("issue", "Potential data quality issue")),
+                    "fix": str(sug.get("fix", "Review formatting")),
+                    "severity": str(sug.get("severity", "medium")).lower() if str(sug.get("severity", "")).lower() in ("high", "medium", "low") else "medium"
+                })
+    return validated
+
 @file_router.post("/ai-analyze")
 async def ai_analyze_file(
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
 ):
     """
-    Reads first 20 rows of the CSV/JSON/Excel and uses Gemini Flash to suggest
+    Reads first 100 rows of the CSV/JSON/Excel and uses Gemini Flash to suggest
     cleanup rules. Falls back to heuristic analysis if no API key.
     """
     content = await file.read()
@@ -1955,7 +2175,7 @@ async def ai_analyze_file(
         raise HTTPException(status_code=413, detail="AI analyze limited to 10MB")
 
     def analyze_locally(file_content: bytes, fname: str):
-        df = _load_df(file_content, fname)
+        df = _load_df(file_content, fname, nrows=100)
         preview = df.head(20)
         suggestions = []
         for col in preview.columns:
@@ -1973,7 +2193,7 @@ async def ai_analyze_file(
         return {
             "total_rows": len(df),
             "total_columns": len(df.columns),
-            "preview_rows": 20,
+            "preview_rows": len(preview),
             "suggestions": suggestions,
             "engine": "heuristic",
         }
@@ -1982,7 +2202,7 @@ async def ai_analyze_file(
         if not settings.gemini_api_key:
             return None
         try:
-            df = await run_in_threadpool(_load_df, file_content, fname)
+            df = await run_in_threadpool(_load_df, file_content, fname, nrows=100)
             preview_csv = df.head(20).to_csv(index=False)
             from google import genai
             from google.genai import types
@@ -2001,14 +2221,16 @@ Analyze this CSV and suggest data cleaning rules. Respond ONLY with a JSON objec
 }}
 
 Here are the first 20 rows of the CSV:
-{preview_csv[:3000]}"""
+```csv
+{preview_csv[:3000]}
+```"""
             response = client.models.generate_content(
                 model="gemini-1.5-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
-            result = json.loads(response.text)
-            result["engine"] = "gemini"
+            raw_result = json.loads(response.text)
+            result = _validate_gemini_output(raw_result, len(df), len(df.columns))
             result["preview_rows"] = min(20, len(df))
             return result
         except Exception as e:

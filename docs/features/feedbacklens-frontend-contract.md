@@ -4,7 +4,7 @@
 
 - `GET /feedback` and `GET /feedback/list` return processed feedback entries with optional `priority` and `source` filters.
 - `POST /feedback` creates one entry or returns an existing entry with `deduped: true` and `duplicate_of_id`.
-- `POST /feedback/{id}/analyze` runs Local sentiment analysis and returns `analysis_engine: "vader"` or `"keyword"`.
+- `POST /feedback/{id}/analyze` runs local sentiment analysis and returns `analysis_engine: "local_transformers"` or `"enhanced_keyword"`.
 - `POST /feedback/{id}/draft-reply` returns a deterministic support reply draft.
 - `POST /feedback/bulk` imports newline feedback through the full cleanup/dedupe/analysis pipeline and returns `created`, `ids`, `items`, `duplicates_skipped`, and `spam_rejected`.
 - `POST /feedback/bulk-csv` imports CSV feedback from the `text` column through the full pipeline and returns `created`, `ids`, `items`, `duplicates_skipped`, `spam_rejected`, and `total_rows`.

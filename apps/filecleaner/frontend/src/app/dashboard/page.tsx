@@ -108,6 +108,8 @@ const pipelinePresets = [
       phoneColumns: "phone,mobile",
       currencyColumns: "amount,total,revenue",
       dateColumns: "created_at,closed_at,paid_at",
+      trimWhitespace: true,
+      collapseSpaces: true,
     },
   },
   {
@@ -122,6 +124,8 @@ const pipelinePresets = [
       phoneColumns: "phone",
       currencyColumns: "budget",
       dateColumns: "signup_date,created_at",
+      trimWhitespace: true,
+      collapseSpaces: true,
     },
   },
   {
@@ -136,9 +140,12 @@ const pipelinePresets = [
       phoneColumns: "phone",
       currencyColumns: "refund_amount",
       dateColumns: "created_at,resolved_at",
+      trimWhitespace: true,
+      collapseSpaces: true,
     },
   },
 ];
+
 
 const severityColor: Record<string, string> = {
   high: "text-red-500 bg-red-500/10",
@@ -165,6 +172,9 @@ export default function DashboardPage() {
   const [utilityMessage, setUtilityMessage] = useState<string | null>(null);
   const [profilePanel, setProfilePanel] = useState<FileProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(10);
+  const [totalFiles, setTotalFiles] = useState(0);
   const [pipelineConfig, setPipelineConfig] = useState({
     fuzzyMatching: true,
     fuzzyColumns: "",
@@ -175,6 +185,8 @@ export default function DashboardPage() {
     phoneColumns: "phone",
     currencyColumns: "amount,total,price",
     dateColumns: "date,created_at,joined_at",
+    trimWhitespace: true,
+    collapseSpaces: true,
   });
   const pollingIds = useRef<Set<string>>(new Set());
   const exportRef  = useRef<HTMLDivElement>(null);
@@ -184,16 +196,19 @@ export default function DashboardPage() {
     window.setTimeout(() => setToast(null), 4500);
   }, []);
 
-  const refreshDashboard = useCallback(async () => {
+  const refreshDashboard = useCallback(async (currentPage = page) => {
     setLoading(true);
     setLoadError(false);
+    const offset = (currentPage - 1) * pageSize;
     const [filesResult, summaryResult] = await Promise.allSettled([
-      apiClient.get<any[]>("/files/list"),
+      apiClient.get<any>(`/files/list?limit=${pageSize}&offset=${offset}`),
       apiClient.get<FileSummary>("/files/summary"),
     ]);
 
     if (filesResult.status === "fulfilled") {
-      setFiles(filesResult.value.data.map((f: any) => ({
+      const responseData = filesResult.value.data;
+      const items = responseData.items || responseData;
+      setFiles(items.map((f: any) => ({
         id: f.id.toString(),
         name: f.name ?? f.original_filename ?? f.filename ?? "Untitled file",
         size: typeof f.size === "number" ? f.size : typeof f.size_bytes === "number" ? f.size_bytes : undefined,
@@ -203,6 +218,7 @@ export default function DashboardPage() {
         detection: f.detection ?? undefined,
         error: f.error,
       })));
+      setTotalFiles(responseData.total ?? items.length);
     }
     if (summaryResult.status === "fulfilled") {
       setSummary(summaryResult.value.data);
@@ -211,11 +227,11 @@ export default function DashboardPage() {
       setLoadError(true);
     }
     setLoading(false);
-  }, []);
+  }, [page, pageSize]);
 
   useEffect(() => {
-    refreshDashboard();
-  }, [refreshDashboard]);
+    refreshDashboard(page);
+  }, [page, refreshDashboard]);
 
   // Auto-poll files that are in queued/processing state
   useEffect(() => {
@@ -299,8 +315,8 @@ export default function DashboardPage() {
   const buildPipelineConfig = () => ({
     basic_cleaning: {
       drop_empty_rows: true,
-      trim_whitespace: true,
-      normalize_text: true,
+      trim_whitespace: pipelineConfig.trimWhitespace,
+      collapse_spaces: pipelineConfig.collapseSpaces,
       drop_duplicates: true,
     },
     fuzzy_matching: {
@@ -621,6 +637,24 @@ export default function DashboardPage() {
 
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-3">
+            <div className="flex flex-wrap gap-4 p-2 rounded-lg bg-black/10 mb-2">
+              <label className="flex items-center gap-2 text-xs select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pipelineConfig.trimWhitespace}
+                  onChange={e => setPipelineConfig(prev => ({ ...prev, trimWhitespace: e.target.checked }))}
+                />
+                <span>Trim whitespace</span>
+              </label>
+              <label className="flex items-center gap-2 text-xs select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pipelineConfig.collapseSpaces}
+                  onChange={e => setPipelineConfig(prev => ({ ...prev, collapseSpaces: e.target.checked }))}
+                />
+                <span>Collapse double spaces</span>
+              </label>
+            </div>
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
@@ -1012,6 +1046,28 @@ export default function DashboardPage() {
             </div>
           );
         })}
+
+        {totalFiles > pageSize && (
+          <div className="flex items-center justify-between pt-4 pb-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <span className="text-xs opacity-65">
+              Page {page} of {Math.ceil(totalFiles / pageSize)}
+            </span>
+            <button
+              onClick={() => setPage(p => Math.min(Math.ceil(totalFiles / pageSize), p + 1))}
+              disabled={page >= Math.ceil(totalFiles / pageSize)}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        )}
 
         {files.length === 0 && (
           <DashboardEmptyState
