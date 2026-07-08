@@ -2,7 +2,7 @@
 
 ## Scope
 
-InvoiceFollow is a recovery workflow for invoices that already exist outside the product. It ingests invoice records from Gmail, Outlook, forwarded email, CSV/XLS/XLSX, or a safe manual tracking form.
+InvoiceFollow is a recovery workflow for invoices that already exist outside the product. It ingests invoice records from Gmail, forwarded email, CSV/XLS/XLSX, or a safe manual tracking form.
 
 ## Backend Features Implemented
 
@@ -16,8 +16,8 @@ InvoiceFollow is a recovery workflow for invoices that already exist outside the
 8. Stripe detection matches `payment_intent.succeeded` by `metadata.invoice_id`, then amount/email fallback.
 9. PayPal detection matches completed payments by amount, currency, and payer email.
 10. Weekly digest groups payments, valid excuses, reminders, at-risk invoices, and monthly recovery totals.
-11. Gmail/Outlook OAuth callbacks exchange authorization codes for tokens before an account is marked connected.
-12. The shared worker consumes `SystemOutbox` send jobs; InvoiceFollow sends through Gmail/Outlook when connected and falls back to Resend.
+11. Gmail OAuth callbacks exchange authorization codes for tokens before an account is marked connected.
+12. The shared worker consumes `SystemOutbox` send jobs; InvoiceFollow sends through Gmail when connected and falls back to Resend.
 13. Cron endpoints perform real reply polling and payment polling instead of returning readiness placeholders.
 
 ## API Surface
@@ -36,8 +36,6 @@ InvoiceFollow is a recovery workflow for invoices that already exist outside the
 - `PUT /templates/{id}`
 - `POST /connect/gmail`
 - `GET /connect/gmail/callback`
-- `POST /connect/outlook`
-- `GET /connect/outlook/callback`
 - `POST /connect/stripe`
 - `POST /connect/paypal`
 - `GET /metrics`
@@ -47,13 +45,13 @@ InvoiceFollow is a recovery workflow for invoices that already exist outside the
 ## Plan Limits
 
 - Free: 5 active invoices, 25 emails/month, 10 reply classifications/month, Gmail only, no API, no digest.
-- Pro: 50 active invoices, 500 emails/month, 200 reply classifications/month, Gmail + Outlook, Stripe read-only, API, custom templates, weekly digest.
+- Pro: 50 active invoices, 500 emails/month, 200 reply classifications/month, Gmail, Stripe read-only, API, custom templates, weekly digest.
 - Team: 200 active invoices, 2,000 emails/month, 1,000 reply classifications/month, Stripe + PayPal, 5 users, Slack-ready alerts, priority support.
 
 ## Frontend Implementation Notes
 
 - Dashboard should show active invoices, delay days, next step, status, and row actions.
 - Detail view should use `/invoices/{id}/timeline`.
-- Settings should expose Gmail/Outlook/Stripe/PayPal connection actions, sender config, send windows, and notification toggles.
+- Settings should expose Gmail/Stripe/PayPal connection actions, sender config, send windows, and notification toggles.
 - Templates screen can live in settings as long as it supports edit, preview, and step enable/disable.
 - AI and generated tone are not features in this product.

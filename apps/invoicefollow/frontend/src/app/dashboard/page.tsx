@@ -84,7 +84,7 @@ interface ClientScore {
 
 interface InvoiceSettingsSummary {
   forward_address: string;
-  connections: Record<"gmail" | "outlook" | "stripe" | "paypal", boolean>;
+  connections: Record<"gmail" | "stripe" | "paypal", boolean>;
 }
 
 interface DetectedInvoiceDraft {
@@ -432,9 +432,9 @@ export default function DashboardPage() {
         {!loading && !loadError && invoices.length === 0 ? (
           <WelcomeSteps
             title="Track your first existing invoice"
-            description="Import records, connect Gmail or Outlook, or add a tracking record for an invoice already sent elsewhere."
+            description="Import records, connect Gmail, or add a tracking record for an invoice already sent elsewhere."
             steps={[
-              "Connect Gmail/Outlook or import existing invoice records.",
+              "Connect Gmail or import existing invoice records.",
               "Confirm detected client, amount, currency, number, and due date.",
               "Let InvoiceFollow run reminders, classify replies, and reconcile payments.",
             ]}
@@ -493,12 +493,12 @@ export default function DashboardPage() {
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-bold" style={{ color: "var(--color-text)" }}>Connections</h2>
-                <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Gmail/Outlook ingestion and Stripe/PayPal reconciliation.</p>
+                <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>Gmail ingestion and Stripe/PayPal reconciliation.</p>
               </div>
               <a href="/dashboard/settings" className="text-xs font-bold text-[var(--color-accent)]">Manage</a>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {(["gmail", "outlook", "stripe", "paypal"] as const).map((provider) => {
+              {(["gmail", "stripe", "paypal"] as const).map((provider) => {
                 const connected = Boolean(settings?.connections?.[provider]);
                 return (
                   <div key={provider} className="rounded-lg p-3" style={{ backgroundColor: "var(--color-surface-high)" }}>

@@ -196,15 +196,12 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
         self.assertIn("/invoicefollow/digest", route_paths)
         self.assertIn('apiClient.get<DigestSummary>("/invoicefollow/digest")', dashboard)
 
-    def test_oauth_connectors_return_service_unavailable_when_client_ids_are_missing(self):
-        with patch.dict(invoice_main.os.environ, {"GOOGLE_CLIENT_ID": "", "MICROSOFT_CLIENT_ID": ""}, clear=False):
+    def test_gmail_oauth_returns_service_unavailable_when_credentials_are_missing(self):
+        with patch.dict(invoice_main.os.environ, {"GOOGLE_CLIENT_ID": "", "GOOGLE_CLIENT_SECRET": ""}, clear=False):
             gmail = _client().post("/connect/gmail", json={"email": "owner@example.com"})
-            outlook = _client().post("/connect/outlook", json={"email": "owner@example.com"})
 
         self.assertEqual(gmail.status_code, 503)
-        self.assertEqual(outlook.status_code, 503)
         self.assertEqual(gmail.json()["detail"], "Google OAuth credentials are not configured.")
-        self.assertEqual(outlook.json()["detail"], "Microsoft OAuth credentials are not configured.")
 
     def test_schedule_and_templates_are_fixed_not_ai_generated(self):
         schedule = invoice_main.build_reminder_schedule(
@@ -387,8 +384,6 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
             "/templates/{template_id}",
             "/connect/gmail",
             "/connect/gmail/callback",
-            "/connect/outlook",
-            "/connect/outlook/callback",
             "/connect/stripe",
             "/connect/paypal",
             "/metrics",

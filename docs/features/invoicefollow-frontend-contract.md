@@ -13,8 +13,6 @@ This contract covers the production InvoiceFollow dashboard, API clients, and CL
 
 - `POST /connect/gmail` starts Gmail OAuth with `gmail.readonly` and `gmail.send`; it does not mark the account connected until callback success.
 - `GET /connect/gmail/callback` exchanges the OAuth code for tokens and stores the connected account.
-- `POST /connect/outlook` starts Microsoft Graph OAuth with `Mail.Read`, `Mail.Send`, and `offline_access`; it does not mark the account connected until callback success.
-- `GET /connect/outlook/callback` exchanges the OAuth code for tokens and stores the connected account.
 - Forward fallback address is returned by `GET /settings` as `forward_address`.
 - `POST /invoices/detect-email` accepts `subject`, `body`, `sender_email`, `sender_name`, `message_id`, and `source`.
 - Detection returns a preview with `client_name`, `client_email`, `amount`, `currency`, `invoice_number`, `due_date`, `issued_date`, `confidence`, `draft_id`, and `requires_user_confirmation`.
@@ -51,7 +49,7 @@ This contract covers the production InvoiceFollow dashboard, API clients, and CL
 
 - `GET /metrics` returns recovery rate, recovered/pending amounts, average payment time, and at-risk count.
 - `GET /digest` generates the weekly digest preview used for Monday 9am delivery.
-- Cron endpoints enqueue reminders, poll Gmail/Outlook replies, poll Stripe/PayPal payments, and the shared `/worker/process` endpoint consumes `SystemOutbox` jobs with retry/backoff.
+- Cron endpoints enqueue reminders, poll Gmail replies, poll Stripe/PayPal payments, and the shared `/worker/process` endpoint consumes `SystemOutbox` jobs with retry/backoff.
 
 ## Frontend Copy Guardrails
 

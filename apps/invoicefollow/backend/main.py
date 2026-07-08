@@ -280,12 +280,6 @@ class InvoiceIntegrationSettings(SQLModel, table=True):
     gmail_access_token: str = Field(default="")
     gmail_refresh_token: str = Field(default="")
     gmail_token_expires_at: Optional[datetime] = None
-    outlook_connected: bool = Field(default=False)
-    outlook_email: str = Field(default="")
-    outlook_state: str = Field(default="")
-    outlook_access_token: str = Field(default="")
-    outlook_refresh_token: str = Field(default="")
-    outlook_token_expires_at: Optional[datetime] = None
     stripe_connected: bool = Field(default=False)
     stripe_account_label: str = Field(default="")
     stripe_api_key: str = Field(default="")
@@ -421,7 +415,7 @@ class InvoiceEmailDetectRequest(BaseModel):
     sender_email: EmailStr
     sender_name: str = ""
     message_id: str = ""
-    source: Literal["gmail", "outlook", "forward"] = "gmail"
+    source: Literal["gmail", "forward"] = "gmail"
 
 
 class DraftConfirmRequest(BaseModel):
@@ -1238,36 +1232,6 @@ async def exchange_gmail_oauth_code(code: str, redirect_uri: str | None = None) 
         return token_data
 
 
-async def exchange_outlook_oauth_code(code: str, redirect_uri: str | None = None) -> dict[str, Any]:
-    client_id = os.getenv("MICROSOFT_CLIENT_ID", "")
-    client_secret = os.getenv("MICROSOFT_CLIENT_SECRET", "")
-    redirect_uri = redirect_uri or os.getenv("MICROSOFT_REDIRECT_URI", f"{DEFAULT_BACKEND_PUBLIC_URL}/connect/outlook/callback")
-    if not client_id or not client_secret:
-        raise HTTPException(status_code=500, detail="Microsoft OAuth client is not configured.")
-    async with httpx.AsyncClient(timeout=20) as client:
-        token_response = await client.post(
-            "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-            data={
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "code": code,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-            },
-        )
-        token_response.raise_for_status()
-        token_data = token_response.json()
-        if token_data.get("access_token"):
-            profile_response = await client.get(
-                "https://graph.microsoft.com/v1.0/me",
-                headers={"Authorization": f"Bearer {token_data['access_token']}"},
-            )
-            if profile_response.status_code < 400:
-                profile = profile_response.json()
-                token_data["email"] = profile.get("mail") or profile.get("userPrincipalName") or ""
-        return token_data
-
-
 def _message_id_from_headers(headers: list[dict[str, str]]) -> str:
     for header in headers:
         if header.get("name", "").lower() == "message-id":
@@ -1350,56 +1314,6 @@ async def _refresh_gmail_token(integration: InvoiceIntegrationSettings, session:
                     s.add(integration)
                     await s.commit()
 
-async def _refresh_outlook_token(integration: InvoiceIntegrationSettings, session: AsyncSession | None = None) -> None:
-    if not integration.outlook_refresh_token:
-        return
-    now = _utc_now()
-    if integration.outlook_token_expires_at and integration.outlook_token_expires_at > now + timedelta(minutes=5):
-        return
-    client_id = os.getenv("MICROSOFT_CLIENT_ID", "")
-    client_secret = os.getenv("MICROSOFT_CLIENT_SECRET", "")
-    decrypted_refresh = decrypt_val(integration.outlook_refresh_token)
-    if not decrypted_refresh:
-        return
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-            data={
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": decrypted_refresh,
-                "grant_type": "refresh_token",
-            }
-        )
-        if response.status_code >= 400:
-            logger.error(f"Failed to refresh Outlook token: {response.text}")
-            if response.status_code in {400, 401}:
-                integration.outlook_connected = False
-                integration.outlook_access_token = ""
-                integration.outlook_refresh_token = ""
-                integration.outlook_token_expires_at = None
-                if session:
-                    session.add(integration)
-                    await session.flush()
-                else:
-                    async with get_managed_session() as s:
-                        s.add(integration)
-                        await s.commit()
-            return
-        data = response.json()
-        access_token = data.get("access_token")
-        if access_token:
-            integration.outlook_access_token = encrypt_val(access_token)
-            integration.outlook_token_expires_at = _token_expiry(data.get("expires_in"))
-            if session:
-                session.add(integration)
-                await session.flush()
-            else:
-                async with get_managed_session() as s:
-                    s.add(integration)
-                    await s.commit()
-
-
 async def send_gmail_message(integration: InvoiceIntegrationSettings, *, to: str, subject: str, html_body: str, thread_id: str = "", session: AsyncSession | None = None) -> dict[str, Any]:
     await _refresh_gmail_token(integration, session)
     access_token = decrypt_val(integration.gmail_access_token)
@@ -1422,29 +1336,6 @@ async def send_gmail_message(integration: InvoiceIntegrationSettings, *, to: str
         )
         response.raise_for_status()
         return response.json()
-
-
-async def send_outlook_message(integration: InvoiceIntegrationSettings, *, to: str, subject: str, html_body: str, session: AsyncSession | None = None) -> dict[str, Any]:
-    await _refresh_outlook_token(integration, session)
-    access_token = decrypt_val(integration.outlook_access_token)
-    if not access_token:
-        raise RuntimeError("Outlook access token is missing.")
-    payload = {
-        "message": {
-            "subject": subject,
-            "body": {"contentType": "HTML", "content": html_body},
-            "toRecipients": [{"emailAddress": {"address": to}}],
-        },
-        "saveToSentItems": True,
-    }
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            "https://graph.microsoft.com/v1.0/me/sendMail",
-            headers={"Authorization": f"Bearer {access_token}"},
-            json=payload,
-        )
-        response.raise_for_status()
-        return {"status": "sent"}
 
 
 async def fetch_gmail_thread_replies(integration: InvoiceIntegrationSettings, invoice: Invoice, session: AsyncSession | None = None) -> list[dict[str, Any]]:
@@ -1507,34 +1398,6 @@ async def fetch_gmail_thread_replies(integration: InvoiceIntegrationSettings, in
             "id": message.get("id") or _message_id_from_headers(msg_headers),
             "provider": "gmail",
             "text": text,
-            "received_at": _utc_now(),
-        })
-    return replies
-
-
-async def fetch_outlook_thread_replies(integration: InvoiceIntegrationSettings, invoice: Invoice, session: AsyncSession | None = None) -> list[dict[str, Any]]:
-    await _refresh_outlook_token(integration, session)
-    access_token = decrypt_val(integration.outlook_access_token)
-    if not access_token:
-        return []
-    filters = [f"from/emailAddress/address eq '{invoice.client_email}'"]
-    if invoice.thread_id:
-        filters.append(f"conversationId eq '{invoice.thread_id}'")
-    params = {"$top": "20", "$orderby": "receivedDateTime desc", "$filter": " and ".join(filters)}
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(
-            "https://graph.microsoft.com/v1.0/me/messages",
-            headers={"Authorization": f"Bearer {access_token}"},
-            params=params,
-        )
-        response.raise_for_status()
-    replies = []
-    for item in response.json().get("value", []):
-        body = item.get("body", {}).get("content") or item.get("bodyPreview", "")
-        replies.append({
-            "id": item.get("id", ""),
-            "provider": "outlook",
-            "text": re.sub(r"<[^>]+>", " ", body),
             "received_at": _utc_now(),
         })
     return replies
@@ -1626,8 +1489,6 @@ async def poll_reply_threads() -> dict[str, int]:
                 replies: list[dict[str, Any]] = []
                 if integration.gmail_connected:
                     replies.extend(await fetch_gmail_thread_replies(integration, invoice, session=session))
-                if integration.outlook_connected:
-                    replies.extend(await fetch_outlook_thread_replies(integration, invoice, session=session))
                 for reply in replies:
                     provider_message_id = reply.get("id", "")
                     if provider_message_id:
@@ -2006,10 +1867,6 @@ async def handle_send_email(payload: dict):
                     response = await send_gmail_message(integration, to=to, subject=subject, html_body=html_body, thread_id=payload.get("thread_id") or "", session=session)
                     provider = "gmail"
                     return {"delivered_to": to, "provider": "gmail", "provider_message_id": response.get("id", "")}
-                if integration and integration.outlook_connected:
-                    response = await send_outlook_message(integration, to=to, subject=subject, html_body=html_body, session=session)
-                    provider = "outlook"
-                    return {"delivered_to": to, "provider": "outlook", **response}
         sent = send_email(to=to, subject=subject, html_body=html_body)
         if not sent:
             raise RuntimeError(f"Email provider failed for {to}")
@@ -2423,7 +2280,6 @@ async def get_invoice_settings(user: User = Depends(get_current_user), session: 
         "forward_address": f"parse-{integrations.forward_address_token}@invoicefollow.devforgeapp.pro",
         "connections": {
             "gmail": integrations.gmail_connected,
-            "outlook": integrations.outlook_connected,
             "stripe": integrations.stripe_connected,
             "paypal": integrations.paypal_connected,
         },
@@ -2532,65 +2388,6 @@ async def gmail_oauth_callback(
     session.add(integrations)
     await session.flush()
     return {"provider": "gmail", "connected": True, "email": integrations.gmail_email}
-
-
-@connect_router.post("/outlook")
-async def connect_outlook(body: ConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    client_id = os.getenv("MICROSOFT_CLIENT_ID", "").strip()
-    client_secret = os.getenv("MICROSOFT_CLIENT_SECRET", "").strip()
-    if not client_id or not client_secret:
-        raise HTTPException(status_code=503, detail="Microsoft OAuth credentials are not configured.")
-
-    integrations = await _get_or_create_integration_settings(session, user)
-    state = _make_oauth_state()
-    integrations.outlook_state = state
-    if body.email:
-        integrations.outlook_email = str(body.email)
-    integrations.updated_at = _utc_now()
-    session.add(integrations)
-    await session.flush()
-    scopes = ["Mail.Read", "Mail.Send", "offline_access"]
-    redirect_uri = body.redirect_uri or os.getenv("MICROSOFT_REDIRECT_URI", f"{DEFAULT_BACKEND_PUBLIC_URL}/connect/outlook/callback")
-    oauth_url = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?" + urlencode({
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": " ".join(scopes),
-        "state": state,
-    })
-    return {"provider": "outlook", "oauth_url": oauth_url, "scopes": scopes, "state": state, "connected": integrations.outlook_connected}
-
-
-@connect_router.get("/outlook/callback")
-async def outlook_oauth_callback(
-    code: str,
-    state: str,
-    redirect_uri: str | None = None,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    result = await session.execute(
-        select(InvoiceIntegrationSettings).where(
-            InvoiceIntegrationSettings.outlook_state == state,
-            InvoiceIntegrationSettings.user_id == user.id,
-        )
-    )
-    integrations = result.scalar_one_or_none()
-    if not integrations or not _oauth_state_is_fresh(state):
-        raise HTTPException(status_code=400, detail="Invalid Outlook OAuth state.")
-    token_data = await exchange_outlook_oauth_code(code, redirect_uri)
-    if not token_data.get("access_token"):
-        raise HTTPException(status_code=400, detail="Microsoft did not return an access token.")
-    integrations.outlook_access_token = encrypt_val(token_data["access_token"])
-    if token_data.get("refresh_token"):
-        integrations.outlook_refresh_token = encrypt_val(token_data["refresh_token"])
-    integrations.outlook_token_expires_at = _token_expiry(token_data.get("expires_in"))
-    integrations.outlook_email = token_data.get("email") or integrations.outlook_email
-    integrations.outlook_connected = True
-    integrations.updated_at = _utc_now()
-    session.add(integrations)
-    await session.flush()
-    return {"provider": "outlook", "connected": True, "email": integrations.outlook_email}
 
 
 @connect_router.post("/stripe")

@@ -32,7 +32,6 @@ interface InvoiceSettings {
   forward_address: string;
   connections: {
     gmail: boolean;
-    outlook: boolean;
     stripe: boolean;
     paypal: boolean;
   };
@@ -67,7 +66,7 @@ const defaultSettings: InvoiceSettings = {
   immediate_alerts_enabled: true,
   no_send_after_hour: 18,
   forward_address: "",
-  connections: { gmail: false, outlook: false, stripe: false, paypal: false },
+  connections: { gmail: false, stripe: false, paypal: false },
 };
 
 function renderPreview(template: TemplateItem, settings: InvoiceSettings) {
@@ -144,7 +143,6 @@ export default function SettingsPage() {
 
   const connectionRows = useMemo(() => [
     { id: "gmail", label: "Gmail", detail: "OAuth read + send", icon: Mail },
-    { id: "outlook", label: "Outlook", detail: "Microsoft Graph read + send", icon: Mail },
     { id: "stripe", label: "Stripe", detail: "Read-only payment matching", icon: CreditCard },
     { id: "paypal", label: "PayPal", detail: "Read-only transaction matching", icon: CreditCard },
   ], []);
