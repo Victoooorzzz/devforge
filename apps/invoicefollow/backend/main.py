@@ -2475,6 +2475,11 @@ async def update_invoice_template(body: InvoiceTemplateUpdate, user: User = Depe
 
 @connect_router.post("/gmail")
 async def connect_gmail(body: ConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=503, detail="Google OAuth credentials are not configured.")
+
     integrations = await _get_or_create_integration_settings(session, user)
     state = _make_oauth_state()
     integrations.gmail_state = state
@@ -2484,7 +2489,6 @@ async def connect_gmail(body: ConnectRequest, user: User = Depends(get_current_u
     session.add(integrations)
     await session.flush()
     scopes = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
-    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
     redirect_uri = body.redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", f"{DEFAULT_BACKEND_PUBLIC_URL}/connect/gmail/callback")
     oauth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
         "client_id": client_id,
@@ -2532,6 +2536,11 @@ async def gmail_oauth_callback(
 
 @connect_router.post("/outlook")
 async def connect_outlook(body: ConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    client_id = os.getenv("MICROSOFT_CLIENT_ID", "").strip()
+    client_secret = os.getenv("MICROSOFT_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=503, detail="Microsoft OAuth credentials are not configured.")
+
     integrations = await _get_or_create_integration_settings(session, user)
     state = _make_oauth_state()
     integrations.outlook_state = state
@@ -2541,7 +2550,6 @@ async def connect_outlook(body: ConnectRequest, user: User = Depends(get_current
     session.add(integrations)
     await session.flush()
     scopes = ["Mail.Read", "Mail.Send", "offline_access"]
-    client_id = os.getenv("MICROSOFT_CLIENT_ID", "")
     redirect_uri = body.redirect_uri or os.getenv("MICROSOFT_REDIRECT_URI", f"{DEFAULT_BACKEND_PUBLIC_URL}/connect/outlook/callback")
     oauth_url = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?" + urlencode({
         "client_id": client_id,
