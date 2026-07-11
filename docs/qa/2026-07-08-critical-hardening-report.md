@@ -131,7 +131,16 @@ Purpose:
 
 - Checklist result: 127 resolved, 1 not applicable, 0 pending.
 - The prevention skill is installed and validated.
-- All repository and Neon gates pass; deployment/live verification is recorded after the release commit.
+- All repository, Neon, Render, Vercel and authenticated cron gates pass.
+
+## Deployment And Live Verification
+
+- Release commit `88ac712` deployed successfully; timezone hotfix commit `1a196a6` is live on Render.
+- All six Vercel projects were redeployed from their prior production artifacts and returned HTTP 200: DevForge site, FileCleaner, InvoiceFollow, PriceTrackr, WebhookMonitor and FeedbackLens.
+- Render `/health` returned HTTP 200 and `healthy`.
+- Authenticated `/worker/enqueue-periodic` returned HTTP 200; InvoiceFollow returned `reminders: enqueued`, zero reply work and zero matched payment work without internal errors.
+- Authenticated `/worker/process` and `/worker/cleanup` returned HTTP 200 with accepted status.
+- Neon stores InvoiceFollow UTC fields as `timestamp with time zone`; WebhookMonitor audit/rate-limit tables, replay FK and replay compound index are present.
 
 ## External Configuration Residual
 
@@ -148,9 +157,9 @@ Current: keeps the tabular cleaning pipeline, background outbox jobs, previews, 
 
 ### InvoiceFollow
 
-Before: created tracking records, sent overdue reminders, handled promises and exported invoices, but relied on process-local limits, non-atomic capacity checks, unbounded provider reads and inferred schedule state.
+Before: created tracking records, sent overdue reminders, handled promises and exported invoices, but relied on process-local limits, non-atomic capacity checks, unbounded provider reads, inferred schedule state and timezone-naive persistence metadata.
 
-Current: tracks receivables rather than issuing legal invoices; imports/detects invoices, schedules reminders, handles Gmail replies, reconciles Stripe payments, records promises and exports data. Neon now provides public rate limits, cron/capacity locks, uniqueness and audit trails; provider/export work is paged or bounded, links expire, and UI status comes from persisted facts. PayPal was removed from the supported surface.
+Current: tracks receivables rather than issuing legal invoices; imports/detects invoices, schedules reminders, handles Gmail replies, reconciles Stripe payments, records promises and exports data. Neon now provides public rate limits, cron/capacity locks, uniqueness, audit trails and timezone-aware storage; provider/export work is paged or bounded, links expire, and UI status comes from persisted facts. PayPal was removed from the supported surface.
 
 ### PriceTrackr
 
