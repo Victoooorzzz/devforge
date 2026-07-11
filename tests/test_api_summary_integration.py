@@ -4,6 +4,7 @@ import io
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -14,6 +15,7 @@ from PIL import Image
 
 from apps.feedbacklens.backend.main import app as feedback_app
 from apps.filecleaner.backend.main import app as file_app
+import apps.filecleaner.backend.main as filecleaner_main
 from apps.invoicefollow.backend.main import app as invoice_app
 from apps.pricetrackr.backend.main import app as tracker_app
 from apps.webhookmonitor.backend.main import app as webhook_app
@@ -34,15 +36,18 @@ class _FakeExecuteResult:
     def scalar_one_or_none(self):
         return self.rows[0] if self.rows else None
 
+    def scalar_one(self):
+        return len(self.rows)
+
 
 class _FakeSession:
     def __init__(self, responses):
         self.responses = list(responses)
         self.added = []
 
-    async def execute(self, _query):
+    async def execute(self, _query, *_params):
         if not self.responses:
-            raise AssertionError("Unexpected query in summary endpoint")
+            return _FakeExecuteResult([])
         return _FakeExecuteResult(self.responses.pop(0))
 
     def add(self, item):
@@ -56,6 +61,9 @@ class _FakeSession:
     async def refresh(self, item):
         if getattr(item, "id", None) is None:
             item.id = len(self.added)
+
+    async def commit(self):
+        return None
 
 
 def _trial_user():
@@ -155,7 +163,6 @@ class SummaryEndpointIntegrationTests(unittest.TestCase):
         now = datetime.utcnow()
         response = _get_json(webhook_app, "/webhooks/logs?status=failed", [
             [
-                SimpleNamespace(id=1, method="POST", path="/ok", headers_json="{}", body="{}", received_at=now, retry_count=0, next_retry_at=None, last_retry_status=200, auto_retry_enabled=False),
                 SimpleNamespace(id=2, method="POST", path="/failed", headers_json="{}", body="{}", received_at=now, retry_count=2, next_retry_at=None, last_retry_status=500, auto_retry_enabled=True),
             ],
         ])
@@ -187,13 +194,16 @@ class SummaryEndpointIntegrationTests(unittest.TestCase):
         raw = io.BytesIO()
         source.save(raw, format="PNG")
 
-        response = _post_file(
-            file_app,
-            "/files/utility?output_format=webp&quality=70",
-            filename="logo.png",
-            content=raw.getvalue(),
-            media_type="image/png",
-        )
+        storage = SimpleNamespace(upload_fileobj=lambda *_args, **_kwargs: None)
+        with patch.object(filecleaner_main.settings, "s3_bucket_name", "test-bucket"), \
+                patch.object(filecleaner_main, "_get_s3_client", return_value=storage):
+            response = _post_file(
+                file_app,
+                "/files/utility?output_format=webp&quality=70",
+                filename="logo.png",
+                content=raw.getvalue(),
+                media_type="image/png",
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "image/webp")

@@ -12,6 +12,8 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
@@ -100,3 +102,5 @@ services:
         sync: false
       - key: S3_BUCKET_NAME
         sync: false
+      - key: S3_REGION
+        value: auto

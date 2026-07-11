@@ -29,6 +29,12 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_promise_date DATE",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cron_paused BOOLEAN DEFAULT FALSE",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS promise_token VARCHAR",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS promise_used_at TIMESTAMP",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS promise_expires_at TIMESTAMP",
+    (
+        "UPDATE invoices SET promise_expires_at = COALESCE(created_at, NOW()) + INTERVAL '30 days' "
+        "WHERE promise_token IS NOT NULL AND promise_expires_at IS NULL"
+    ),
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS currency VARCHAR DEFAULT 'USD'",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS issued_date DATE",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_number VARCHAR DEFAULT ''",
@@ -84,6 +90,21 @@ MIGRATION_STATEMENTS = [
         "id SERIAL PRIMARY KEY, user_id INTEGER, invoice_id INTEGER, provider VARCHAR DEFAULT 'stripe', provider_event_id VARCHAR DEFAULT '', "
         "amount DOUBLE PRECISION DEFAULT 0, currency VARCHAR DEFAULT 'USD', status VARCHAR DEFAULT 'succeeded', raw_json TEXT DEFAULT '{}', detected_at TIMESTAMP)"
     ),
+    (
+        "CREATE TABLE IF NOT EXISTS invoice_public_rate_limits ("
+        "id SERIAL PRIMARY KEY, bucket VARCHAR NOT NULL, client_key VARCHAR NOT NULL, "
+        "window_started_at TIMESTAMP NOT NULL, request_count INTEGER DEFAULT 1, expires_at TIMESTAMP NOT NULL, "
+        "CONSTRAINT uq_invoice_public_rate_limit_window UNIQUE (bucket, client_key, window_started_at))"
+    ),
+    "CREATE INDEX IF NOT EXISTS idx_invoice_public_rate_limits_expires_at ON invoice_public_rate_limits (expires_at)",
+    (
+        "CREATE TABLE IF NOT EXISTS invoice_audit_logs ("
+        "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, actor_user_id INTEGER, actor_type VARCHAR DEFAULT 'user', "
+        "entity_type VARCHAR DEFAULT 'invoice', entity_id INTEGER, action VARCHAR NOT NULL, source VARCHAR DEFAULT 'api', "
+        "source_event_id VARCHAR NOT NULL, details_json TEXT DEFAULT '{}', created_at TIMESTAMP, "
+        "CONSTRAINT uq_invoice_audit_source_action UNIQUE (user_id, source, source_event_id, action))"
+    ),
+    "CREATE INDEX IF NOT EXISTS idx_invoice_audit_logs_user_created ON invoice_audit_logs (user_id, created_at)",
     "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS gmail_access_token TEXT DEFAULT ''",
     "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS gmail_refresh_token TEXT DEFAULT ''",
     "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS gmail_token_expires_at TIMESTAMP",
@@ -94,6 +115,15 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS paypal_client_id TEXT DEFAULT ''",
     "ALTER TABLE invoice_integration_settings ADD COLUMN IF NOT EXISTS paypal_client_secret TEXT DEFAULT ''",
     "ALTER TABLE invoice_reply_events ADD COLUMN IF NOT EXISTS provider_message_id VARCHAR DEFAULT ''",
+    (
+        "UPDATE invoice_integration_settings SET forward_address_token = "
+        "md5(random()::text || clock_timestamp()::text || user_id::text) "
+        "WHERE COALESCE(forward_address_token, '') = ''"
+    ),
+    (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_integration_forward_address_token "
+        "ON invoice_integration_settings (forward_address_token) WHERE forward_address_token <> ''"
+    ),
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS min_price DOUBLE PRECISION",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS in_stock BOOLEAN",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS next_check_at TIMESTAMP",
@@ -144,6 +174,41 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMP",
     "ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS last_retry_status INTEGER",
     "ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS auto_retry_enabled BOOLEAN DEFAULT FALSE",
+    (
+        "CREATE TABLE IF NOT EXISTS webhook_event_idempotency ("
+        "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, endpoint_id INTEGER NOT NULL, "
+        "provider_event_id VARCHAR NOT NULL, request_id INTEGER, created_at TIMESTAMP, "
+        "CONSTRAINT uq_webhook_event_idempotency UNIQUE (user_id, endpoint_id, provider_event_id))"
+    ),
+    "CREATE INDEX IF NOT EXISTS idx_webhook_event_idempotency_user_id ON webhook_event_idempotency (user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_webhook_event_idempotency_endpoint_id ON webhook_event_idempotency (endpoint_id)",
+    "CREATE INDEX IF NOT EXISTS idx_webhook_event_idempotency_request_id ON webhook_event_idempotency (request_id)",
+    (
+        "CREATE TABLE IF NOT EXISTS webhook_audit_logs ("
+        "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, action VARCHAR NOT NULL, "
+        "entity_type VARCHAR NOT NULL, entity_id INTEGER, details_json VARCHAR DEFAULT '{}', "
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    ),
+    "CREATE INDEX IF NOT EXISTS idx_webhook_audit_logs_user_id ON webhook_audit_logs (user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_webhook_audit_logs_created_at ON webhook_audit_logs (created_at)",
+    (
+        "CREATE TABLE IF NOT EXISTS webhook_cron_rate_limits ("
+        "id SERIAL PRIMARY KEY, job_name VARCHAR NOT NULL, window_started_at TIMESTAMP NOT NULL, "
+        "request_count INTEGER DEFAULT 1, expires_at TIMESTAMP NOT NULL, "
+        "CONSTRAINT uq_webhook_cron_rate_window UNIQUE (job_name, window_started_at))"
+    ),
+    "CREATE INDEX IF NOT EXISTS idx_webhook_cron_rate_limits_expires_at ON webhook_cron_rate_limits (expires_at)",
+    (
+        "CREATE INDEX IF NOT EXISTS ix_webhook_replay_dedup ON webhook_requests "
+        "(user_id, replay_of_request_id, path, body, received_at)"
+    ),
+    (
+        "DO $$ BEGIN IF NOT EXISTS ("
+        "SELECT 1 FROM pg_constraint WHERE conname = 'fk_webhook_requests_replay'"
+        ") THEN ALTER TABLE webhook_requests ADD CONSTRAINT fk_webhook_requests_replay "
+        "FOREIGN KEY (replay_of_request_id) REFERENCES webhook_requests(id) ON DELETE SET NULL; "
+        "END IF; END $$;"
+    ),
     "ALTER TABLE webhook_settings ADD COLUMN IF NOT EXISTS fallback_url VARCHAR DEFAULT ''",
     "ALTER TABLE webhook_settings ADD COLUMN IF NOT EXISTS expected_interval_minutes INTEGER DEFAULT 0",
     "ALTER TABLE webhook_settings ADD COLUMN IF NOT EXISTS alert_email VARCHAR DEFAULT ''",
@@ -164,6 +229,20 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS source_message_id VARCHAR DEFAULT ''",
     "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS cluster_slug VARCHAR DEFAULT ''",
     "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS priority VARCHAR DEFAULT 'low'",
+    "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
+    "ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS analyzed_at TIMESTAMPTZ",
+    "UPDATE feedback_entries SET updated_at = created_at WHERE updated_at IS NULL",
+    "ALTER TABLE feedback_entries ALTER COLUMN updated_at SET NOT NULL",
+    (
+        "DELETE FROM feedback_entries newer USING feedback_entries older "
+        "WHERE newer.id > older.id AND newer.user_id = older.user_id "
+        "AND newer.source = older.source AND newer.source_message_id = older.source_message_id "
+        "AND newer.source_message_id <> ''"
+    ),
+    (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_feedback_entries_user_source_message_id_nonempty "
+        "ON feedback_entries (user_id, source, source_message_id) WHERE source_message_id <> ''"
+    ),
     "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS alert_email VARCHAR DEFAULT ''",
     "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS weekly_summary_enabled BOOLEAN DEFAULT TRUE",
     "ALTER TABLE feedback_settings ADD COLUMN IF NOT EXISTS timezone VARCHAR DEFAULT 'UTC'",
@@ -277,8 +356,19 @@ MIGRATION_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_invoices_cron_paused ON invoices (cron_paused)",
     "CREATE INDEX IF NOT EXISTS idx_invoices_user_status_due ON invoices (user_id, status, due_date)",
     "CREATE INDEX IF NOT EXISTS idx_invoices_client_identity ON invoices (client_email, client_name)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_promise_token ON invoices (promise_token) WHERE promise_token IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_invoice_drafts_user_status ON invoice_detected_drafts (user_id, status)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_payment_provider_event ON invoice_payment_events (provider, provider_event_id) WHERE provider_event_id <> ''",
+    (
+        "DELETE FROM invoice_reply_events newer USING invoice_reply_events older "
+        "WHERE newer.id > older.id AND newer.user_id = older.user_id "
+        "AND newer.provider = older.provider AND newer.provider_message_id = older.provider_message_id "
+        "AND newer.provider_message_id <> ''"
+    ),
+    (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_reply_events_provider_message "
+        "ON invoice_reply_events (user_id, provider, provider_message_id) WHERE provider_message_id <> ''"
+    ),
     "CREATE INDEX IF NOT EXISTS idx_invoice_reminder_invoice_stage_status ON invoice_reminder_logs (invoice_id, template_key, status)",
     "ALTER TABLE webhook_settings ADD COLUMN IF NOT EXISTS last_silence_alert_sent_at TIMESTAMP",
     "ALTER TABLE processed_files ADD COLUMN IF NOT EXISTS ip_address VARCHAR",

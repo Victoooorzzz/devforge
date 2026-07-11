@@ -57,6 +57,7 @@ $serviceId = $service[0].service.id
 $keys = @(
     "DATABASE_URL",
     "JWT_SECRET",
+    "ENCRYPTION_KEY",
     "STRIPE_SECRET_KEY",
     "STRIPE_WEBHOOK_SECRET",
     "POLAR_SERVER",
@@ -97,7 +98,8 @@ $keys = @(
     "S3_ENDPOINT_URL",
     "S3_ACCESS_KEY_ID",
     "S3_SECRET_ACCESS_KEY",
-    "S3_BUCKET_NAME"
+    "S3_BUCKET_NAME",
+    "S3_REGION"
 )
 
 foreach ($key in $keys) {

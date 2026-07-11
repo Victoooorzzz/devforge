@@ -17,6 +17,7 @@ import pandas as pd
 import io
 import json
 import boto3
+import fitz
 import logging
 import httpx
 
@@ -196,14 +197,163 @@ class FileCleanerPipelineResult:
     detection: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class FileUtilityResult:
+    content: bytes
+    filename: str
+    media_type: str
+    metadata_removed: bool
+    bytes_saved: int
+    output_count: int = 1
+
+
 def _get_s3_client():
     return boto3.client(
         's3',
         endpoint_url=settings.s3_endpoint_url,
         aws_access_key_id=settings.s3_access_key_id,
         aws_secret_access_key=settings.s3_secret_access_key,
-        region_name="auto"
+        region_name=settings.s3_region,
     )
+
+
+def _safe_storage_filename(filename: str, fallback: str = "file") -> str:
+    basename = (filename or fallback).replace("\\", "/").rsplit("/", 1)[-1].strip()
+    sanitized = re.sub(r"[^A-Za-z0-9._-]", "_", basename).strip("._")
+    return sanitized or fallback
+
+
+def _clean_pdf_file(content: bytes, filename: str) -> FileUtilityResult:
+    if not content:
+        raise ValueError("Empty PDF file")
+
+    try:
+        document = fitz.open(stream=content, filetype="pdf")
+    except Exception as exc:
+        raise ValueError("Unsupported or corrupt PDF file.") from exc
+
+    try:
+        page_count = document.page_count
+        if page_count == 0:
+            raise ValueError("PDF has no pages")
+        document.set_metadata({})
+        if document.xref_xml_metadata():
+            document.del_xml_metadata()
+        cleaned_content = document.tobytes(garbage=4, deflate=True, clean=True)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("Could not clean PDF file.") from exc
+    finally:
+        document.close()
+
+    try:
+        validation_document = fitz.open(stream=cleaned_content, filetype="pdf")
+        cleaned_page_count = validation_document.page_count
+        validation_document.close()
+    except Exception as exc:
+        raise ValueError("Could not produce a valid cleaned PDF file.") from exc
+    if cleaned_page_count != page_count:
+        raise ValueError("Cleaned PDF did not preserve every page.")
+
+    safe_name = _safe_storage_filename(filename, "document.pdf")
+    stem = safe_name.rsplit(".", 1)[0] or "document"
+    return FileUtilityResult(
+        content=cleaned_content,
+        filename=f"{stem}.cleaned.pdf",
+        media_type="application/pdf",
+        metadata_removed=True,
+        bytes_saved=max(len(content) - len(cleaned_content), 0),
+        output_count=page_count,
+    )
+
+
+def _process_file_utility_content(
+    content: bytes,
+    filename: str,
+    *,
+    output_format: str | None,
+    quality: int,
+):
+    if filename.lower().endswith(".pdf"):
+        return _clean_pdf_file(content, filename)
+    return process_image_file(
+        content,
+        filename,
+        output_format=output_format,
+        quality=quality,
+    )
+
+
+async def _persist_file_utility_result(
+    *,
+    content: bytes,
+    original_filename: str,
+    processed,
+    user: User,
+    session: AsyncSession,
+) -> ProcessedFile:
+    bucket_name = settings.s3_bucket_name
+    if not bucket_name:
+        raise HTTPException(status_code=503, detail="File storage is not configured.")
+
+    safe_original_name = _safe_storage_filename(original_filename)
+    safe_cleaned_name = _safe_storage_filename(processed.filename, "cleaned-file")
+    now = _now_naive()
+    record = ProcessedFile(
+        user_id=user.id,
+        original_name=safe_original_name,
+        size_bytes=len(content),
+        status="processing",
+        config_json=_dump_json_field({"utility": True}),
+        report_json=_dump_json_field({
+            "media_type": processed.media_type,
+            "metadata_removed": processed.metadata_removed,
+            "bytes_saved": processed.bytes_saved,
+            "output_count": processed.output_count,
+        }),
+        updated_at=now,
+    )
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+
+    raw_key = f"raw/{record.id}_{safe_original_name}"
+    cleaned_key = f"cleaned/{record.id}_{safe_cleaned_name}"
+    record.raw_object_key = raw_key
+    record.cleaned_object_key = cleaned_key
+    session.add(record)
+    await session.commit()
+
+    try:
+        s3 = _get_s3_client()
+        await run_in_threadpool(
+            s3.upload_fileobj,
+            io.BytesIO(content),
+            bucket_name,
+            raw_key,
+        )
+        await run_in_threadpool(
+            s3.upload_fileobj,
+            io.BytesIO(processed.content),
+            bucket_name,
+            cleaned_key,
+        )
+    except Exception as exc:
+        record.status = "failed"
+        record.error_message = _safe_error_message(exc)
+        record.updated_at = _now_naive()
+        session.add(record)
+        await session.commit()
+        raise HTTPException(status_code=502, detail="File storage failed. Please retry.") from exc
+
+    record.status = "completed"
+    record.download_url = f"/files/{record.id}/download"
+    record.completed_at = _now_naive()
+    record.updated_at = record.completed_at
+    session.add(record)
+    await session.commit()
+    return record
 
 def _json_safe(value: Any) -> Any:
     if value is None:
@@ -469,6 +619,391 @@ COUNTRY_CODES = {
     "uk": "GB",
     "gb": "GB",
 }
+
+
+DEEP_CLEAN_COUNTRY_CODES = {
+    **COUNTRY_CODES,
+    "chile": "CL",
+    "cl": "CL",
+    "argentina": "AR",
+    "ar": "AR",
+    "colombia": "CO",
+    "co": "CO",
+    "brasil": "BR",
+    "brazil": "BR",
+    "br": "BR",
+    "ecuador": "EC",
+    "ec": "EC",
+    "bolivia": "BO",
+    "bo": "BO",
+}
+
+INVALID_DEEP_CLEAN_CATEGORIES = {"???", "desconocido", "unknown", "n/a", "na", "999", "none", "null", ""}
+
+
+def _deep_changed_count(before: pd.Series, after: pd.Series) -> int:
+    before_cmp = before.astype("string").fillna("<NA>")
+    after_cmp = after.astype("string").fillna("<NA>")
+    return int((before_cmp != after_cmp).sum())
+
+
+class DeepCleanEngine:
+    """Semantic business cleaner for tabular FileCleaner uploads."""
+
+    def __init__(self, df: pd.DataFrame):
+        self.df = df.copy()
+        self.semantics = self._detect_semantics()
+        self._apply_column_name_overrides()
+        self.report: dict[str, Any] = {
+            "columns_detected": self.semantics,
+            "fixes": [],
+            "warnings": [],
+            "errors": [],
+            "rows_original": int(len(df)),
+            "rows_clean": int(len(df)),
+        }
+
+    def clean(self) -> pd.DataFrame:
+        self._basic_clean()
+        for column, semantic in list(self.semantics.items()):
+            if column not in self.df.columns:
+                continue
+            if semantic == "email":
+                self._clean_email(column)
+            elif semantic == "phone":
+                self._clean_phone(column)
+            elif semantic == "currency":
+                self._clean_currency(column)
+            elif semantic == "date":
+                self._clean_date(column)
+            elif semantic == "name":
+                self._clean_name(column)
+            elif semantic == "location":
+                self._clean_location(column)
+            elif semantic == "categorical":
+                self._clean_categorical(column)
+            elif semantic == "country":
+                self._clean_country(column)
+            elif semantic == "address":
+                self._clean_address(column)
+            elif semantic == "document":
+                self._clean_document(column)
+            elif semantic == "credit_score":
+                self._clean_credit_score(column)
+            elif semantic in {"rating", "age_years", "amount", "percentage", "numeric"}:
+                self._clean_numeric_heuristic(column, semantic)
+        self._validate_cross_columns()
+        self.report["rows_clean"] = int(len(self.df))
+        return self.df
+
+    def _detect_semantics(self) -> dict[str, str]:
+        return {str(column): self._detect_column(str(column)) for column in self.df.columns}
+
+    def _detect_column(self, column: str) -> str:
+        series = self.df[column]
+        non_null = series.dropna()
+        if len(non_null) == 0:
+            return "empty"
+        sample = non_null.head(200).astype(str)
+        if self._is_id_column(series, sample):
+            return "id"
+        if self._is_email_column(sample):
+            return "email"
+        if self._date_parse_score(series) > 0.5:
+            return "date"
+        if self._is_currency_column(sample):
+            return "currency"
+        if self._is_phone_column(sample):
+            return "phone"
+        numeric_score = self._numeric_score(series)
+        if numeric_score > 0.8:
+            return self._classify_numeric(series)
+        if len(non_null) and series.nunique(dropna=True) / len(non_null) < 0.1 and series.nunique(dropna=True) < 50:
+            return "categorical"
+        if self._is_name_column(sample):
+            return "name"
+        if self._is_location_column(sample):
+            return "location"
+        return "text"
+
+    def _apply_column_name_overrides(self) -> None:
+        for column in self.df.columns:
+            key = str(column).lower()
+            if any(token in key for token in ["email", "correo", "mail"]):
+                self.semantics[str(column)] = "email"
+            elif any(token in key for token in ["dni", "ruc", "documento", "identidad", "cedula", "id_number"]):
+                self.semantics[str(column)] = "document"
+            elif any(token in key for token in ["telefono", "phone", "celular", "mobile"]):
+                self.semantics[str(column)] = "phone"
+            elif any(token in key for token in ["direccion", "address", "calle"]):
+                self.semantics[str(column)] = "address"
+            elif any(token in key for token in ["pais", "country"]):
+                self.semantics[str(column)] = "country"
+            elif any(token in key for token in ["score", "puntaje", "credit_score"]):
+                self.semantics[str(column)] = "credit_score"
+
+    def _is_id_column(self, series: pd.Series, sample: pd.Series) -> bool:
+        if len(series) <= 10 or series.nunique(dropna=True) != len(series.dropna()):
+            return False
+        if sample.str.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", case=False, na=False).mean() > 0.5:
+            return True
+        if sample.str.match(r"^[A-Z]{2,6}-\d{4,10}$", case=False, na=False).mean() > 0.5:
+            return True
+        numeric = pd.to_numeric(series, errors="coerce")
+        return bool(numeric.notna().sum() / max(len(series), 1) > 0.95)
+
+    def _is_email_column(self, sample: pd.Series) -> bool:
+        email_pattern = sample.str.match(r"[^@\s]+@[^@\s]+\.[^@\s]+", na=False)
+        humanized = sample.str.contains(r"\bdot\b|\bat\b", regex=True, case=False, na=False)
+        return bool(email_pattern.mean() > 0.3 or humanized.mean() > 0.05)
+
+    def _date_parse_score(self, series: pd.Series) -> float:
+        sample_str = series.dropna().head(50).astype(str)
+        if sample_str.empty:
+            return 0.0
+        if sample_str.str.match(r"^\d{1,4}$", na=False).mean() > 0.5:
+            return 0.0
+        if sample_str.str.match(r"^\d+\.\d+$", na=False).mean() > 0.3:
+            return 0.0
+        non_null = series.notna().sum()
+        parsed = pd.to_datetime(series, errors="coerce", format="mixed")
+        score = parsed.notna().sum() / max(non_null, 1)
+        if score < 0.5:
+            parsed_dayfirst = pd.to_datetime(series, dayfirst=True, errors="coerce", format="mixed")
+            score = max(score, parsed_dayfirst.notna().sum() / max(non_null, 1))
+        return float(score)
+
+    def _is_currency_column(self, sample: pd.Series) -> bool:
+        if sample.str.match(r"^[A-Z]{2,6}-\d{4,10}$", case=False, na=False).mean() > 0.3:
+            return False
+        currency_symbols = sample.str.contains(r"[$€£¥]|S/|\bUSD\b|\bEUR\b|\bPEN\b|\bMXN\b", regex=True, case=False, na=False)
+        has_numbers = sample.str.contains(r"\d", regex=True, na=False)
+        if currency_symbols.mean() > 0.1 and has_numbers.mean() > 0.8:
+            return True
+        number_pattern = sample.str.contains(r"\d{1,3}(?:,\d{3})*\.\d{2}|\d{1,3}\.\d{3},\d{2}", regex=True, na=False)
+        return bool(number_pattern.mean() > 0.3 and has_numbers.mean() > 0.8)
+
+    def _is_phone_column(self, sample: pd.Series) -> bool:
+        digit_lengths = sample.apply(lambda value: len(re.sub(r"\D", "", str(value))) if pd.notna(value) else 0)
+        date_like = sample.str.match(r"^\d{1,4}[/-]\d{1,4}[/-]\d{1,4}$", na=False)
+        has_currency = sample.str.contains(r"[$€£¥]|S/|\bUSD\b|\bEUR\b|\bPEN\b|\bMXN\b", regex=True, case=False, na=False)
+        return bool(digit_lengths.isin([7, 8, 9, 10, 11, 12, 13]).mean() > 0.5 and digit_lengths.median() >= 7 and date_like.mean() < 0.3 and has_currency.mean() < 0.1)
+
+    def _numeric_score(self, series: pd.Series) -> float:
+        non_null = series.notna().sum()
+        if non_null == 0:
+            return 0.0
+        return float(pd.to_numeric(series, errors="coerce").notna().sum() / non_null)
+
+    def _classify_numeric(self, series: pd.Series) -> str:
+        numeric = pd.to_numeric(series, errors="coerce").dropna()
+        if numeric.empty:
+            return "numeric"
+        median = numeric.median()
+        min_value = numeric.min()
+        max_value = numeric.max()
+        if min_value >= 0 and max_value <= 10 and median <= 10:
+            return "rating"
+        if min_value >= 0 and max_value <= 100 and median <= 100:
+            return "percentage"
+        if min_value >= 0 and max_value <= 120 and median < 100:
+            return "age_years"
+        if median > 1000:
+            return "amount"
+        return "numeric"
+
+    def _is_name_column(self, sample: pd.Series) -> bool:
+        words = sample.str.split().str.len()
+        has_numbers = sample.str.contains(r"\d", regex=True, na=False)
+        title_case = sample.str.match(r"^[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+(\s+[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+)+$", na=False)
+        return bool(words.between(2, 5).mean() > 0.5 and has_numbers.mean() < 0.1 and title_case.mean() > 0.3)
+
+    def _is_location_column(self, sample: pd.Series) -> bool:
+        words = sample.str.split().str.len()
+        has_numbers = sample.str.contains(r"\d", regex=True, na=False)
+        title_case = sample.str.match(r"^[A-ZÁÉÍÓÚÜÑ]", na=False)
+        return bool(words.between(1, 4).mean() > 0.7 and has_numbers.mean() < 0.2 and title_case.mean() > 0.5)
+
+    def _basic_clean(self) -> None:
+        text_columns = [column for column in self.df.columns if self.df[column].dtype == object or str(self.df[column].dtype).startswith("string")]
+        for column in text_columns:
+            self.df[column] = self.df[column].astype("string").str.strip()
+            self.df[column] = self.df[column].replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
+
+    def _clean_email(self, column: str) -> None:
+        original = self.df[column].copy()
+
+        def fix_email(value: Any) -> Any:
+            if pd.isna(value):
+                return value
+            text = str(value).strip().lower()
+            text = re.sub(r"\bdot\b", ".", text, flags=re.IGNORECASE)
+            text = re.sub(r"\bat\b", "@", text, flags=re.IGNORECASE)
+            text = re.sub(r"\s+", "", text)
+            return text if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", text) else pd.NA
+
+        self.df[column] = self.df[column].apply(fix_email)
+        self.report["fixes"].append(f"Email '{column}': {_deep_changed_count(original, self.df[column])} fixed or invalidated")
+
+    def _clean_phone(self, column: str) -> None:
+        original = self.df[column].copy()
+        self.df[column] = self.df[column].apply(_normalize_phone)
+        self.report["fixes"].append(f"Phone '{column}': {_deep_changed_count(original, self.df[column])} normalized")
+
+    def _clean_currency(self, column: str) -> None:
+        original = self.df[column].copy()
+
+        def parse(value: Any) -> Any:
+            parsed, _currency = _parse_currency(value)
+            if isinstance(parsed, (int, float)) and parsed < 0:
+                self.report["warnings"].append(f"Currency '{column}': negative value removed")
+                return pd.NA
+            return parsed
+
+        self.df[column] = self.df[column].apply(parse)
+        self.report["fixes"].append(f"Currency '{column}': {_deep_changed_count(original, self.df[column])} parsed")
+
+    def _clean_date(self, column: str) -> None:
+        original = self.df[column].copy()
+        parsed = pd.to_datetime(self.df[column], errors="coerce", format="mixed")
+        if self.df[column].notna().sum() and parsed.notna().sum() / self.df[column].notna().sum() < 0.5:
+            parsed = pd.to_datetime(self.df[column], dayfirst=True, errors="coerce", format="mixed")
+        future_mask = parsed > (pd.Timestamp.now() + pd.Timedelta(days=1))
+        if future_mask.sum() > 0:
+            self.report["warnings"].append(f"Date '{column}': {int(future_mask.sum())} future dates removed")
+            parsed = parsed.where(~future_mask, pd.NaT)
+        self.df[column] = parsed.dt.strftime("%Y-%m-%d").where(parsed.notna(), pd.NA)
+        self.report["fixes"].append(f"Date '{column}': {_deep_changed_count(original, self.df[column])} normalized")
+
+    def _clean_name(self, column: str) -> None:
+        original = self.df[column].copy()
+
+        def fix(value: Any) -> Any:
+            if pd.isna(value):
+                return value
+            text = str(value).strip()
+            if len(text.split()) < 2:
+                self.report["warnings"].append(f"Name '{column}': incomplete value '{text}'")
+            return text.title()
+
+        self.df[column] = self.df[column].apply(fix)
+        self.report["fixes"].append(f"Name '{column}': {_deep_changed_count(original, self.df[column])} normalized")
+
+    def _clean_location(self, column: str) -> None:
+        original = self.df[column].copy()
+        self.df[column] = self.df[column].apply(lambda value: str(value).strip().title() if pd.notna(value) else value)
+        self.report["fixes"].append(f"Location '{column}': {_deep_changed_count(original, self.df[column])} normalized")
+
+    def _clean_categorical(self, column: str) -> None:
+        original = self.df[column].copy()
+        self.df[column] = self.df[column].apply(
+            lambda value: pd.NA if pd.notna(value) and str(value).strip().lower() in INVALID_DEEP_CLEAN_CATEGORIES else value
+        )
+        self.report["fixes"].append(f"Categorical '{column}': {_deep_changed_count(original, self.df[column])} invalidated")
+
+    def _clean_country(self, column: str) -> None:
+        original = self.df[column].copy()
+        self.df[column] = self.df[column].apply(lambda value: DEEP_CLEAN_COUNTRY_CODES.get(str(value).strip().lower(), str(value).strip().upper()) if pd.notna(value) else value)
+        self.report["fixes"].append(f"Country '{column}': {_deep_changed_count(original, self.df[column])} normalized to ISO")
+
+    def _clean_address(self, column: str) -> None:
+        original = self.df[column].copy()
+        self.df[column] = self.df[column].apply(lambda value: str(value).strip().title() if pd.notna(value) else value)
+        self.report["fixes"].append(f"Address '{column}': {_deep_changed_count(original, self.df[column])} normalized")
+
+    def _clean_document(self, column: str) -> None:
+        original = self.df[column].copy()
+
+        def clean_doc(value: Any) -> Any:
+            if pd.isna(value):
+                return value
+            digits = re.sub(r"\D", "", str(value).strip())
+            if len(digits) == 8:
+                return f"DNI-{digits}"
+            if len(digits) == 11:
+                return f"RUC-{digits}"
+            return digits if digits else pd.NA
+
+        self.df[column] = self.df[column].apply(clean_doc)
+        self.report["fixes"].append(f"Document '{column}': {_deep_changed_count(original, self.df[column])} normalized")
+
+    def _clean_credit_score(self, column: str) -> None:
+        original = self.df[column].copy()
+        numeric = pd.to_numeric(self.df[column], errors="coerce")
+        invalid_mask = (numeric < 300) | (numeric > 850)
+        if invalid_mask.sum() > 0:
+            self.report["warnings"].append(f"Credit score '{column}': {int(invalid_mask.sum())} values outside 300-850 removed")
+        self.df[column] = numeric.where(~invalid_mask, pd.NA)
+        self.report["fixes"].append(f"Credit score '{column}': {_deep_changed_count(original, self.df[column])} validated")
+
+    def _clean_numeric_heuristic(self, column: str, semantic: str) -> None:
+        original = self.df[column].copy()
+        numeric = pd.to_numeric(self.df[column], errors="coerce")
+        valid = numeric.dropna()
+        if valid.empty:
+            return
+        q1 = valid.quantile(0.25)
+        q3 = valid.quantile(0.75)
+        iqr = q3 - q1
+        lower = max(0, q1 - 3 * iqr)
+        upper = q3 + 3 * iqr
+        key = column.lower()
+        if semantic == "rating" or any(token in key for token in ["rating", "calif", "puntu"]):
+            lower, upper = 0, 10
+        elif semantic == "age_years" or any(token in key for token in ["age", "edad", "year", "experiencia"]):
+            lower, upper = 0, 120
+        elif semantic == "amount" or any(token in key for token in ["salary", "salario", "monto", "amount", "precio", "price", "stock", "cantidad"]):
+            lower, upper = 0, float("inf")
+        invalid_mask = (numeric < lower) | (numeric > upper)
+        if invalid_mask.sum() > 0:
+            self.report["warnings"].append(f"Numeric '{column}': {int(invalid_mask.sum())} values outside expected range removed")
+        self.df[column] = numeric.where(~invalid_mask, pd.NA)
+        self.report["fixes"].append(f"Numeric '{column}': {_deep_changed_count(original, self.df[column])} validated")
+
+    def _validate_cross_columns(self) -> None:
+        date_columns = [column for column, semantic in self.semantics.items() if semantic == "date" and column in self.df.columns]
+        if len(date_columns) < 2:
+            return
+        birth_col = next((column for column in date_columns if any(token in column.lower() for token in ["nac", "birth", "dob", "born"])), None)
+        hire_col = next((column for column in date_columns if any(token in column.lower() for token in ["contrat", "hire", "join", "start", "registro", "compra"])), None)
+        if not birth_col or not hire_col or birth_col == hire_col:
+            return
+        birth = pd.to_datetime(self.df[birth_col], errors="coerce")
+        hire = pd.to_datetime(self.df[hire_col], errors="coerce")
+        invalid = hire < (birth + pd.DateOffset(years=18))
+        if invalid.sum() > 0:
+            self.report["errors"].append(
+                f"Cross-validation: {int(invalid.sum())} rows with '{hire_col}' before legal age"
+            )
+            self.df.loc[invalid, hire_col] = pd.NA
+
+
+def run_deep_clean(content: bytes, filename: str) -> FileCleanerPipelineResult:
+    detection = detect_file_profile(content, filename)
+    if not detection.get("loadable"):
+        raise ValueError(f"Manual review required: {detection.get('error', 'unable to load file')}")
+    df = _load_df(
+        content,
+        filename,
+        encoding=detection.get("encoding") if filename.lower().endswith(".csv") else None,
+        delimiter=detection.get("delimiter"),
+        headers=bool(detection.get("headers_detected", True)),
+    )
+    engine = DeepCleanEngine(df)
+    cleaned = engine.clean()
+    report = {
+        "version": "filecleaner-deepclean-v6",
+        "generated_at": _now_naive().isoformat() + "Z",
+        "detection": detection,
+        "deep_clean": engine.report,
+        "download_format": filename.rsplit(".", 1)[-1].lower() if "." in filename else "csv",
+    }
+    return FileCleanerPipelineResult(
+        dataframe=cleaned,
+        output=_save_df(cleaned, filename),
+        report=report,
+        detection=detection,
+    )
 
 
 def _default_config() -> dict[str, Any]:
@@ -1536,6 +2071,61 @@ async def upload_file(
     }
 
 
+@file_router.post("/deep-clean")
+async def deep_clean_file(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Pro/Team semantic cleaning for business datasets. Returns the cleaned file immediately.
+    """
+    plan, limits = await get_filecleaner_limits(user, session)
+    if plan == "free":
+        raise HTTPException(status_code=403, detail="Deep clean is available on Pro and Team plans.")
+
+    content = await file.read()
+    if len(content) > limits.max_file_size_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Deep clean is limited to {limits.max_file_size_bytes // (1024 * 1024)}MB on your current plan.",
+        )
+
+    filename = file.filename or "file.csv"
+    ext = filename.rsplit(".", 1)[-1].lower()
+    if ext not in ("csv", "xlsx", "xls", "json"):
+        raise HTTPException(status_code=400, detail="Unsupported file type. Use CSV, JSON, or Excel.")
+
+    try:
+        result = await run_in_threadpool(run_deep_clean, content, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    media_type = "text/csv"
+    if ext == "json":
+        media_type = "application/json"
+    elif ext in {"xlsx", "xls"}:
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    download_name = f"deep-cleaned-{filename}"
+    report_summary = {
+        "version": result.report["version"],
+        "rows_original": result.report["deep_clean"]["rows_original"],
+        "rows_clean": result.report["deep_clean"]["rows_clean"],
+        "fixes": len(result.report["deep_clean"]["fixes"]),
+        "warnings": len(result.report["deep_clean"]["warnings"]),
+        "errors": len(result.report["deep_clean"]["errors"]),
+    }
+    return StreamingResponse(
+        result.output,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_name}"',
+            "X-DevForge-Deep-Clean": "filecleaner-deepclean-v6",
+            "X-DevForge-Deep-Clean-Report": json.dumps(report_summary, ensure_ascii=True),
+        },
+    )
+
+
 @file_router.post("/utility")
 async def process_file_utility(
     file: UploadFile = File(...),
@@ -1558,7 +2148,7 @@ async def process_file_utility(
 
     try:
         processed = await run_in_threadpool(
-            process_image_file,
+            _process_file_utility_content,
             content,
             file.filename or "file",
             output_format=output_format,
@@ -1566,6 +2156,14 @@ async def process_file_utility(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await _persist_file_utility_result(
+        content=content,
+        original_filename=file.filename or "file",
+        processed=processed,
+        user=user,
+        session=session,
+    )
 
     headers = {
         "Content-Disposition": f'attachment; filename="{processed.filename}"',

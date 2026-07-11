@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
     s3_bucket_name: str = ""
+    s3_region: str = "auto"
 
     # Cron job authentication
     cron_secret: str = ""

@@ -130,7 +130,7 @@ class FeedbackLensCollectionPipelineTests(unittest.TestCase):
         prefs = feedback_main.FeedbackSettings(user_id=42, alert_email="alerts@example.test")
         long_context = "Intro sentence. " * 220
         body = f"{long_context} Checkout is broken and I need a refund urgently. https://shop.example/product"
-        session = _FakeSession(responses=[[], [], [prefs]])
+        session = _FakeSession(responses=[[], [], [], [prefs]])
 
         response = _client(session).post(
             "/feedback/ingest/email",
@@ -240,16 +240,19 @@ class FeedbackLensCollectionPipelineTests(unittest.TestCase):
             config_json=json.dumps({"oauth_state": "state-1", "repo": "acme/app"}),
         )
 
-        with patch.object(
-            feedback_main,
-            "_exchange_oauth_code",
-            return_value={"access_token": "gho_token", "refresh_token": "refresh"},
-        ):
+        with patch.dict(os.environ, {"ENCRYPTION_KEY": "feedbacklens-test-key"}, clear=False), \
+                patch.object(
+                    feedback_main,
+                    "_exchange_oauth_code",
+                    return_value={"access_token": "gho_token", "refresh_token": "refresh"},
+                ):
             response = _client(_FakeSession(responses=[[source]])).get("/connect/github/callback?state=state-1&code=abc")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "connected")
-        self.assertEqual(source.access_token, "gho_token")
+        self.assertTrue(source.access_token.startswith("enc:"))
+        with patch.dict(os.environ, {"ENCRYPTION_KEY": "feedbacklens-test-key"}, clear=False):
+            self.assertEqual(feedback_main.decrypt_secret(source.access_token), "gho_token")
         self.assertEqual(source.status, "connected")
 
     def test_email_ingest_extracts_text_attachments(self):
@@ -331,7 +334,7 @@ class FeedbackLensCollectionPipelineTests(unittest.TestCase):
         raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
         signature = hmac.new(b"secret", raw, hashlib.sha256).hexdigest()
 
-        response = _client(_FakeSession(responses=[[source], [existing]])).post(
+        response = _client(_FakeSession(responses=[[source], [], [existing]])).post(
             "/feedback/ingest/github?source_id=9",
             content=raw,
             headers={"x-hub-signature-256": f"sha256={signature}", "content-type": "application/json"},
@@ -382,7 +385,8 @@ class FeedbackLensCollectionPipelineTests(unittest.TestCase):
             config_json=json.dumps({"oauth_state": "rd-state", "redirect_uri": ""}),
         )
 
-        with patch.object(feedback_main, "_exchange_oauth_code", return_value={"access_token": "token", "refresh_token": "refresh"}):
+        with patch.dict(os.environ, {"ENCRYPTION_KEY": "feedbacklens-test-key"}, clear=False), \
+                patch.object(feedback_main, "_exchange_oauth_code", return_value={"access_token": "token", "refresh_token": "refresh"}):
             twitter_callback = _paid_client(_FakeSession(responses=[[twitter_source]])).get(
                 "/connect/twitter/callback?state=tw-state&code=abc"
             )
@@ -394,8 +398,11 @@ class FeedbackLensCollectionPipelineTests(unittest.TestCase):
         self.assertEqual(reddit_callback.status_code, 200)
         self.assertEqual(twitter_source.status, "connected")
         self.assertEqual(reddit_source.status, "connected")
-        self.assertEqual(twitter_source.access_token, "token")
-        self.assertEqual(reddit_source.refresh_token, "refresh")
+        self.assertTrue(twitter_source.access_token.startswith("enc:"))
+        self.assertTrue(reddit_source.refresh_token.startswith("enc:"))
+        with patch.dict(os.environ, {"ENCRYPTION_KEY": "feedbacklens-test-key"}, clear=False):
+            self.assertEqual(feedback_main.decrypt_secret(twitter_source.access_token), "token")
+            self.assertEqual(feedback_main.decrypt_secret(reddit_source.refresh_token), "refresh")
 
     def test_free_plan_rejects_external_sources_and_documents_limits(self):
         from backend_core.plan_limits import FEEDBACKLENS_LIMITS

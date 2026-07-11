@@ -147,5 +147,31 @@ class MigrationStatementTests(unittest.TestCase):
         self.assertIn("feedback_entries ADD COLUMN IF NOT EXISTS is_urgent", statements)
 
 
+class DeploymentConfigurationTests(unittest.TestCase):
+    def test_render_declares_required_encryption_and_r2_region_env_vars(self):
+        render_config = (ROOT / "render.yaml").read_text()
+
+        self.assertIn("- key: ENCRYPTION_KEY", render_config)
+        self.assertIn("- key: S3_REGION", render_config)
+
+    def test_env_example_documents_required_encryption_key(self):
+        env_example = (ROOT / ".env.example").read_text()
+
+        self.assertIn("ENCRYPTION_KEY=", env_example)
+
+    def test_render_env_export_includes_encryption_and_r2_region(self):
+        export_script = (ROOT / "scripts" / "export-render-env.ps1").read_text()
+
+        self.assertIn('"ENCRYPTION_KEY"', export_script)
+        self.assertIn('"S3_REGION"', export_script)
+
+    def test_filecleaner_uses_configured_r2_region(self):
+        settings_source = (ROOT / "packages" / "backend_core" / "config.py").read_text(encoding="utf-8")
+        filecleaner_source = (ROOT / "apps" / "filecleaner" / "backend" / "main.py").read_text(encoding="utf-8")
+
+        self.assertIn('s3_region: str = "auto"', settings_source)
+        self.assertIn("region_name=settings.s3_region", filecleaner_source)
+
+
 if __name__ == "__main__":
     unittest.main()

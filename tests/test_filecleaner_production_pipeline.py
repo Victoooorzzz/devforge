@@ -13,11 +13,13 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "packages"))
 
 from fastapi.testclient import TestClient
+import fitz
 
 import apps.filecleaner.backend.main as file_main
 from apps.filecleaner.backend.main import ProcessedFile
 from backend_core.auth import User, get_current_user
 from backend_core.database import get_session
+from backend_core.plan_limits import FILECLEANER_LIMITS
 
 
 def _trial_user(user_id=42):
@@ -195,6 +197,87 @@ class FileCleanerProductionPipelineTests(unittest.TestCase):
         self.assertEqual(file_main._parse_currency("1.234,56 \u20ac"), (1234.56, "EUR"))
         self.assertEqual(file_main._magic_clean_price("$1,500.25"), 1500.25)
 
+    def test_deep_clean_detects_semantics_and_reports_business_fixes(self):
+        content = (
+            "Nombre,Correo,Telefono,Pais,DNI,credit_score,monto,fecha_nacimiento,fecha_contratacion\n"
+            " ana lopez ,ana dot lopez at example dot com,987654321,Peru,12345678,720,\"S/ 1,500.50\",1990-01-01,2024-02-01\n"
+            "Bob Smith,bob@example.com,(415) 555-0100,usa,20123456789,920,\"$2,000.00\",2010-01-01,2020-01-01\n"
+        ).encode("utf-8")
+
+        result = file_main.run_deep_clean(content, "customers.csv")
+
+        self.assertEqual(result.report["version"], "filecleaner-deepclean-v6")
+        self.assertEqual(result.report["deep_clean"]["columns_detected"]["Correo"], "email")
+        self.assertEqual(result.report["deep_clean"]["columns_detected"]["Pais"], "country")
+        self.assertEqual(result.dataframe["Correo"].iloc[0], "ana.lopez@example.com")
+        self.assertEqual(result.dataframe["Pais"].tolist(), ["PE", "US"])
+        self.assertEqual(result.dataframe["DNI"].iloc[0], "DNI-12345678")
+        self.assertTrue(file_main.pd.isna(result.dataframe["credit_score"].iloc[1]))
+        self.assertTrue(result.report["deep_clean"]["warnings"])
+
+    def test_deep_clean_endpoint_is_pro_only(self):
+        async def free_limits(_user, _session):
+            return "free", FILECLEANER_LIMITS["free"]
+
+        with patch.object(file_main, "get_filecleaner_limits", free_limits):
+            response = _client(_FakeSession()).post(
+                "/files/deep-clean",
+                files={"file": ("customers.csv", b"name,email\nAna,ana@example.test\n", "text/csv")},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Pro", response.json()["detail"])
+
+    def test_pdf_utility_returns_multipage_pdf_and_persists_files_to_r2(self):
+        document = fitz.open()
+        document.set_metadata({"author": "Private Author", "title": "Private Report"})
+        for page_number in range(1, 3):
+            page = document.new_page(width=240, height=160)
+            page.insert_text((24, 80), f"Page {page_number}")
+        source_pdf = document.tobytes()
+        document.close()
+
+        fake_s3 = _FakeS3()
+        session = _FakeSession()
+
+        async def pro_limits(_user, _session):
+            return "pro", FILECLEANER_LIMITS["pro"]
+
+        with patch.object(file_main.settings, "s3_bucket_name", "filecleaner-files"), \
+             patch.object(file_main, "_get_s3_client", lambda: fake_s3), \
+             patch.object(file_main, "get_filecleaner_limits", pro_limits):
+            response = _client(session).post(
+                "/files/utility",
+                files={"file": ("brief.pdf", source_pdf, "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/pdf")
+        self.assertEqual(
+            response.headers["content-disposition"],
+            'attachment; filename="brief.cleaned.pdf"',
+        )
+        self.assertTrue(response.content.startswith(b"%PDF"))
+
+        cleaned = fitz.open(stream=response.content, filetype="pdf")
+        self.assertEqual(cleaned.page_count, 2)
+        self.assertEqual(cleaned.metadata.get("author"), "")
+        self.assertEqual(cleaned.metadata.get("title"), "")
+        cleaned.close()
+
+        self.assertEqual(
+            fake_s3.uploads[("filecleaner-files", "raw/1_brief.pdf")],
+            source_pdf,
+        )
+        self.assertEqual(
+            fake_s3.uploads[("filecleaner-files", "cleaned/1_brief.cleaned.pdf")],
+            response.content,
+        )
+        record = next(item for item in session.added if isinstance(item, ProcessedFile))
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(record.raw_object_key, "raw/1_brief.pdf")
+        self.assertEqual(record.cleaned_object_key, "cleaned/1_brief.cleaned.pdf")
+
     def test_schema_regex_requires_full_value_match(self):
         df = file_main.pd.DataFrame({"code": ["123", "123abc"]})
         report = file_main._run_schema_validation(
@@ -305,7 +388,10 @@ class FileCleanerFrontendContractTests(unittest.TestCase):
         page = (ROOT / "apps" / "filecleaner" / "frontend" / "src" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")
         for term in [
             "/files/analyze",
+            "/files/deep-clean",
             "/files/{fileId}/cancel",
+            "Deep clean",
+            "Pro",
             "Preview first 100 rows",
             "Fuzzy matching",
             "Schema validation",

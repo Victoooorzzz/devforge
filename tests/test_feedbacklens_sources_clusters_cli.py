@@ -101,7 +101,7 @@ def _entry(entry_id, text, *, sentiment="negative", urgent=False, source="manual
     )
     analysis = feedback_main._analyze_feedback_locally(text)
     entry.cluster_slug = feedback_main._cluster_slug_for_analysis(text, analysis["themes"])
-    entry.priority = feedback_main._priority_for_analysis(analysis, 2)
+    entry.priority = feedback_main._priority_for_analysis(analysis)
     return entry
 
 
@@ -211,4 +211,3 @@ class FeedbackLensSourcesClustersCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

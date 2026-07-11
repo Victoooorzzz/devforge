@@ -5,23 +5,24 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
+from functools import wraps
 from typing import Any, Literal, Optional
 import asyncio
 import base64
-from collections import defaultdict
+import csv
 import html
 import io
 import json
 import logging
 import re
 import secrets
-from time import time as _monotonic_time
+import tempfile
 import unicodedata
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, EmailStr, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, ValidationError, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, select
 import httpx
@@ -35,9 +36,11 @@ from backend_core.product_insights import summarize_invoices
 from backend_core.worker import register_job_handler
 from backend_core.plan_limits import resolve_user_plan
 from zoneinfo import ZoneInfo
-from sqlalchemy import update, case, func, and_
+from sqlalchemy import UniqueConstraint, update, case, func, and_, text
 import hashlib
 from cryptography.fernet import Fernet
+from openpyxl import Workbook
+from starlette.background import BackgroundTask
 import stripe
 
 class IntegrationsCrypto:
@@ -46,10 +49,9 @@ class IntegrationsCrypto:
     @classmethod
     def get_fernet(cls):
         if cls._fernet is None:
-            key_str = os.getenv("ENCRYPTION_KEY", "")
+            key_str = os.getenv("ENCRYPTION_KEY", "").strip()
             if not key_str:
-                key_bytes = b"fallback_devforge_encryption_k3y"
-                key_str = base64.urlsafe_b64encode(key_bytes).decode()
+                raise RuntimeError("ENCRYPTION_KEY is required for InvoiceFollow integrations.")
             else:
                 try:
                     decoded = base64.urlsafe_b64decode(key_str.encode())
@@ -92,13 +94,18 @@ def decrypt_val(val: str) -> str:
 logger = logging.getLogger(__name__)
 settings = get_settings()
 DEFAULT_BACKEND_PUBLIC_URL = "https://devforge-universal-backend.onrender.com"
-_PUBLIC_RATE_LIMITS: dict[str, list[float]] = defaultdict(list)
 _PUBLIC_RATE_WINDOW_SECONDS = 60
 _PUBLIC_RATE_MAX = 60
+MAX_REPLY_TEXT_CHARS = 20_000
+GMAIL_REPLY_MAX_MESSAGES = 100
+GMAIL_DETAIL_CONCURRENCY = 10
+STRIPE_EVENT_PAGE_LIMIT = 100
+STRIPE_EVENT_MAX_PAGES = 10
+INVOICE_EXPORT_PAGE_SIZE = 500
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
 
 
 def _token_urlsafe() -> str:
@@ -131,13 +138,65 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _rate_limit_public(request: Request, bucket: str) -> None:
-    key = f"{bucket}:{_client_ip(request)}"
-    now_ts = _monotonic_time()
-    _PUBLIC_RATE_LIMITS[key] = [ts for ts in _PUBLIC_RATE_LIMITS[key] if now_ts - ts < _PUBLIC_RATE_WINDOW_SECONDS]
-    if len(_PUBLIC_RATE_LIMITS[key]) >= _PUBLIC_RATE_MAX:
+async def _rate_limit_public(request: Request, bucket: str, session: AsyncSession) -> None:
+    now = _utc_now()
+    window_started_at = now.replace(second=0, microsecond=0)
+    client_key = hashlib.sha256(f"{bucket}:{_client_ip(request)}".encode()).hexdigest()
+    result = await session.execute(
+        text(
+            """
+            INSERT INTO invoice_public_rate_limits
+                (bucket, client_key, window_started_at, request_count, expires_at)
+            VALUES
+                (:bucket, :client_key, :window_started_at, 1, :expires_at)
+            ON CONFLICT (bucket, client_key, window_started_at)
+            DO UPDATE SET request_count = invoice_public_rate_limits.request_count + 1
+            WHERE invoice_public_rate_limits.request_count < :max_requests
+            RETURNING request_count
+            """
+        ),
+        {
+            "bucket": bucket,
+            "client_key": client_key,
+            "window_started_at": window_started_at,
+            "expires_at": window_started_at + timedelta(seconds=_PUBLIC_RATE_WINDOW_SECONDS),
+            "max_requests": _PUBLIC_RATE_MAX,
+        },
+    )
+    if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
-    _PUBLIC_RATE_LIMITS[key].append(now_ts)
+    await session.commit()
+
+
+async def _lock_invoice_capacity(session: AsyncSession, user_id: int) -> None:
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+        {"lock_name": f"invoicefollow:capacity:{user_id}"},
+    )
+
+
+def _singleton_cron_job(lock_name: str, skipped_result: dict[str, int]):
+    def decorate(func):
+        @wraps(func)
+        async def wrapped(*args, **kwargs):
+            async with get_managed_session() as lock_session:
+                lock_result = await lock_session.execute(
+                    text("SELECT pg_try_advisory_lock(hashtext(:lock_name))"),
+                    {"lock_name": lock_name},
+                )
+                if not bool(lock_result.scalar_one_or_none()):
+                    return {**skipped_result, "skipped_locked": 1}
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    await lock_session.execute(
+                        text("SELECT pg_advisory_unlock(hashtext(:lock_name))"),
+                        {"lock_name": lock_name},
+                    )
+
+        return wrapped
+
+    return decorate
 
 
 def _date_from_value(value: Any) -> date | None:
@@ -225,8 +284,28 @@ INVOICEFOLLOW_LIMITS: dict[str, InvoiceFollowLimits] = {
 }
 
 
+class InvoicePublicRateLimit(SQLModel, table=True):
+    __tablename__ = "invoice_public_rate_limits"
+    __table_args__ = (
+        UniqueConstraint(
+            "bucket",
+            "client_key",
+            "window_started_at",
+            name="uq_invoice_public_rate_limit_window",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    bucket: str = Field(index=True)
+    client_key: str = Field(index=True)
+    window_started_at: datetime = Field(index=True)
+    request_count: int = Field(default=1)
+    expires_at: datetime = Field(index=True)
+
+
 class Invoice(SQLModel, table=True):
     __tablename__ = "invoices"
+    __table_args__ = (UniqueConstraint("promise_token", name="uq_invoices_promise_token"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(index=True)
@@ -244,6 +323,8 @@ class Invoice(SQLModel, table=True):
     reminders_sent: int = Field(default=0)
     last_reminder_date: Optional[date] = None
     promise_token: Optional[str] = Field(default=None, index=True)
+    promise_used_at: Optional[datetime] = None
+    promise_expires_at: Optional[datetime] = Field(default_factory=lambda: _utc_now() + timedelta(days=30))
     payment_promise_date: Optional[date] = None
     schedule_paused_until: Optional[date] = None
     manual_review_reason: str = Field(default="")
@@ -265,13 +346,16 @@ class InvoiceSettings(SQLModel, table=True):
     skip_weekends: bool = Field(default=True)
     timezone: str = Field(default="America/Lima")
     sender_name: str = Field(default="")
-    weekly_digest_enabled: bool = Field(default=True)
-    immediate_alerts_enabled: bool = Field(default=True)
+    weekly_digest_enabled: bool = Field(default=False)
+    immediate_alerts_enabled: bool = Field(default=False)
     no_send_after_hour: int = Field(default=18)
 
 
 class InvoiceIntegrationSettings(SQLModel, table=True):
     __tablename__ = "invoice_integration_settings"
+    __table_args__ = (
+        UniqueConstraint("forward_address_token", name="uq_invoice_integration_forward_address_token"),
+    )
 
     user_id: int = Field(primary_key=True)
     gmail_connected: bool = Field(default=False)
@@ -283,11 +367,7 @@ class InvoiceIntegrationSettings(SQLModel, table=True):
     stripe_connected: bool = Field(default=False)
     stripe_account_label: str = Field(default="")
     stripe_api_key: str = Field(default="")
-    paypal_connected: bool = Field(default=False)
-    paypal_account_label: str = Field(default="")
-    paypal_client_id: str = Field(default="")
-    paypal_client_secret: str = Field(default="")
-    forward_address_token: str = Field(default="")
+    forward_address_token: str = Field(default_factory=_token_urlsafe, index=True)
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
 
@@ -335,6 +415,9 @@ class InvoiceReminderLog(SQLModel, table=True):
 
 class InvoiceReplyEvent(SQLModel, table=True):
     __tablename__ = "invoice_reply_events"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", "provider_message_id", name="uq_invoice_reply_events_provider_message"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     invoice_id: int = Field(index=True)
@@ -360,6 +443,45 @@ class InvoicePaymentEvent(SQLModel, table=True):
     status: str = Field(default="succeeded", index=True)
     raw_json: str = Field(default="{}")
     detected_at: datetime = Field(default_factory=_utc_now, index=True)
+
+
+class InvoiceAuditLog(SQLModel, table=True):
+    __tablename__ = "invoice_audit_logs"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "source",
+            "source_event_id",
+            "action",
+            name="uq_invoice_audit_source_action",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    actor_user_id: Optional[int] = Field(default=None, index=True)
+    actor_type: str = Field(default="user", index=True)
+    entity_type: str = Field(default="invoice", index=True)
+    entity_id: Optional[int] = Field(default=None, index=True)
+    action: str = Field(index=True)
+    source: str = Field(default="api", index=True)
+    source_event_id: str = Field(index=True)
+    details_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=_utc_now, index=True)
+
+
+@dataclass(frozen=True)
+class InvoiceTemplatePreview:
+    id: Optional[int] = None
+    client_name: str = "Acme"
+    amount: float = 4800
+    currency: str = "USD"
+    due_date: date = date(2026, 1, 31)
+    invoice_number: str = "#1042"
+
+
+def _template_preview() -> InvoiceTemplatePreview:
+    return InvoiceTemplatePreview(due_date=date.today())
 
 
 class InvoiceCreate(BaseModel):
@@ -398,6 +520,8 @@ class InvoiceCreate(BaseModel):
 
 
 class InvoiceUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     client_name: Optional[str] = None
     client_email: Optional[EmailStr] = None
     amount: Optional[float] = None
@@ -408,14 +532,49 @@ class InvoiceUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
 
+    @field_validator("amount")
+    @classmethod
+    def amount_must_be_positive_when_present(cls, value: Optional[float]) -> Optional[float]:
+        if value is not None and value <= 0:
+            raise ValueError("amount must be greater than 0")
+        return value
+
+    @field_validator("status")
+    @classmethod
+    def status_must_be_known_when_present(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        cleaned = value.strip().lower()
+        if cleaned not in {"pending", "overdue", "paid", "cancelled"}:
+            raise ValueError("status must be pending, overdue, paid, or cancelled")
+        return cleaned
+
+    @field_validator("currency")
+    @classmethod
+    def currency_must_be_isoish_when_present(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        cleaned = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{3}", cleaned):
+            raise ValueError("currency must be a 3-letter code")
+        return cleaned
+
 
 class InvoiceEmailDetectRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     subject: str = ""
     body: str = ""
     sender_email: EmailStr
     sender_name: str = ""
     message_id: str = ""
     source: Literal["gmail", "forward"] = "gmail"
+
+    @model_validator(mode="after")
+    def forward_requires_message_id(self):
+        if self.source == "forward" and not self.message_id.strip():
+            raise ValueError("message_id is required for forwarded invoice emails")
+        return self
 
 
 class DraftConfirmRequest(BaseModel):
@@ -453,8 +612,6 @@ class InvoiceSettingsUpdate(BaseModel):
 class ConnectRequest(BaseModel):
     email: Optional[EmailStr] = None
     api_key: Optional[str] = None
-    client_id: Optional[str] = None
-    client_secret: Optional[str] = None
     account_label: Optional[str] = None
     redirect_uri: Optional[str] = None
 
@@ -527,27 +684,35 @@ def _clean_import_value(value):
 
 
 def _clean_import_amount(value) -> float:
-    cleaned = (
-        _clean_import_value(value)
-        .replace("$", "")
-        .replace("US$", "")
-        .replace("S/", "")
-        .replace("\u20ac", "")
-        .replace("\u00a3", "")
-        .replace(" ", "")
+    cleaned = _clean_import_value(value).strip()
+    cleaned = re.sub(
+        r"\b(?:USD|EUR|GBP|PEN|CHF|CAD|AUD|NZD|MXN|BRL|ARS|CLP|COP)\b",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
     )
+    for symbol in ("US$", "S/", "$", "\u20ac", "\u00a3"):
+        cleaned = cleaned.replace(symbol, "")
+    cleaned = re.sub(r"[\s\u00a0\u202f'\u2019]", "", cleaned)
     if not cleaned:
         raise ValueError("amount is required")
+    if not re.fullmatch(r"[+-]?[0-9][0-9.,]*", cleaned):
+        raise ValueError("invalid amount")
     if "," in cleaned and "." in cleaned:
         if cleaned.rfind(",") > cleaned.rfind("."):
             cleaned = cleaned.replace(".", "").replace(",", ".")
         else:
             cleaned = cleaned.replace(",", "")
-    elif "," in cleaned:
-        if re.search(r",\d{1,2}$", cleaned):
-            cleaned = cleaned.replace(",", ".")
+    elif "," in cleaned or "." in cleaned:
+        separator = "," if "," in cleaned else "."
+        parts = cleaned.split(separator)
+        decimal_digits = len(parts[-1])
+        if decimal_digits in {1, 2}:
+            cleaned = "".join(parts[:-1]) + "." + parts[-1]
+        elif decimal_digits == 3:
+            cleaned = "".join(parts)
         else:
-            cleaned = cleaned.replace(",", "")
+            cleaned = "".join(parts[:-1]) + "." + parts[-1]
     return float(cleaned)
 
 
@@ -641,7 +806,8 @@ def _sender_company(sender_name: str, sender_email: str) -> str:
         if cleaned:
             return cleaned
     domain = sender_email.split("@")[-1].split(".")[0] if "@" in sender_email else sender_email
-    return domain.replace("-", " ").replace("_", " ").title()
+    cleaned_domain = domain.replace("-", " ").replace("_", " ").strip().title()
+    return cleaned_domain or "Unknown"
 
 
 def _safe_json_loads(value: str, fallback: Any) -> Any:
@@ -738,18 +904,17 @@ def parse_invoice_email(subject: str, body: str, sender_email: str, sender_name:
 
 def build_reminder_schedule(due_date: date, today: date | None = None, user_name: str = "Owner", logs: list[Any] | None = None) -> list[dict[str, Any]]:
     today = today or date.today()
-    days_overdue = max(0, (today - due_date).days)
     sent_stages = set()
     if logs:
         for log in logs:
             if getattr(log, "status", "") in {"sent", "queued"}:
                 sent_stages.add(getattr(log, "template_key", ""))
     return [
-        {"day": 0, "name": "Invoice Original", "tone": "neutral", "sender_label": user_name, "status": "done"},
-        {"day": 7, "name": "First Reminder", "tone": "friendly", "sender_label": user_name, "status": "done" if "friendly" in sent_stages or days_overdue >= 7 else "pending"},
-        {"day": 15, "name": "Second Reminder", "tone": "firm", "sender_label": f"{user_name} (Billing)", "status": "done" if "firm" in sent_stages or days_overdue >= 15 else "pending"},
-        {"day": 30, "name": "Final Notice", "tone": "urgent", "sender_label": f"{user_name} (Accounts Receivable)", "status": "done" if "urgent" in sent_stages or days_overdue >= 30 else "pending"},
-        {"day": 45, "name": "Pause", "tone": "manual", "sender_label": f"{user_name} (Accounts Receivable)", "status": "done" if "pause" in sent_stages or days_overdue >= 45 else "pending"},
+        {"day": 0, "name": "Invoice Original", "tone": "neutral", "sender_label": user_name, "status": "done" if "original" in sent_stages else "pending"},
+        {"day": 7, "name": "First Reminder", "tone": "friendly", "sender_label": user_name, "status": "done" if "friendly" in sent_stages else "pending"},
+        {"day": 15, "name": "Second Reminder", "tone": "firm", "sender_label": f"{user_name} (Billing)", "status": "done" if "firm" in sent_stages else "pending"},
+        {"day": 30, "name": "Final Notice", "tone": "urgent", "sender_label": f"{user_name} (Accounts Receivable)", "status": "done" if "urgent" in sent_stages else "pending"},
+        {"day": 45, "name": "Pause", "tone": "manual", "sender_label": f"{user_name} (Accounts Receivable)", "status": "done" if "pause" in sent_stages else "pending"},
     ]
 
 
@@ -771,7 +936,7 @@ def _select_next_stage(days_overdue: int, templates: dict[str, dict[str, Any]], 
     return max(eligible, key=lambda item: int(item["day"]))
 
 
-def _template_vars(invoice: Invoice, *, company_name: str, user_name: str, today: date) -> dict[str, str]:
+def _template_vars(invoice: Any, *, company_name: str, user_name: str, today: date) -> dict[str, str]:
     days_overdue = max(0, (today - invoice.due_date).days)
     return {
         "client_name": invoice.client_name,
@@ -819,7 +984,7 @@ def render_reminder_template(
 
 
 def _normalize_intent_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFKD", text or "")
+    normalized = unicodedata.normalize("NFKD", (text or "")[:MAX_REPLY_TEXT_CHARS])
     ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
     return re.sub(r"\s+", " ", ascii_text.lower()).strip()
 
@@ -926,7 +1091,7 @@ def apply_reply_intent(invoice: Invoice, intent: dict[str, Any], *, payment_conf
             invoice.paid_at = _utc_now()
             invoice.manual_review_reason = ""
             return {"action": "mark_paid", "notify_user": "Payment confirmed automatically."}
-        invoice.manual_review_reason = "Client says paid; verify payment in bank, Stripe, or PayPal."
+        invoice.manual_review_reason = "Client says paid; verify payment in the bank or Stripe."
         return {"action": "pause_verify_payment", "notify_user": "Client says they paid. Please verify payment."}
     if label == "EXCUSA_VALIDA":
         invoice.cron_paused = True
@@ -968,22 +1133,6 @@ def detect_stripe_payment_for_invoice(event_payload: dict[str, Any], invoice: In
         "provider_event_id": event_payload.get("id", obj.get("id", "")),
         "amount": float(amount),
         "currency": str(obj.get("currency", invoice.currency)).upper(),
-        "match_type": "amount_email" if amount_ok and email_ok else "none",
-    }
-
-
-def detect_paypal_payment_for_invoice(transaction: dict[str, Any], invoice: Invoice) -> dict[str, Any]:
-    amount = float(transaction.get("amount", {}).get("value", transaction.get("amount", 0)) or 0)
-    currency = str(transaction.get("amount", {}).get("currency_code", transaction.get("currency", invoice.currency))).upper()
-    payer_email = str(transaction.get("payer", {}).get("email_address", transaction.get("payer_email", ""))).lower()
-    amount_ok = invoice.amount * 0.95 <= amount <= invoice.amount * 1.05
-    email_ok = payer_email == invoice.client_email.lower()
-    return {
-        "matched": bool(amount_ok and email_ok and currency == invoice.currency),
-        "provider": "paypal",
-        "provider_event_id": str(transaction.get("id", "")),
-        "amount": amount,
-        "currency": currency,
         "match_type": "amount_email" if amount_ok and email_ok else "none",
     }
 
@@ -1176,11 +1325,13 @@ async def _get_or_create_integration_settings(session: AsyncSession, user: User)
 
 
 async def _active_invoice_count(session: AsyncSession, user_id: int) -> int:
-    try:
-        result = await session.execute(select(func.count(Invoice.id)).where(Invoice.user_id == user_id, Invoice.status != "paid"))
-        return result.scalar_one() or 0
-    except Exception:
-        return 0
+    result = await session.execute(
+        select(func.count(Invoice.id)).where(
+            Invoice.user_id == user_id,
+            Invoice.status != "paid",
+        )
+    )
+    return result.scalar_one() or 0
 
 
 async def _plan_for_user(user: User, session: AsyncSession) -> str:
@@ -1188,6 +1339,7 @@ async def _plan_for_user(user: User, session: AsyncSession) -> str:
 
 
 async def _reject_if_over_invoice_limit(session: AsyncSession, user: User) -> None:
+    await _lock_invoice_capacity(session, user.id)
     plan = await _plan_for_user(user, session)
     active_count = await _active_invoice_count(session, user.id)
     limit = INVOICEFOLLOW_LIMITS[plan].max_active_invoices
@@ -1338,6 +1490,27 @@ async def send_gmail_message(integration: InvoiceIntegrationSettings, *, to: str
         return response.json()
 
 
+async def _fetch_gmail_message_details(
+    client: httpx.AsyncClient,
+    raw_messages: list[dict[str, Any]],
+    headers: dict[str, str],
+) -> list[dict[str, Any]]:
+    semaphore = asyncio.Semaphore(GMAIL_DETAIL_CONCURRENCY)
+
+    async def fetch_one(item: dict[str, Any]) -> dict[str, Any]:
+        async with semaphore:
+            detail = await client.get(
+                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{item['id']}",
+                headers=headers,
+                params={"format": "full"},
+            )
+            detail.raise_for_status()
+            return detail.json()
+
+    bounded = raw_messages[:GMAIL_REPLY_MAX_MESSAGES]
+    return list(await asyncio.gather(*(fetch_one(item) for item in bounded)))
+
+
 async def fetch_gmail_thread_replies(integration: InvoiceIntegrationSettings, invoice: Invoice, session: AsyncSession | None = None) -> list[dict[str, Any]]:
     await _refresh_gmail_token(integration, session)
     access_token = decrypt_val(integration.gmail_access_token)
@@ -1359,7 +1532,10 @@ async def fetch_gmail_thread_replies(integration: InvoiceIntegrationSettings, in
             seen_page_tokens: set[str] = set()
             raw_messages = []
             for _ in range(5):
-                params = {"q": query, "maxResults": 100}
+                remaining = GMAIL_REPLY_MAX_MESSAGES - len(raw_messages)
+                if remaining <= 0:
+                    break
+                params = {"q": query, "maxResults": min(100, remaining)}
                 if next_page_token:
                     if next_page_token in seen_page_tokens:
                         logger.warning("Gmail returned a repeated nextPageToken for invoice %s", invoice.id)
@@ -1375,17 +1551,9 @@ async def fetch_gmail_thread_replies(integration: InvoiceIntegrationSettings, in
                 data = list_response.json()
                 raw_messages.extend(data.get("messages", []))
                 next_page_token = data.get("nextPageToken")
-                if not next_page_token:
+                if not next_page_token or len(raw_messages) >= GMAIL_REPLY_MAX_MESSAGES:
                     break
-            messages = []
-            for item in raw_messages[:100]:
-                detail = await client.get(
-                    f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{item['id']}",
-                    headers=headers,
-                    params={"format": "full"},
-                )
-                detail.raise_for_status()
-                messages.append(detail.json())
+            messages = await _fetch_gmail_message_details(client, raw_messages, headers)
     replies: list[dict[str, Any]] = []
     for message in messages:
         payload = message.get("payload") or {}
@@ -1408,66 +1576,46 @@ async def list_stripe_payment_events(api_key: str) -> list[dict[str, Any]]:
     if not decrypted_key:
         return []
     since = int((_utc_now() - timedelta(days=30)).timestamp())
+    events: list[dict[str, Any]] = []
+    starting_after = ""
     async with httpx.AsyncClient(timeout=20) as client:
-        for attempt in range(3):
-            response = await client.get(
-                "https://api.stripe.com/v1/events",
-                headers={"Authorization": f"Bearer {decrypted_key}"},
-                params={"type": "payment_intent.succeeded", "created[gte]": since, "limit": 100},
-            )
-            if response.status_code != 429:
-                response.raise_for_status()
-                return response.json().get("data", [])
-            await asyncio.sleep(2 ** attempt)
-    return []
+        for _page in range(STRIPE_EVENT_MAX_PAGES):
+            params: dict[str, Any] = {
+                "type": "payment_intent.succeeded",
+                "created[gte]": since,
+                "limit": STRIPE_EVENT_PAGE_LIMIT,
+            }
+            if starting_after:
+                params["starting_after"] = starting_after
+            response = None
+            for attempt in range(3):
+                response = await client.get(
+                    "https://api.stripe.com/v1/events",
+                    headers={"Authorization": f"Bearer {decrypted_key}"},
+                    params=params,
+                )
+                if response.status_code != 429:
+                    break
+                await asyncio.sleep(2 ** attempt)
+            if response is None or response.status_code == 429:
+                break
+            response.raise_for_status()
+            payload = response.json()
+            page_events = payload.get("data", [])
+            events.extend(page_events)
+            if not payload.get("has_more") or not page_events:
+                break
+            next_cursor = str(page_events[-1].get("id", ""))
+            if not next_cursor or next_cursor == starting_after:
+                break
+            starting_after = next_cursor
+    return events
 
 
-async def list_paypal_completed_transactions(client_id: str, client_secret: str) -> list[dict[str, Any]]:
-    decrypted_secret = decrypt_val(client_secret)
-    if not client_id or not decrypted_secret:
-        return []
-    end = _utc_now()
-    start = end - timedelta(days=30)
-
-    is_sandbox = "sb-" in client_id.lower() or "sandbox" in client_id.lower()
-    paypal_url = "https://api-m.sandbox.paypal.com" if is_sandbox else "https://api-m.paypal.com"
-
-    async with httpx.AsyncClient(timeout=20) as client:
-        token_response = await client.post(
-            f"{paypal_url}/v1/oauth2/token",
-            auth=(client_id, decrypted_secret),
-            data={"grant_type": "client_credentials"},
-        )
-        token_response.raise_for_status()
-        access_token = token_response.json().get("access_token")
-        if not access_token:
-            return []
-        response = await client.get(
-            f"{paypal_url}/v1/reporting/transactions",
-            headers={"Authorization": f"Bearer {access_token}"},
-            params={
-                "start_date": start.isoformat(),
-                "end_date": end.isoformat(),
-                "fields": "transaction_info,payer_info",
-            },
-        )
-        response.raise_for_status()
-    transactions = []
-    for item in response.json().get("transaction_details", []):
-        info = item.get("transaction_info", {})
-        payer = item.get("payer_info", {})
-        status_val = str(info.get("transaction_status", "")).upper()
-        if status_val not in {"S", "SUCCESS", "COMPLETED"}:
-            continue
-        amount = info.get("transaction_amount", {})
-        transactions.append({
-            "id": info.get("transaction_id", ""),
-            "amount": {"value": amount.get("value", 0), "currency_code": amount.get("currency_code", "USD")},
-            "payer": {"email_address": payer.get("email_address", "")},
-        })
-    return transactions
-
-
+@_singleton_cron_job(
+    "invoicefollow:replies",
+    {"processed_replies": 0, "paused_invoices": 0, "manual_review_flags": 0},
+)
 async def poll_reply_threads() -> dict[str, int]:
     async with get_managed_session() as session:
         invoice_result = await session.execute(select(Invoice).where(Invoice.status == "pending"))
@@ -1517,6 +1665,23 @@ async def poll_reply_threads() -> dict[str, int]:
                         action_taken=action["action"],
                         received_at=reply.get("received_at") or _utc_now(),
                     ))
+                    session.add(InvoiceAuditLog(
+                        user_id=invoice.user_id,
+                        actor_type="system",
+                        entity_type="invoice",
+                        entity_id=invoice_id,
+                        action=action["action"],
+                        source=reply.get("provider", "gmail") or "gmail",
+                        source_event_id=provider_message_id or hashlib.sha256(
+                            reply.get("text", "")[:MAX_REPLY_TEXT_CHARS].encode()
+                        ).hexdigest(),
+                        details_json=json.dumps({
+                            "intent_label": intent["label"],
+                            "manual_review_required": bool(intent.get("manual_review_required")),
+                            "invoice_status": invoice.status,
+                            "cron_paused": invoice.cron_paused,
+                        }),
+                    ))
                     session.add(invoice)
                     processed += 1
             except Exception:
@@ -1527,6 +1692,10 @@ async def poll_reply_threads() -> dict[str, int]:
         return {"processed_replies": processed, "paused_invoices": paused, "manual_review_flags": flagged}
 
 
+@_singleton_cron_job(
+    "invoicefollow:payments",
+    {"processed_payments": 0, "matched_payments": 0},
+)
 async def poll_payment_providers() -> dict[str, int]:
     async with get_managed_session() as session:
         # Also poll "overdue" status invoices
@@ -1537,7 +1706,6 @@ async def poll_payment_providers() -> dict[str, int]:
         integrations_result = await session.execute(select(InvoiceIntegrationSettings))
         integrations = {item.user_id: item for item in integrations_result.scalars().all()}
         stripe_cache: dict[int, list[dict[str, Any]]] = {}
-        paypal_cache: dict[int, list[dict[str, Any]]] = {}
         processed = 0
         matched = 0
         for invoice in invoices:
@@ -1548,7 +1716,6 @@ async def poll_payment_providers() -> dict[str, int]:
             if integration.stripe_connected and invoice.user_id not in stripe_cache:
                 stripe_cache[invoice.user_id] = await list_stripe_payment_events(integration.stripe_api_key or settings.stripe_secret_key)
             for event in stripe_cache.get(invoice.user_id, []):
-                processed += 1
                 payment = detect_stripe_payment_for_invoice(event, invoice)
                 if not payment["matched"]:
                     continue
@@ -1573,37 +1740,7 @@ async def poll_payment_providers() -> dict[str, int]:
                 ))
                 session.add(invoice)
                 matched += 1
-                break
-            if invoice.status == "paid":
-                continue
-            if integration.paypal_connected and invoice.user_id not in paypal_cache:
-                paypal_cache[invoice.user_id] = await list_paypal_completed_transactions(integration.paypal_client_id, integration.paypal_client_secret)
-            for transaction in paypal_cache.get(invoice.user_id, []):
                 processed += 1
-                payment = detect_paypal_payment_for_invoice(transaction, invoice)
-                if not payment["matched"]:
-                    continue
-                existing = await session.execute(select(InvoicePaymentEvent).where(InvoicePaymentEvent.provider == "paypal", InvoicePaymentEvent.provider_event_id == payment["provider_event_id"]))
-                if existing.scalar_one_or_none():
-                    continue
-                if invoice.status == "paid":
-                    continue
-                invoice.status = "paid"
-                invoice.cron_paused = True
-                invoice.paid_at = _utc_now()
-                invoice.updated_at = _utc_now()
-                session.add(InvoicePaymentEvent(
-                    user_id=invoice.user_id,
-                    invoice_id=invoice_id,
-                    provider="paypal",
-                    provider_event_id=payment["provider_event_id"],
-                    amount=payment["amount"],
-                    currency=payment["currency"],
-                    status="succeeded",
-                    raw_json=json.dumps(transaction),
-                ))
-                session.add(invoice)
-                matched += 1
                 break
         await session.commit()
         return {"processed_payments": processed, "matched_payments": matched}
@@ -1614,9 +1751,24 @@ def is_time_to_send(user_settings: InvoiceSettings, local_now: datetime) -> bool
         return False
     send_hour = user_settings.send_hour if user_settings.send_hour is not None else 9
     no_send = user_settings.no_send_after_hour if user_settings.no_send_after_hour is not None else 18
+    if no_send < send_hour:
+        return False
     if not (send_hour <= local_now.hour <= no_send):
         return False
     return True
+
+
+async def _recent_email_guard_exceeded(session: AsyncSession, user_id: int, *, max_recent: int = 10) -> bool:
+    recent_since = _utc_now() - timedelta(seconds=60)
+    recent_res = await session.execute(
+        select(func.count(InvoiceReminderLog.id)).where(
+            InvoiceReminderLog.user_id == user_id,
+            InvoiceReminderLog.status.in_({"queued", "sent"}),
+            InvoiceReminderLog.sent_at >= recent_since,
+        )
+    )
+    recent_count = recent_res.scalar_one() or 0
+    return recent_count >= max_recent
 
 
 @cron_router.post("/cron/reminders/enqueue", tags=["cron"])
@@ -1667,9 +1819,13 @@ async def cron_poll_payments(background_tasks: BackgroundTasks, sync: bool = Fal
     if sync:
         return await _run()
     background_tasks.add_task(_run)
-    return {"status": "success", "stripe_frequency_hours": 1, "paypal_frequency_hours": 6}
+    return {"status": "success", "stripe_frequency_hours": 1}
 
 
+@_singleton_cron_job(
+    "invoicefollow:reminders",
+    {"queued_reminders": 0},
+)
 async def enqueue_overdue_reminders():
     async with get_managed_session() as session:
         today = date.today()
@@ -1720,6 +1876,9 @@ async def enqueue_overdue_reminders():
                     user_res = await session.execute(select(User).where(User.id == invoice.user_id))
                     usr = user_res.scalar_one_or_none()
                     if usr:
+                        if await _recent_email_guard_exceeded(session, invoice.user_id):
+                            logger.warning("User %s exceeded per-minute InvoiceFollow email guard", invoice.user_id)
+                            continue
                         settings_result = await session.execute(select(InvoiceSettings).where(InvoiceSettings.user_id == invoice.user_id))
                         user_settings = settings_result.scalar_one_or_none()
                         templates = _templates_from_settings(user_settings)
@@ -1794,6 +1953,9 @@ async def enqueue_overdue_reminders():
             sent_count = sent_count_res.scalar_one() or 0
             if sent_count >= limit:
                 logger.warning(f"User {invoice.user_id} exceeded monthly email limit of {limit}")
+                continue
+            if await _recent_email_guard_exceeded(session, invoice.user_id):
+                logger.warning("User %s exceeded per-minute InvoiceFollow email guard", invoice.user_id)
                 continue
 
             templates = _templates_from_settings(user_settings)
@@ -1954,6 +2116,7 @@ async def import_invoices(file: UploadFile = File(...), user: User = Depends(get
         payloads = _parse_invoice_import(await file.read(), filename)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _lock_invoice_capacity(session, user.id)
     active_count = await _active_invoice_count(session, user.id)
     plan = await _plan_for_user(user, session)
     limit = INVOICEFOLLOW_LIMITS[plan].max_active_invoices
@@ -2115,11 +2278,24 @@ async def client_scores(user: User = Depends(get_current_user), session: AsyncSe
     return scores
 
 
-@invoice_router.get("/export")
-async def export_invoices(format: Literal["csv", "xlsx", "json"] = Query(default="csv"), user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    result = await session.execute(select(Invoice).where(Invoice.user_id == user.id).order_by(Invoice.created_at.desc()))
-    invoices = result.scalars().all()
-    rows = [{
+INVOICE_EXPORT_COLUMNS = (
+    "id",
+    "client_name",
+    "client_email",
+    "amount",
+    "currency",
+    "due_date",
+    "issued_date",
+    "invoice_number",
+    "source",
+    "status",
+    "reminders_sent",
+    "created_at",
+)
+
+
+def _invoice_export_row(invoice: Invoice) -> dict[str, Any]:
+    return {
         "id": invoice.id,
         "client_name": invoice.client_name,
         "client_email": invoice.client_email,
@@ -2132,21 +2308,87 @@ async def export_invoices(format: Literal["csv", "xlsx", "json"] = Query(default
         "status": invoice.status,
         "reminders_sent": invoice.reminders_sent,
         "created_at": invoice.created_at.isoformat(),
-    } for invoice in invoices]
+    }
+
+
+async def _iter_invoice_export_rows(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    page_size: int = INVOICE_EXPORT_PAGE_SIZE,
+):
+    last_id: Optional[int] = None
+    while True:
+        query = select(Invoice).where(Invoice.user_id == user_id)
+        if last_id is not None:
+            query = query.where(Invoice.id < last_id)
+        result = await session.execute(query.order_by(Invoice.id.desc()).limit(page_size))
+        invoices = result.scalars().all()
+        if not invoices:
+            break
+        for invoice in invoices:
+            yield _invoice_export_row(invoice)
+        next_id = getattr(invoices[-1], "id", None)
+        if next_id is None:
+            break
+        last_id = int(next_id)
+
+
+async def _stream_invoice_csv(session: AsyncSession, user_id: int):
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=INVOICE_EXPORT_COLUMNS)
+    writer.writeheader()
+    yield output.getvalue().encode("utf-8")
+    async for row in _iter_invoice_export_rows(session, user_id=user_id):
+        output.seek(0)
+        output.truncate(0)
+        writer.writerow(row)
+        yield output.getvalue().encode("utf-8")
+
+
+async def _stream_invoice_json(session: AsyncSession, user_id: int):
+    yield b"[\n"
+    first = True
+    async for row in _iter_invoice_export_rows(session, user_id=user_id):
+        prefix = b"" if first else b",\n"
+        first = False
+        yield prefix + json.dumps(row, ensure_ascii=False).encode("utf-8")
+    yield b"\n]\n"
+
+
+async def _build_invoice_xlsx(session: AsyncSession, user_id: int):
+    workbook = Workbook(write_only=True)
+    worksheet = workbook.create_sheet("Invoices")
+    worksheet.append(list(INVOICE_EXPORT_COLUMNS))
+    async for row in _iter_invoice_export_rows(session, user_id=user_id):
+        worksheet.append([row[column] for column in INVOICE_EXPORT_COLUMNS])
+    buffer = tempfile.SpooledTemporaryFile(max_size=5 * 1024 * 1024, mode="w+b")
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+@invoice_router.get("/export")
+async def export_invoices(format: Literal["csv", "xlsx", "json"] = Query(default="csv"), user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     if format == "json":
-        return StreamingResponse(io.BytesIO(json.dumps(rows, indent=2).encode()), media_type="application/json", headers={"Content-Disposition": "attachment; filename=invoicefollow_export.json"})
-    df = pd.DataFrame(rows)
-    buf = io.BytesIO()
+        return StreamingResponse(
+            _stream_invoice_json(session, user.id),
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=invoicefollow_export.json"},
+        )
     if format == "xlsx":
-        df.to_excel(buf, index=False, engine="openpyxl")
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = "invoicefollow_export.xlsx"
-    else:
-        df.to_csv(buf, index=False)
-        media_type = "text/csv"
-        filename = "invoicefollow_export.csv"
-    buf.seek(0)
-    return StreamingResponse(buf, media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
+        buffer = await _build_invoice_xlsx(session, user.id)
+        return StreamingResponse(
+            buffer,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=invoicefollow_export.xlsx"},
+            background=BackgroundTask(buffer.close),
+        )
+    return StreamingResponse(
+        _stream_invoice_csv(session, user.id),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=invoicefollow_export.csv"},
+    )
 
 
 @invoice_router.get("/{invoice_id}")
@@ -2193,21 +2435,30 @@ async def resume_invoice(invoice_id: int, user: User = Depends(get_current_user)
     return {"status": "resumed", "invoice": _invoice_to_dict(invoice)}
 
 
-@invoice_router.post("/{invoice_id}/mark-paid")
-async def mark_paid_post(invoice_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    invoice = await _get_invoice_or_404(session, user.id, invoice_id)
+def _mark_invoice_paid(invoice: Invoice) -> dict[str, Any]:
     invoice.status = "paid"
     invoice.cron_paused = True
     invoice.paid_at = _utc_now()
     invoice.updated_at = _utc_now()
+    return {"status": "paid", "invoice": _invoice_to_dict(invoice)}
+
+
+@invoice_router.post("/{invoice_id}/mark-paid")
+async def mark_paid_post(invoice_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    invoice = await _get_invoice_or_404(session, user.id, invoice_id)
+    response = _mark_invoice_paid(invoice)
     session.add(invoice)
     await session.flush()
-    return {"status": "paid", "invoice": _invoice_to_dict(invoice)}
+    return response
 
 
 @invoice_router.put("/{invoice_id}/mark-paid")
 async def mark_paid(invoice_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    return await mark_paid_post(invoice_id=invoice_id, user=user, session=session)
+    invoice = await _get_invoice_or_404(session, user.id, invoice_id)
+    response = _mark_invoice_paid(invoice)
+    session.add(invoice)
+    await session.flush()
+    return response
 
 
 @invoice_router.put("/{invoice_id}/pause-reminders")
@@ -2229,12 +2480,14 @@ async def invoice_timeline(invoice_id: int, user: User = Depends(get_current_use
     log_result = await session.execute(select(InvoiceReminderLog).where(InvoiceReminderLog.invoice_id == invoice.id, InvoiceReminderLog.user_id == user.id))
     reply_result = await session.execute(select(InvoiceReplyEvent).where(InvoiceReplyEvent.invoice_id == invoice.id, InvoiceReplyEvent.user_id == user.id))
     payment_result = await session.execute(select(InvoicePaymentEvent).where(InvoicePaymentEvent.invoice_id == invoice.id, InvoicePaymentEvent.user_id == user.id))
+    audit_result = await session.execute(select(InvoiceAuditLog).where(InvoiceAuditLog.entity_type == "invoice", InvoiceAuditLog.entity_id == invoice.id, InvoiceAuditLog.user_id == user.id))
     return {
         "invoice": _invoice_to_dict(invoice),
         "timeline": build_reminder_schedule(invoice.due_date, user_name=user.name or "Owner"),
         "emails_sent": [item.model_dump() for item in log_result.scalars().all()],
         "client_replies": [item.model_dump() for item in reply_result.scalars().all()],
         "payments_detected": [item.model_dump() for item in payment_result.scalars().all()],
+        "audit_events": [item.model_dump() for item in audit_result.scalars().all()],
         "notes": invoice.notes,
     }
 
@@ -2242,7 +2495,8 @@ async def invoice_timeline(invoice_id: int, user: User = Depends(get_current_use
 @templates_router.get("")
 async def get_templates(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     user_settings = await _get_or_create_settings(session, user)
-    return {"templates": list(_templates_from_settings(user_settings).values()), "variables": list(_template_vars(Invoice(user_id=user.id, client_name="Acme", client_email="billing@example.com", amount=4800, currency="USD", due_date=date.today(), invoice_number="#1042"), company_name=user_settings.company_name or "Your Company", user_name=user_settings.sender_name or (user.name or "Owner"), today=date.today()).keys())}
+    preview = _template_preview()
+    return {"templates": list(_templates_from_settings(user_settings).values()), "variables": list(_template_vars(preview, company_name=user_settings.company_name or "Your Company", user_name=user_settings.sender_name or (user.name or "Owner"), today=date.today()).keys())}
 
 
 @templates_router.put("")
@@ -2255,6 +2509,17 @@ async def update_templates(body: TemplatesUpdate, user: User = Depends(get_curre
         templates[template_id].update(patch.model_dump(exclude_unset=True))
     user_settings.templates_json = json.dumps(templates)
     session.add(user_settings)
+    session.add(InvoiceAuditLog(
+        user_id=user.id,
+        actor_user_id=user.id,
+        actor_type="user",
+        entity_type="settings",
+        entity_id=user.id,
+        action="templates_updated",
+        source="api",
+        source_event_id=_token_urlsafe(),
+        details_json=json.dumps({"template_ids": sorted(body.templates)}),
+    ))
     await session.flush()
     return {"templates": list(templates.values())}
 
@@ -2281,7 +2546,6 @@ async def get_invoice_settings(user: User = Depends(get_current_user), session: 
         "connections": {
             "gmail": integrations.gmail_connected,
             "stripe": integrations.stripe_connected,
-            "paypal": integrations.paypal_connected,
         },
     }
 
@@ -2290,6 +2554,7 @@ async def get_invoice_settings(user: User = Depends(get_current_user), session: 
 async def update_invoice_settings(body: InvoiceSettingsUpdate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     user_settings = await _get_or_create_settings(session, user)
     updates = body.model_dump(exclude_unset=True)
+    previous = {key: getattr(user_settings, key) for key in updates}
     if "send_hour" in updates and updates["send_hour"] is not None and not 0 <= updates["send_hour"] <= 23:
         raise HTTPException(status_code=400, detail="send_hour must be between 0 and 23")
     if "no_send_after_hour" in updates and updates["no_send_after_hour"] is not None and not 0 <= updates["no_send_after_hour"] <= 23:
@@ -2306,6 +2571,21 @@ async def update_invoice_settings(body: InvoiceSettingsUpdate, user: User = Depe
     for key, value in updates.items():
         setattr(user_settings, key, value)
     session.add(user_settings)
+    session.add(InvoiceAuditLog(
+        user_id=user.id,
+        actor_user_id=user.id,
+        actor_type="user",
+        entity_type="settings",
+        entity_id=user.id,
+        action="settings_updated",
+        source="api",
+        source_event_id=_token_urlsafe(),
+        details_json=json.dumps({
+            "changed_fields": sorted(updates),
+            "before": previous,
+            "after": {key: getattr(user_settings, key) for key in updates},
+        }, default=str),
+    ))
     await session.flush()
     return await get_invoice_settings(user=user, session=session)
 
@@ -2325,6 +2605,17 @@ async def update_invoice_template(body: InvoiceTemplateUpdate, user: User = Depe
     user_settings = await _get_or_create_settings(session, user)
     user_settings.email_template = body.email_template
     session.add(user_settings)
+    session.add(InvoiceAuditLog(
+        user_id=user.id,
+        actor_user_id=user.id,
+        actor_type="user",
+        entity_type="settings",
+        entity_id=user.id,
+        action="invoice_template_updated",
+        source="api",
+        source_event_id=_token_urlsafe(),
+        details_json=json.dumps({"changed_fields": ["email_template"]}),
+    ))
     await session.flush()
     return {"email_template": user_settings.email_template}
 
@@ -2384,6 +2675,7 @@ async def gmail_oauth_callback(
     integrations.gmail_token_expires_at = _token_expiry(token_data.get("expires_in"))
     integrations.gmail_email = token_data.get("email") or integrations.gmail_email
     integrations.gmail_connected = True
+    integrations.gmail_state = ""
     integrations.updated_at = _utc_now()
     session.add(integrations)
     await session.flush()
@@ -2420,43 +2712,6 @@ async def connect_stripe(body: ConnectRequest, user: User = Depends(get_current_
     session.add(integrations)
     await session.flush()
     return {"provider": "stripe", "connected": True, "mode": "read_only", "account_label": integrations.stripe_account_label}
-
-
-@connect_router.post("/paypal")
-async def connect_paypal(body: ConnectRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    plan = await _plan_for_user(user, session)
-    if not INVOICEFOLLOW_LIMITS[plan].payment_connections_enabled:
-        raise HTTPException(status_code=402, detail="PayPal read-only connection requires Pro or Team.")
-    if not body.client_id or not body.client_secret:
-        raise HTTPException(status_code=400, detail="PayPal client_id and client_secret are required.")
-
-    is_test = "unittest" in sys.modules or body.client_id == "test-client"
-    if not is_test:
-        is_sandbox = "sb-" in body.client_id.lower() or "sandbox" in body.client_id.lower()
-        paypal_url = "https://api-m.sandbox.paypal.com" if is_sandbox else "https://api-m.paypal.com"
-        async with httpx.AsyncClient(timeout=20) as client:
-            try:
-                token_response = await client.post(
-                    f"{paypal_url}/v1/oauth2/token",
-                    auth=(body.client_id, body.client_secret),
-                    data={"grant_type": "client_credentials"},
-                )
-                if token_response.status_code != 200:
-                    raise HTTPException(status_code=400, detail="Invalid PayPal client_id or client_secret.")
-            except Exception as e:
-                if isinstance(e, HTTPException):
-                    raise
-                raise HTTPException(status_code=400, detail=f"Failed to verify PayPal credentials: {e}")
-
-    integrations = await _get_or_create_integration_settings(session, user)
-    integrations.paypal_client_id = body.client_id
-    integrations.paypal_client_secret = encrypt_val(body.client_secret)
-    integrations.paypal_connected = True
-    integrations.paypal_account_label = body.account_label or f"client_...{body.client_id[-4:]}"
-    integrations.updated_at = _utc_now()
-    session.add(integrations)
-    await session.flush()
-    return {"provider": "paypal", "connected": True, "mode": "read_only", "account_label": integrations.paypal_account_label}
 
 
 @digest_router.get("/metrics")
@@ -2498,24 +2753,19 @@ async def digest(user: User = Depends(get_current_user), session: AsyncSession =
 
 @public_router.post("/webhooks/stripe")
 async def stripe_webhook(request: Request, stripe_signature: str | None = Header(default=None), session: AsyncSession = Depends(get_session)):
-    _rate_limit_public(request, "stripe_webhook")
+    await _rate_limit_public(request, "stripe_webhook", session)
     payload = await request.body()
     sig_header = stripe_signature
-    endpoint_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    endpoint_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
 
-    event = None
-    if sig_header and endpoint_secret:
-        try:
-            event = stripe.Webhook.construct_event(
-                payload, sig_header, endpoint_secret
-            )
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {e}")
-    else:
-        try:
-            event = json.loads(payload)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    if not endpoint_secret:
+        raise HTTPException(status_code=500, detail="Stripe webhook secret is not configured.")
+    if not sig_header:
+        raise HTTPException(status_code=400, detail="Stripe-Signature header is required.")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {e}")
 
     if event.get("type") == "payment_intent.succeeded":
         obj = event.get("data", {}).get("object", {})
@@ -2575,17 +2825,30 @@ async def stripe_webhook(request: Request, stripe_signature: str | None = Header
 
 @public_router.get("/promise/{token}")
 async def public_promise(token: str, request: Request, session: AsyncSession = Depends(get_session)):
-    _rate_limit_public(request, "promise")
+    await _rate_limit_public(request, "promise", session)
     result = await session.execute(select(Invoice).where(Invoice.promise_token == token))
     invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invalid or expired link")
+    now = _utc_now()
+    expires_at = getattr(invoice, "promise_expires_at", None)
+    if expires_at and expires_at < now:
+        raise HTTPException(status_code=404, detail="Invalid or expired link")
     if invoice.status == "paid":
         raise HTTPException(status_code=409, detail="Invoice is already paid")
+    if getattr(invoice, "promise_used_at", None):
+        return {
+            "message": "Payment promise already saved.",
+            "invoice_id": invoice.id,
+            "amount": invoice.amount,
+            "currency": invoice.currency,
+            "promise_date": str(invoice.payment_promise_date or date.today()),
+        }
     today = date.today()
     invoice.cron_paused = True
     invoice.payment_promise_date = today
     invoice.schedule_paused_until = today + timedelta(days=7)
+    invoice.promise_used_at = now
     invoice.updated_at = _utc_now()
     session.add(invoice)
     await session.commit()

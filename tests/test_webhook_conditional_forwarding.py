@@ -148,7 +148,15 @@ class WebhookConditionalForwardingTests(unittest.TestCase):
             auto_retry_enabled=True,
             is_active=True,
         )
-        session = _ManagedSession([[rule]])
+        request = webhook_main.WebhookRequest(
+            id=1,
+            endpoint_id=7,
+            user_id=42,
+            method="POST",
+            path="/hook/test",
+            body='{"event":"invoice.paid","data":{"amount":99}}',
+        )
+        session = _ManagedSession([[request], [], [rule]])
         original_get_managed_session = webhook_main.get_managed_session
 
         @asynccontextmanager
@@ -161,6 +169,7 @@ class WebhookConditionalForwardingTests(unittest.TestCase):
 
             asyncio.run(
                 webhook_main._persist_and_forward(
+                    request_id=1,
                     endpoint_id=7,
                     user_id=42,
                     method="POST",
@@ -287,16 +296,15 @@ class WebhookConditionalForwardingTests(unittest.TestCase):
         try:
             import asyncio
 
-            with self.assertRaises(webhook_main.httpx.RequestError):
-                asyncio.run(
-                    webhook_main.process_webhook_forward(
-                        {
-                            "request_id": 6,
-                            "forward_url": "https://example.com/primary-webhook",
-                            "fallback_url": "https://example.com/fallback-webhook",
-                        }
-                    )
+            result = asyncio.run(
+                webhook_main.process_webhook_forward(
+                    {
+                        "request_id": 6,
+                        "forward_url": "https://example.com/primary-webhook",
+                        "fallback_url": "https://example.com/fallback-webhook",
+                    }
                 )
+            )
         finally:
             webhook_main.get_managed_session = original_get_managed_session
             webhook_main.httpx.AsyncClient = original_async_client
@@ -307,6 +315,8 @@ class WebhookConditionalForwardingTests(unittest.TestCase):
         ])
         self.assertEqual(request.retry_count, 1)
         self.assertTrue(session.flushed)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("fallback", result["reason"])
 
 
 if __name__ == "__main__":

@@ -2,21 +2,24 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "packages"))
 
 import asyncio
-import base64, hashlib, hmac, json, logging, io, re, secrets, unicodedata, uuid
+import base64, csv, hashlib, hmac, html, json, logging, io, re, secrets, tempfile, unicodedata, uuid
 from difflib import SequenceMatcher
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib import error as url_error, request as url_request
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile, Query, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import Column, DateTime, func
+from sqlalchemy import Column, DateTime, func, Index, or_, text as sa_text, tuple_
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Field, SQLModel, select
-from pydantic import BaseModel, Field as PydanticField
+from pydantic import BaseModel, ConfigDict, EmailStr, Field as PydanticField, TypeAdapter, ValidationError
 from typing import Any, Optional, List, Literal
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 import pandas as pd
+import snowballstemmer
+from cryptography.fernet import Fernet
 
 from backend_core import create_app, get_current_user, get_session, User, require_product_access
 from backend_core.database import get_managed_session
@@ -30,7 +33,11 @@ from backend_core.plan_limits import (
 from backend_core.worker import register_job_handler
 
 logger = logging.getLogger(__name__)
-DEDUPE_LOOKBACK_LIMIT = 500
+DEDUPE_LOOKBACK_LIMIT = 50
+DEDUPE_LOOKBACK_DAYS = 90
+EXPORT_BATCH_SIZE = 200
+PUBLIC_WEBHOOK_RATE_LIMIT = 60
+PUBLIC_WEBHOOK_RATE_WINDOW_SECONDS = 60
 SEMANTIC_DUPLICATE_THRESHOLD = 0.75
 SIMHASH_HAMMING_THRESHOLD = 10
 FEEDBACK_TEXT_LIMIT = 2000
@@ -42,6 +49,29 @@ SPAM_TERMS = (
     "no obligation", "this is not spam", "winner", "lottery", "dear friend",
     "nigerian prince", "investment opportunity", "double your", "earn extra cash",
 )
+DEFAULT_TOPIC_TERMS = (
+    "checkout", "payment", "billing", "login", "export", "csv", "crash",
+    "performance", "onboarding", "pricing", "mobile", "dashboard", "refund",
+    "summary", "dark", "mode", "api", "webhook", "integration", "sync", "import",
+    "notification", "email", "password", "account", "subscription", "cancel",
+)
+DEFAULT_URGENT_TERMS = (
+    "bug", "crash", "refund", "payment", "billing", "checkout", "login",
+    "critical", "broken",
+)
+_ENGLISH_STEMMER = snowballstemmer.stemmer("english")
+CONTEXTUAL_SPAM_TERMS = {
+    "buy now", "credit card", "investment opportunity", "make money",
+    "weight loss", "work from home",
+}
+OUTBOUND_HTTP_HOSTS = {
+    "api.github.com",
+    "api.twitter.com",
+    "api.x.com",
+    "github.com",
+    "oauth.reddit.com",
+    "www.reddit.com",
+}
 FEEDBACK_STOPWORDS = {
     "a",
     "an",
@@ -137,9 +167,64 @@ FEEDBACKLENS_URGENCY_MODEL = os.getenv(
     "FEEDBACKLENS_URGENCY_MODEL",
     "cross-encoder/nli-deberta-v3-xsmall",
 )
+FEEDBACKLENS_LOCAL_ANALYSIS_TIMEOUT_SECONDS = float(os.getenv("FEEDBACKLENS_LOCAL_ANALYSIS_TIMEOUT_SECONDS", "8"))
 _sentiment_pipeline = None
 _urgency_pipeline = None
 _embedder = None
+
+
+class SpamDetectedError(ValueError):
+    def __init__(self, reasons: list[str]):
+        self.reasons = reasons
+        super().__init__(f"Feedback rejected as spam: {reasons}")
+
+
+class SourceAuthorizationError(RuntimeError):
+    pass
+
+
+class FeedbackLensCrypto:
+    _fernet: Fernet | None = None
+    _key: str = ""
+
+    @classmethod
+    def get_fernet(cls) -> Fernet:
+        key_str = os.getenv("ENCRYPTION_KEY", "").strip()
+        if not key_str:
+            raise RuntimeError("ENCRYPTION_KEY is required for FeedbackLens source secrets.")
+        if cls._fernet is None or cls._key != key_str:
+            try:
+                decoded = base64.urlsafe_b64decode(key_str.encode())
+                if len(decoded) != 32:
+                    raise ValueError()
+            except Exception:
+                key_str = base64.urlsafe_b64encode(hashlib.sha256(key_str.encode()).digest()).decode()
+            cls._fernet = Fernet(key_str.encode())
+            cls._key = os.getenv("ENCRYPTION_KEY", "").strip()
+        return cls._fernet
+
+    @classmethod
+    def encrypt(cls, value: str) -> str:
+        if not value or value.startswith("enc:"):
+            return value
+        return "enc:" + cls.get_fernet().encrypt(value.encode()).decode()
+
+    @classmethod
+    def decrypt(cls, value: str) -> str:
+        if not value or not value.startswith("enc:"):
+            return value
+        try:
+            return cls.get_fernet().decrypt(value[4:].encode()).decode()
+        except Exception:
+            return value
+
+
+def encrypt_secret(value: str) -> str:
+    return FeedbackLensCrypto.encrypt(value)
+
+
+def decrypt_secret(value: str) -> str:
+    return FeedbackLensCrypto.decrypt(value)
 
 
 def _utc_now() -> datetime:
@@ -164,6 +249,18 @@ def _run_in_thread(func, *args, **kwargs):
 # ---------------------------------------------------------------------------
 class FeedbackEntry(SQLModel, table=True):
     __tablename__ = "feedback_entries"
+    # Blank source_message_id values stay reusable for manual/imported feedback.
+    __table_args__ = (
+        Index(
+            "uq_feedback_entries_user_source_message_id_nonempty",
+            "user_id",
+            "source",
+            "source_message_id",
+            unique=True,
+            sqlite_where=sa_text("source_message_id != ''"),
+            postgresql_where=sa_text("source_message_id <> ''"),
+        ),
+    )
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(index=True)
     text: str
@@ -180,6 +277,8 @@ class FeedbackEntry(SQLModel, table=True):
     cluster_slug: str = Field(default="", index=True)
     priority: str = Field(default="low", index=True)
     created_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
+    analyzed_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
 
 class FeedbackSource(SQLModel, table=True):
@@ -279,20 +378,78 @@ class RedditConnectRequest(BaseModel):
 class FeedbackPrefsUpdate(BaseModel):
     custom_prompt: str = ""
     negative_threshold: float = PydanticField(default=0.5, ge=0, le=1)
-    alert_email: str = ""
+    alert_email: Optional[EmailStr] = None
     weekly_summary_enabled: bool = True
     timezone: str = "UTC"
+
+
+class FeedbackSourceConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    query: str = ""
+    handle: str = ""
+    oauth_state: str = ""
+    redirect_uri: str = ""
+    code_verifier: str = ""
+    subreddit: str = ""
+    repo: str = ""
+
+
+class GitHubWebhookUser(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    login: str = ""
+
+
+class GitHubWebhookIssue(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    id: int
+    title: str = ""
+    body: str = ""
+    html_url: str = ""
+    user: GitHubWebhookUser = PydanticField(default_factory=GitHubWebhookUser)
+
+
+class GitHubWebhookPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    action: str = ""
+    issue: GitHubWebhookIssue | None = None
+
+
+_THEMES_ADAPTER = TypeAdapter(list[str])
 
 # ---------------------------------------------------------------------------
 # Analysis Engines: enhanced rules by default, local transformers optional
 # ---------------------------------------------------------------------------
 
-def _is_spam_feedback_v2(text: str) -> dict[str, Any]:
+def _configured_spam_terms(custom_terms: tuple[str, ...] = ()) -> tuple[str, ...]:
+    env_terms = tuple(
+        term.strip().lower()
+        for term in os.getenv("FEEDBACKLENS_SPAM_TERMS", "").split(",")
+        if term.strip()
+    )
+    return tuple(dict.fromkeys((*SPAM_TERMS, *env_terms, *(term.lower() for term in custom_terms))))
+
+
+def _is_spam_feedback_v2(
+    text: str,
+    *,
+    custom_terms: tuple[str, ...] = (),
+    whitelist: tuple[str, ...] = (),
+) -> dict[str, Any]:
     lowered = text.lower()
     reasons: list[str] = []
     score = 0
 
-    spam_hits = sum(1 for term in SPAM_TERMS if term in lowered)
+    matched_whitelist = [term.lower() for term in whitelist if term and term.lower() in lowered]
+    if matched_whitelist:
+        return {"is_spam": False, "score": 0, "reasons": ["user_whitelist"]}
+
+    matched_terms = [term for term in _configured_spam_terms(custom_terms) if term in lowered]
+    spam_hits = len(matched_terms)
+    strong_spam_hits = [term for term in matched_terms if term not in CONTEXTUAL_SPAM_TERMS]
     if spam_hits >= 2:
         score += 3
         reasons.append(f"multi_spam_terms({spam_hits})")
@@ -304,7 +461,7 @@ def _is_spam_feedback_v2(text: str) -> dict[str, Any]:
     if url_count >= 3:
         score += 2
         reasons.append("many_urls")
-    elif url_count >= 1 and spam_hits >= 1:
+    elif url_count >= 1 and strong_spam_hits:
         score += 2
         reasons.append("url+spam")
 
@@ -337,18 +494,22 @@ def _is_spam_feedback(text: str) -> bool:
     return bool(_is_spam_feedback_v2(text)["is_spam"])
 
 
+def _configured_feedback_terms(name: str, defaults: tuple[str, ...]) -> tuple[str, ...]:
+    configured = tuple(
+        term.strip().lower()
+        for term in os.getenv(name, "").split(",")
+        if term.strip()
+    )
+    return tuple(dict.fromkeys((*configured, *defaults)))
+
+
 def _extract_themes(text: str, focus_terms: str = "") -> list[str]:
     tokens = list(_feedback_tokens(text))
     focus = {_stem_feedback_token(token) for token in _normalize_feedback_text(focus_terms).split() if len(token) > 2}
-    priority_terms = [
-        "payment", "billing", "checkout", "login", "export", "csv", "crash",
-        "performance", "onboarding", "pricing", "mobile", "dashboard", "refund",
-        "summary", "dark", "mode", "api", "webhook", "integration", "sync", "import",
-        "notification", "email", "password", "account", "subscription", "cancel",
-    ]
+    priority_terms = _configured_feedback_terms("FEEDBACKLENS_TOPIC_TERMS", DEFAULT_TOPIC_TERMS)
     ordered: list[str] = []
     for token in priority_terms:
-        if token in tokens and token not in ordered:
+        if _stem_feedback_token(token) in tokens and token not in ordered:
             ordered.append(token)
     for token in sorted(focus & set(tokens)):
         if token not in ordered:
@@ -389,22 +550,50 @@ def _software_failure_score(text: str) -> int:
         r"\btimeout\b",
         r"\bslow\b",
         r"\bunable to\b",
-        r"\blogin\b",
-        r"\bsign[ -]?in\b",
     ]
-    return sum(1 for pattern in patterns if re.search(pattern, lowered))
+    score = sum(1 for pattern in patterns if re.search(pattern, lowered))
+
+    auth_problem_terms = {
+        "broken", "error", "slow", "cannot", "can't", "unauthorized", "unauthorised",
+        "fail", "fails", "failed", "failure", "unable", "blocked", "blocking",
+        "stuck", "timeout", "crash", "crashes", "crashed",
+    }
+    for sentence in re.split(r"(?<=[.!?])\s+", lowered):
+        words = re.findall(r"[a-zA-Z']+", sentence)
+        auth_indexes = {
+            index
+            for index, word in enumerate(words)
+            if word in {"login", "signin"} or (word == "sign" and index + 1 < len(words) and words[index + 1] == "in")
+        }
+        for index in auth_indexes:
+            window = words[max(0, index - 5): min(len(words), index + 6)]
+            if any(word.strip("'") in auth_problem_terms for word in window):
+                score += 1
+                return score
+    return score
 
 
-def _support_draft(sentiment: str, is_urgent: bool) -> str:
+def _support_draft(sentiment: str, is_urgent: bool, themes: list[str] | None = None) -> str:
+    theme_set = {str(theme).lower() for theme in (themes or [])}
+    if theme_set & {"billing", "payment", "checkout", "refund", "subscription"}:
+        topic_sentence = "We are reviewing the billing and payment details now."
+    elif theme_set & {"login", "password", "account"}:
+        topic_sentence = "We are reviewing the account access path now."
+    elif theme_set & {"export", "csv", "import"}:
+        topic_sentence = "We are reviewing the data import and export path now."
+    elif theme_set & {"api", "webhook", "integration", "sync"}:
+        topic_sentence = "We are reviewing the integration path now."
+    else:
+        topic_sentence = "Our team is reviewing the reported area now."
     if is_urgent:
         return (
             "Thanks for reaching out. We received your message and are treating it as a priority. "
-            "Our team will follow up with the next step as soon as possible."
+            f"{topic_sentence} We will follow up with the next step as soon as possible."
         )
     if sentiment == "negative":
         return (
             "Thanks for sharing this. We are sorry the experience did not meet expectations. "
-            "Could you send a few more details so we can look into it quickly?"
+            f"{topic_sentence} Could you send a few more details so we can look into it quickly?"
         )
     if sentiment == "positive":
         return "Thanks for the kind words. We appreciate you taking the time to share what is working well."
@@ -464,10 +653,6 @@ def _analyze_with_enhanced_keywords(text: str, focus_terms: str = "") -> dict:
         urgent_score += sentence_urgent
 
     failure_total = _software_failure_score(text_lower)
-    if pos_score >= 2 and failure_total > 0:
-        neg_score += failure_total * 2
-        pos_score = max(0, pos_score - 2)
-
     if neg_score > pos_score:
         sentiment = "negative"
         confidence = min(0.55 + 0.04 * neg_score, 0.95)
@@ -485,13 +670,15 @@ def _analyze_with_enhanced_keywords(text: str, focus_terms: str = "") -> dict:
         "confidence": round(confidence, 2),
         "themes": themes,
         "is_urgent": is_urgent,
-        "draft_reply": _support_draft(sentiment, is_urgent),
+        "draft_reply": _support_draft(sentiment, is_urgent, themes),
         "engine": "enhanced_keyword",
     }
 
 
 def _get_sentiment_pipeline():
     global _sentiment_pipeline
+    if os.getenv("FEEDBACKLENS_ENABLE_LOCAL_ML", "0").strip().lower() not in {"1", "true", "yes"}:
+        raise RuntimeError("FeedbackLens local ML is disabled; set FEEDBACKLENS_ENABLE_LOCAL_ML=1 to opt in.")
     if _sentiment_pipeline is None:
         try:
             from optimum.onnxruntime import ORTModelForSequenceClassification
@@ -525,6 +712,8 @@ def _get_sentiment_pipeline():
 
 def _get_urgency_pipeline():
     global _urgency_pipeline
+    if os.getenv("FEEDBACKLENS_ENABLE_LOCAL_ML", "0").strip().lower() not in {"1", "true", "yes"}:
+        raise RuntimeError("FeedbackLens local ML is disabled; set FEEDBACKLENS_ENABLE_LOCAL_ML=1 to opt in.")
     if _urgency_pipeline is None:
         from transformers import pipeline
         _urgency_pipeline = pipeline(
@@ -535,14 +724,9 @@ def _get_urgency_pipeline():
     return _urgency_pipeline
 
 
-async def _analyze_with_local_transformers(text: str, focus_terms: str = "") -> dict:
-    try:
-        pipe = _get_sentiment_pipeline()
-        result = await _run_in_thread(pipe, text[:512])
-    except Exception as exc:
-        logger.warning("Local transformer sentiment unavailable, using enhanced keywords: %s", exc)
-        return _analyze_with_enhanced_keywords(text, focus_terms)
-
+def _analyze_with_local_transformers_sync(text: str, focus_terms: str = "") -> dict:
+    pipe = _get_sentiment_pipeline()
+    result = pipe(text[:512])
     label = str(result[0].get("label", "")).lower()
     score = float(result[0].get("score", 0.55))
     sentiment = "positive" if "positive" in label else "negative" if "negative" in label else "neutral"
@@ -553,16 +737,12 @@ async def _analyze_with_local_transformers(text: str, focus_terms: str = "") -> 
         sentiment = "negative"
         score = max(score, fallback["confidence"])
 
-    try:
-        urgent_pipe = _get_urgency_pipeline()
-        urgent_result = await _run_in_thread(
-            urgent_pipe,
-            text[:512],
-            candidate_labels=["urgent technical issue", "general feedback", "compliment"],
-        )
-        is_urgent = urgent_result["labels"][0] == "urgent technical issue" and urgent_result["scores"][0] > 0.6
-    except Exception:
-        is_urgent = bool(fallback["is_urgent"])
+    urgent_pipe = _get_urgency_pipeline()
+    urgent_result = urgent_pipe(
+        text[:512],
+        candidate_labels=["urgent technical issue", "general feedback", "compliment"],
+    )
+    is_urgent = urgent_result["labels"][0] == "urgent technical issue" and urgent_result["scores"][0] > 0.6
 
     themes = _extract_themes(text, focus_terms)
     return {
@@ -570,9 +750,25 @@ async def _analyze_with_local_transformers(text: str, focus_terms: str = "") -> 
         "confidence": round(score, 2),
         "themes": themes,
         "is_urgent": is_urgent,
-        "draft_reply": _support_draft(sentiment, is_urgent),
+        "draft_reply": _support_draft(sentiment, is_urgent, themes),
         "engine": "local_transformers",
     }
+
+
+async def _analyze_with_local_transformers(text: str, focus_terms: str = "") -> dict:
+    try:
+        return await asyncio.wait_for(
+            _run_in_thread(_analyze_with_local_transformers_sync, text, focus_terms),
+            timeout=FEEDBACKLENS_LOCAL_ANALYSIS_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Local transformer analysis timed out; using enhanced keyword fallback.")
+        fallback = _analyze_with_enhanced_keywords(text, focus_terms)
+        fallback["engine"] = "enhanced_keyword"
+        return fallback
+    except Exception as exc:
+        logger.warning("Local transformer analysis unavailable, using enhanced keywords: %s", exc)
+        return _analyze_with_enhanced_keywords(text, focus_terms)
 
 
 def _analyze_feedback_locally(text: str, focus_terms: str = "") -> dict:
@@ -589,36 +785,33 @@ async def _analyze_feedback_locally_async(text: str, focus_terms: str = "") -> d
 def _cluster_slug_for_analysis(text: str, themes: list[str] | None = None) -> str:
     tokens = _feedback_tokens(text)
     theme_tokens = [_stem_feedback_token(token) for token in (themes or []) if token]
-    priority_terms = [
-        "checkout", "payment", "billing", "login", "export", "csv", "crash",
-        "performance", "onboarding", "pricing", "mobile", "dashboard", "refund",
-        "summary", "dark", "mode",
-    ]
+    all_tokens = tokens | set(theme_tokens)
+    if {"dark", "mode"}.issubset(all_tokens):
+        return "dark-mode"
+    if {"csv", "export"}.issubset(all_tokens):
+        return "export"
+    if {"checkout", "crash"}.issubset(all_tokens):
+        return "checkout"
+    priority_terms = _configured_feedback_terms("FEEDBACKLENS_TOPIC_TERMS", DEFAULT_TOPIC_TERMS)
     for term in priority_terms:
-        if term in tokens or term in theme_tokens:
-            if term in {"csv"} and "export" in tokens:
-                return "export"
-            if term in {"crash"} and "checkout" in tokens:
-                return "checkout"
-            if term == "dark" and "mode" in tokens:
-                return "dark-mode"
+        if _stem_feedback_token(term) in all_tokens:
             return term
     source = theme_tokens[0] if theme_tokens else (sorted(tokens)[0] if tokens else "general")
     slug = re.sub(r"[^a-z0-9]+", "-", source.lower()).strip("-")
     return slug or "general"
 
 
-def _priority_for_analysis(analysis: dict, mention_count: int = 1) -> str:
+def _priority_for_analysis(analysis: dict) -> str:
     themes = set(analysis.get("themes") or [])
-    urgent_terms = {"bug", "crash", "refund", "payment", "billing", "checkout", "login", "critical", "broken"}
+    urgent_terms = set(_configured_feedback_terms("FEEDBACKLENS_URGENT_TERMS", DEFAULT_URGENT_TERMS))
     if analysis.get("is_urgent") or themes & urgent_terms:
         return "urgent"
-    if mention_count >= 2 or analysis.get("sentiment") == "negative":
+    if analysis.get("sentiment") == "negative":
         return "high"
     return "low"
 
 
-def _apply_local_processing(entry: FeedbackEntry, focus_terms: str = "", mention_count: int = 1) -> dict:
+def _apply_local_processing(entry: FeedbackEntry, focus_terms: str = "") -> dict:
     analysis = _analyze_feedback_locally(entry.text, focus_terms)
     entry.sentiment = analysis["sentiment"]
     entry.confidence = analysis["confidence"]
@@ -627,11 +820,13 @@ def _apply_local_processing(entry: FeedbackEntry, focus_terms: str = "", mention
     entry.draft_reply = analysis.get("draft_reply")
     entry.analysis_engine = analysis["engine"]
     entry.cluster_slug = _cluster_slug_for_analysis(entry.text, analysis["themes"])
-    entry.priority = _priority_for_analysis(analysis, mention_count)
+    entry.priority = _priority_for_analysis(analysis)
+    entry.updated_at = _utc_now()
+    entry.analyzed_at = entry.updated_at
     return analysis
 
 
-async def _apply_local_processing_async(entry: FeedbackEntry, focus_terms: str = "", mention_count: int = 1) -> dict:
+async def _apply_local_processing_async(entry: FeedbackEntry, focus_terms: str = "") -> dict:
     analysis = await _analyze_feedback_locally_async(entry.text, focus_terms)
     entry.sentiment = analysis["sentiment"]
     entry.confidence = analysis["confidence"]
@@ -640,7 +835,9 @@ async def _apply_local_processing_async(entry: FeedbackEntry, focus_terms: str =
     entry.draft_reply = analysis.get("draft_reply")
     entry.analysis_engine = analysis["engine"]
     entry.cluster_slug = _cluster_slug_for_analysis(entry.text, analysis["themes"])
-    entry.priority = _priority_for_analysis(analysis, mention_count)
+    entry.priority = _priority_for_analysis(analysis)
+    entry.updated_at = _utc_now()
+    entry.analyzed_at = entry.updated_at
     return analysis
 
 
@@ -671,7 +868,7 @@ def _clean_feedback_text(text: str) -> str:
         return ""
     spam_check = _is_spam_feedback_v2(normalized)
     if spam_check["is_spam"]:
-        raise HTTPException(status_code=400, detail=f"Feedback rejected as spam: {spam_check['reasons']}")
+        raise SpamDetectedError(spam_check["reasons"])
     if len(normalized) <= FEEDBACK_TEXT_LIMIT:
         return normalized
 
@@ -730,7 +927,31 @@ def _combine_email_feedback_text(body: EmailIngestRequest) -> str:
     return "\n\n".join(piece for piece in pieces if piece.strip())
 
 
+class _NoRedirectHandler(url_request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _validate_outbound_url(url: str) -> str:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not hostname or parsed.username or parsed.password:
+        raise ValueError("Outbound integrations require an authenticated HTTPS provider URL")
+    if hostname not in OUTBOUND_HTTP_HOSTS:
+        raise ValueError(f"Outbound provider host is not allowed: {hostname}")
+    return url
+
+
+def _open_outbound(req: url_request.Request):
+    _validate_outbound_url(req.full_url)
+    opener = url_request.build_opener(_NoRedirectHandler())
+    response = opener.open(req, timeout=30)
+    _validate_outbound_url(response.geturl())
+    return response
+
+
 def _http_json(url: str, *, method: str = "GET", headers: dict[str, str] | None = None, payload: dict | None = None) -> dict:
+    _validate_outbound_url(url)
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = url_request.Request(
         url,
@@ -744,10 +965,12 @@ def _http_json(url: str, *, method: str = "GET", headers: dict[str, str] | None 
         },
     )
     try:
-        with url_request.urlopen(req, timeout=30) as response:
+        with _open_outbound(req) as response:
             raw = response.read().decode("utf-8")
     except url_error.HTTPError as exc:
         raw = exc.read().decode("utf-8")
+        if exc.code in {401, 403}:
+            raise SourceAuthorizationError(raw or "Provider authorization failed") from exc
         raise HTTPException(status_code=502, detail=f"Source request failed: {raw}") from exc
     return json.loads(raw) if raw else {}
 
@@ -759,6 +982,7 @@ def _http_form_json(
     headers: dict[str, str] | None = None,
     basic_auth: tuple[str, str] | None = None,
 ) -> dict:
+    _validate_outbound_url(url)
     request_headers = {
         "Accept": "application/json",
         "Content-Type": "application/x-www-form-urlencoded",
@@ -776,7 +1000,7 @@ def _http_form_json(
         headers=request_headers,
     )
     try:
-        with url_request.urlopen(req, timeout=30) as response:
+        with _open_outbound(req) as response:
             raw = response.read().decode("utf-8")
     except url_error.HTTPError as exc:
         raw = exc.read().decode("utf-8")
@@ -786,8 +1010,9 @@ def _http_form_json(
 
 def _source_config(source: FeedbackSource) -> dict:
     try:
-        return json.loads(source.config_json or "{}")
-    except Exception:
+        config = FeedbackSourceConfig.model_validate_json(source.config_json or "{}")
+        return {key: value for key, value in config.model_dump().items() if value not in {"", None}}
+    except (ValidationError, ValueError, TypeError):
         return {}
 
 
@@ -847,20 +1072,84 @@ async def _enforce_feedback_limit(user: User, incoming_count: int, session: Asyn
     reject_feedbacklens_feedback_count_if_needed(plan, limits, monthly_count, incoming_count)
 
 
+async def _enforce_public_webhook_rate_limit(source_id: int, session: AsyncSession) -> None:
+    bind = getattr(session, "bind", None)
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", "")
+    if dialect_name == "postgresql":
+        await session.execute(
+            sa_text("SELECT pg_advisory_xact_lock(:key)").bindparams(key=8_405_000 + source_id)
+        )
+
+    now = _utc_now().replace(tzinfo=None)
+    bucket = f"feedbacklens-rate-{source_id}"
+    result = await session.execute(
+        select(func.count()).select_from(SystemOutbox).where(
+            SystemOutbox.app_name == bucket,
+            SystemOutbox.job_type == "github_ingest",
+            SystemOutbox.status == "completed",
+            SystemOutbox.created_at >= now - timedelta(seconds=PUBLIC_WEBHOOK_RATE_WINDOW_SECONDS),
+        )
+    )
+    if _count_from_result(result) >= PUBLIC_WEBHOOK_RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="Webhook rate limit exceeded")
+
+    session.add(SystemOutbox(
+        app_name=bucket,
+        job_type="github_ingest",
+        payload={"source_id": source_id},
+        status="completed",
+        attempts=1,
+        completed_at=now,
+        result={"accepted": True},
+    ))
+    await session.flush()
+
+
+def _parse_themes(value: str | None) -> list[str]:
+    try:
+        return _THEMES_ADAPTER.validate_json(value or "[]", strict=True)
+    except (ValidationError, ValueError, TypeError):
+        return []
+
+
+def _encode_feedback_cursor(created_at: datetime, entry_id: int) -> str:
+    payload = json.dumps({
+        "created_at": (_as_aware_utc(created_at) or _utc_now()).isoformat(),
+        "id": entry_id,
+    }, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_feedback_cursor(cursor: str) -> tuple[datetime, int]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        created_at = datetime.fromisoformat(payload["created_at"])
+        entry_id = int(payload["id"])
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise ValueError("Invalid feedback cursor") from exc
+    aware_created_at = _as_aware_utc(created_at)
+    if aware_created_at is None or entry_id < 1:
+        raise ValueError("Invalid feedback cursor")
+    return aware_created_at, entry_id
+
+
 def _serialize(entry: FeedbackEntry) -> dict:
     created_at = _as_aware_utc(entry.created_at) or _utc_now()
-    analyzed_at = created_at.isoformat() if entry.sentiment else None
+    updated_at = _as_aware_utc(getattr(entry, "updated_at", None)) or created_at
+    analyzed_at = _as_aware_utc(getattr(entry, "analyzed_at", None))
     return {
         "id": entry.id,
         "text": entry.text,
         "sentiment": entry.sentiment,
         "confidence": entry.confidence,
-        "themes": json.loads(entry.themes_json or "[]"),
+        "themes": _parse_themes(entry.themes_json),
         "is_urgent": entry.is_urgent,
         "draft_reply": entry.draft_reply,
         "analysis_engine": entry.analysis_engine,
-        "analyzed_at": analyzed_at,
+        "analyzed_at": analyzed_at.isoformat() if analyzed_at else None,
         "created_at": created_at.isoformat(),
+        "updated_at": updated_at.isoformat(),
         "source": getattr(entry, "source", "manual"),
         "author": getattr(entry, "author", ""),
         "source_url": getattr(entry, "source_url", ""),
@@ -871,20 +1160,19 @@ def _serialize(entry: FeedbackEntry) -> dict:
 
 
 def _normalize_feedback_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFKD", text.lower())
-    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", ascii_text)).strip()
+    normalized = unicodedata.normalize("NFKC", text.lower())
+    cleaned = "".join(
+        char if char.isspace() or unicodedata.category(char)[0] in {"L", "N"} else " "
+        for char in normalized
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _stem_feedback_token(token: str) -> str:
-    if len(token) > 5 and token.endswith("ices"):
-        return token[:-1]
-    if len(token) > 4 and token.endswith("ies"):
-        return token[:-3] + "y"
-    for suffix in ("ing", "ed", "es", "s"):
-        if len(token) > len(suffix) + 3 and token.endswith(suffix):
-            return token[: -len(suffix)]
-    return token
+    normalized = _normalize_feedback_text(token)
+    if not normalized or " " in normalized:
+        return normalized
+    return _ENGLISH_STEMMER.stemWord(normalized)
 
 
 def _feedback_tokens(text: str) -> set[str]:
@@ -978,6 +1266,8 @@ def _find_duplicate_simhash(text: str, candidates: list[FeedbackEntry]) -> Feedb
 
 def _get_embedder():
     global _embedder
+    if os.getenv("FEEDBACKLENS_ENABLE_EMBEDDINGS", "0").strip().lower() not in {"1", "true", "yes"}:
+        raise RuntimeError("FeedbackLens embeddings are disabled; set FEEDBACKLENS_ENABLE_EMBEDDINGS=1 to opt in.")
     if _embedder is None:
         from transformers import AutoModel, AutoTokenizer
         model_name = os.getenv("FEEDBACKLENS_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
@@ -1053,6 +1343,8 @@ def _serialize_duplicate(entry: FeedbackEntry) -> dict:
 def _build_dedupe_summary(entries: list[object]) -> dict:
     grouped_ids: set[int] = set()
     groups: list[dict] = []
+    fingerprints = [_simhash(getattr(entry, "text", "") or "") for entry in entries]
+    token_features = [set(_simhash_tokens(getattr(entry, "text", "") or "")) for entry in entries]
 
     for index, entry in enumerate(entries):
         entry_id = getattr(entry, "id", index)
@@ -1062,9 +1354,20 @@ def _build_dedupe_summary(entries: list[object]) -> dict:
         members = [entry]
         scores: list[float] = []
         entry_text = getattr(entry, "text", "") or ""
-        for candidate in entries[index + 1:]:
+        for candidate_index, candidate in enumerate(entries[index + 1:], start=index + 1):
             candidate_id = getattr(candidate, "id", None)
             if candidate_id in grouped_ids:
+                continue
+            left_features = token_features[index]
+            right_features = token_features[candidate_index]
+            intersection = left_features & right_features
+            overlap = (
+                len(intersection) / min(len(left_features), len(right_features))
+                if left_features and right_features
+                else 0.0
+            )
+            distance = _hamming_distance(fingerprints[index], fingerprints[candidate_index])
+            if distance > SIMHASH_HAMMING_THRESHOLD and overlap < 0.55:
                 continue
             score = _semantic_similarity(entry_text, getattr(candidate, "text", "") or "")
             if score >= SEMANTIC_DUPLICATE_THRESHOLD:
@@ -1096,10 +1399,7 @@ def _build_dedupe_summary(entries: list[object]) -> dict:
 
 
 def _themes_for_entry(entry: object) -> list[str]:
-    try:
-        return json.loads(getattr(entry, "themes_json", "") or "[]")
-    except Exception:
-        return []
+    return _parse_themes(getattr(entry, "themes_json", "") or "[]")
 
 
 def _cluster_id_for_entry(entry: object) -> str:
@@ -1234,12 +1534,13 @@ def _post_github_issue(repo: str, token: str, payload: dict) -> dict:
 async def _poll_twitter_source(source: FeedbackSource) -> list[dict]:
     config = _source_config(source)
     query = config.get("query") or source.handle or source.display_name
-    if not source.access_token or not query:
+    access_token = decrypt_secret(source.access_token)
+    if not access_token or not query:
         return []
     params = urlencode({"query": query, "max_results": 10, "tweet.fields": "author_id,created_at"})
     data = _http_json(
         f"https://api.twitter.com/2/tweets/search/recent?{params}",
-        headers={"Authorization": f"Bearer {source.access_token}"},
+        headers={"Authorization": f"Bearer {access_token}"},
     )
     items = []
     for tweet in data.get("data", []):
@@ -1257,13 +1558,14 @@ async def _poll_reddit_source(source: FeedbackSource) -> list[dict]:
     config = _source_config(source)
     query = config.get("query") or source.handle or source.display_name
     subreddit = config.get("subreddit", "")
-    if not source.access_token or not query:
+    access_token = decrypt_secret(source.access_token)
+    if not access_token or not query:
         return []
     base = f"https://oauth.reddit.com/r/{subreddit}/search" if subreddit else "https://oauth.reddit.com/search"
     params = urlencode({"q": query, "sort": "new", "limit": 10, "restrict_sr": bool(subreddit)})
     data = _http_json(
         f"{base}?{params}",
-        headers={"Authorization": f"Bearer {source.access_token}"},
+        headers={"Authorization": f"Bearer {access_token}"},
     )
     items = []
     for child in data.get("data", {}).get("children", []):
@@ -1282,13 +1584,14 @@ async def _poll_reddit_source(source: FeedbackSource) -> list[dict]:
 async def _poll_github_source(source: FeedbackSource) -> list[dict]:
     config = _source_config(source)
     repo = config.get("repo", "")
-    if not source.access_token or not repo:
+    access_token = decrypt_secret(source.access_token)
+    if not access_token or not repo:
         return []
     params = urlencode({"state": "open", "per_page": 20})
     data = _http_json(
         f"https://api.github.com/repos/{repo}/issues?{params}",
         headers={
-            "Authorization": f"Bearer {source.access_token}",
+            "Authorization": f"Bearer {access_token}",
             "Accept": "application/vnd.github+json",
         },
     )
@@ -1307,6 +1610,49 @@ async def _poll_github_source(source: FeedbackSource) -> list[dict]:
             "source_message_id": issue_id,
         })
     return items
+
+
+def _refresh_oauth_source(source: FeedbackSource) -> bool:
+    refresh_token = decrypt_secret(source.refresh_token)
+    if not refresh_token:
+        return False
+
+    if source.source_type == "twitter":
+        client_id = _twitter_client_id()
+        if not client_id:
+            return False
+        client_secret = _twitter_client_secret()
+        token_payload = _http_form_json(
+            "https://api.x.com/2/oauth2/token",
+            payload={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+            },
+            basic_auth=(client_id, client_secret) if client_secret else None,
+        )
+    elif source.source_type == "reddit":
+        client_id = _reddit_client_id()
+        client_secret = _reddit_client_secret()
+        if not client_id or not client_secret:
+            return False
+        token_payload = _http_form_json(
+            "https://www.reddit.com/api/v1/access_token",
+            payload={"grant_type": "refresh_token", "refresh_token": refresh_token},
+            basic_auth=(client_id, client_secret),
+        )
+    else:
+        return False
+
+    access_token = str(token_payload.get("access_token") or "").strip()
+    if not access_token:
+        return False
+    source.access_token = encrypt_secret(access_token)
+    rotated_refresh = str(token_payload.get("refresh_token") or "").strip()
+    if rotated_refresh:
+        source.refresh_token = encrypt_secret(rotated_refresh)
+    source.updated_at = _utc_now()
+    return True
 
 
 async def _poll_source_feedback(source: FeedbackSource) -> list[dict]:
@@ -1351,7 +1697,15 @@ async def poll_feedback_sources() -> dict:
             if not _source_is_due(source, now):
                 continue
             try:
-                items = await _poll_source_feedback(source)
+                try:
+                    items = await _poll_source_feedback(source)
+                except SourceAuthorizationError:
+                    refreshed = await _run_in_thread(_refresh_oauth_source, source)
+                    if not refreshed:
+                        raise
+                    session.add(source)
+                    await session.flush()
+                    items = await _poll_source_feedback(source)
                 for item in items:
                     try:
                         created = await _create_processed_feedback(
@@ -1367,9 +1721,10 @@ async def poll_feedback_sources() -> dict:
                             skipped_duplicates += 1
                         else:
                             ingested += 1
-                    except HTTPException as exc:
-                        if exc.status_code != 400:
-                            raise
+                    except SpamDetectedError:
+                        continue
+                    except HTTPException:
+                        raise
                 source.last_polled_at = now
                 source.updated_at = now
                 session.add(source)
@@ -1386,12 +1741,21 @@ async def poll_feedback_sources() -> dict:
         }
 
 
-async def _load_dedupe_candidates(user_id: int, session: AsyncSession) -> list[FeedbackEntry]:
+async def _load_dedupe_candidates(
+    user_id: int,
+    session: AsyncSession,
+    *,
+    text: str = "",
+) -> list[FeedbackEntry]:
+    query = select(FeedbackEntry).where(
+        FeedbackEntry.user_id == user_id,
+        FeedbackEntry.created_at >= _utc_now() - timedelta(days=DEDUPE_LOOKBACK_DAYS),
+    )
+    candidate_terms = sorted(_feedback_tokens(text), key=lambda term: (-len(term), term))[:4]
+    if candidate_terms:
+        query = query.where(or_(*(FeedbackEntry.text.ilike(f"%{term}%") for term in candidate_terms)))
     result = await session.execute(
-        select(FeedbackEntry)
-        .where(FeedbackEntry.user_id == user_id)
-        .order_by(FeedbackEntry.created_at.desc())
-        .limit(DEDUPE_LOOKBACK_LIMIT)
+        query.order_by(FeedbackEntry.created_at.desc()).limit(DEDUPE_LOOKBACK_LIMIT)
     )
     return list(result.scalars().all())
 
@@ -1435,7 +1799,7 @@ async def update_feedback_prefs(body: FeedbackPrefsUpdate, user: User = Depends(
         prefs = FeedbackSettings(user_id=user.id)
     prefs.custom_prompt = body.custom_prompt
     prefs.negative_threshold = body.negative_threshold
-    prefs.alert_email = body.alert_email
+    prefs.alert_email = str(body.alert_email or "")
     prefs.weekly_summary_enabled = body.weekly_summary_enabled
     prefs.timezone = body.timezone or "UTC"
     session.add(prefs)
@@ -1444,7 +1808,7 @@ async def update_feedback_prefs(body: FeedbackPrefsUpdate, user: User = Depends(
 
 
 def _serialize_source(source: FeedbackSource) -> dict:
-    config = json.loads(source.config_json or "{}")
+    config = _source_config(source)
     created_at = _as_aware_utc(source.created_at) or _utc_now()
     updated_at = _as_aware_utc(source.updated_at) or created_at
     last_polled_at = _as_aware_utc(source.last_polled_at)
@@ -1490,9 +1854,9 @@ async def create_source(body: FeedbackSourceCreate, user: User = Depends(get_cur
         source_type=body.source_type,
         display_name=body.display_name or body.handle or body.repo or body.source_type.title(),
         handle=body.handle,
-        access_token=body.access_token,
-        refresh_token=body.refresh_token,
-        webhook_secret=body.webhook_secret,
+        access_token=encrypt_secret(body.access_token),
+        refresh_token=encrypt_secret(body.refresh_token),
+        webhook_secret=encrypt_secret(body.webhook_secret),
         config_json=json.dumps(config),
         status="connected" if body.source_type in {"email", "manual", "canny"} or body.access_token else "needs_auth",
     )
@@ -1532,16 +1896,29 @@ async def _create_processed_feedback(
     source_url: str = "",
     source_message_id: str = "",
     session: AsyncSession,
+    candidates: list[FeedbackEntry] | None = None,
 ) -> dict:
     cleaned = _clean_feedback_text(text)
     if not cleaned:
         raise HTTPException(status_code=400, detail="Feedback text is required")
 
-    candidates = await _load_dedupe_candidates(user_id, session)
-    external_duplicate = _find_source_message_duplicate(source, source_message_id, candidates)
+    candidate_pool = candidates
+    if source_message_id:
+        exact_result = await session.execute(
+            select(FeedbackEntry).where(
+                FeedbackEntry.user_id == user_id,
+                FeedbackEntry.source == source,
+                FeedbackEntry.source_message_id == source_message_id,
+            ).limit(1)
+        )
+        external_duplicate = exact_result.scalar_one_or_none()
+    else:
+        external_duplicate = None
     if external_duplicate:
         return _serialize_duplicate(external_duplicate)
-    duplicate = _find_semantic_duplicate(cleaned, candidates)
+    if candidate_pool is None:
+        candidate_pool = await _load_dedupe_candidates(user_id, session, text=cleaned)
+    duplicate = _find_semantic_duplicate(cleaned, candidate_pool)
     if duplicate:
         return _serialize_duplicate(duplicate)
 
@@ -1553,29 +1930,54 @@ async def _create_processed_feedback(
         source_url=source_url,
         source_message_id=source_message_id,
     )
-    await _apply_local_processing_async(entry, mention_count=1)
+    await _apply_local_processing_async(entry)
     session.add(entry)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        if hasattr(session, "rollback"):
+            await session.rollback()
+        raise HTTPException(status_code=409, detail="Duplicate source message") from exc
     await session.refresh(entry)
     await _queue_urgent_feedback_alert(entry, session)
+    candidate_pool.append(entry)
     return _serialize(entry)
 
 
 def _entry_from_payload(payload: dict, user_id: int) -> FeedbackEntry:
+    if not isinstance(payload, dict):
+        raise ValueError("Feedback payload must be an object")
+    text = payload.get("text", "")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Feedback payload text is required")
+    themes = payload.get("themes", [])
+    if not isinstance(themes, list):
+        themes = []
+
+    def _safe_str(value: Any, default: str = "") -> str:
+        if value is None:
+            return default
+        if isinstance(value, (str, int, float, bool)):
+            return str(value)
+        return default
+
+    entry_id = payload.get("id")
+    if entry_id is not None and not isinstance(entry_id, int):
+        raise ValueError("Feedback payload id must be an integer")
     return FeedbackEntry(
-        id=payload.get("id"),
+        id=entry_id,
         user_id=user_id,
-        text=payload.get("text", ""),
-        sentiment=payload.get("sentiment"),
-        confidence=payload.get("confidence"),
-        themes_json=json.dumps(payload.get("themes", [])),
+        text=_clean_feedback_text(text),
+        sentiment=_safe_str(payload.get("sentiment")) or None,
+        confidence=payload.get("confidence") if isinstance(payload.get("confidence"), (int, float)) else None,
+        themes_json=json.dumps([_safe_str(theme) for theme in themes if _safe_str(theme)]),
         is_urgent=bool(payload.get("is_urgent")),
-        source=payload.get("source", "manual"),
-        author=payload.get("author", ""),
-        source_url=payload.get("source_url", ""),
-        source_message_id=payload.get("source_message_id", ""),
-        cluster_slug=payload.get("cluster_slug", ""),
-        priority=payload.get("priority", "low"),
+        source=_safe_str(payload.get("source"), "manual") or "manual",
+        author=_safe_str(payload.get("author")),
+        source_url=_safe_str(payload.get("source_url")),
+        source_message_id=_safe_str(payload.get("source_message_id")),
+        cluster_slug=_safe_str(payload.get("cluster_slug")),
+        priority=_safe_str(payload.get("priority"), "low") or "low",
     )
 
 
@@ -1587,7 +1989,10 @@ async def _queue_urgent_feedback_alert(entry: FeedbackEntry, session: AsyncSessi
     alert_email = getattr(prefs, "alert_email", "") if prefs else ""
     if not alert_email:
         return
-    preview = entry.text[:500]
+    preview = html.escape(entry.text[:500], quote=True)
+    source = html.escape(entry.source or "manual", quote=True)
+    author = html.escape(entry.author or "Unknown", quote=True)
+    cluster = html.escape(entry.cluster_slug or "review needed", quote=True)
     session.add(SystemOutbox(
         app_name="feedbacklens",
         job_type="send_email",
@@ -1597,8 +2002,9 @@ async def _queue_urgent_feedback_alert(entry: FeedbackEntry, session: AsyncSessi
             "html_body": (
                 "<div style=\"font-family:sans-serif;max-width:640px;margin:0 auto;\">"
                 "<h2>Urgent feedback detected</h2>"
-                f"<p><strong>Source:</strong> {entry.source}</p>"
-                f"<p><strong>Author:</strong> {entry.author or 'Unknown'}</p>"
+                f"<p><strong>Cluster:</strong> {cluster}</p>"
+                f"<p><strong>Source:</strong> {source}</p>"
+                f"<p><strong>Author:</strong> {author}</p>"
                 f"<p>{preview}</p>"
                 "</div>"
             ),
@@ -1645,7 +2051,7 @@ async def ingest_canny_feedback(body: CannyIngestRequest, user: User = Depends(g
 
 def _verify_github_signature(secret: str, raw_body: bytes, signature_header: str | None) -> None:
     if not secret:
-        return
+        raise HTTPException(status_code=401, detail="GitHub webhook secret is required")
     if not signature_header or not signature_header.startswith("sha256="):
         raise HTTPException(status_code=401, detail="Missing GitHub signature")
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
@@ -1666,52 +2072,95 @@ async def ingest_github_issue_webhook(
         raise HTTPException(status_code=404, detail="GitHub source not found")
 
     raw_body = await request.body()
-    _verify_github_signature(source.webhook_secret, raw_body, request.headers.get("x-hub-signature-256"))
-    payload = json.loads(raw_body.decode("utf-8"))
-    action = payload.get("action", "")
-    issue = payload.get("issue") or {}
+    _verify_github_signature(decrypt_secret(source.webhook_secret), raw_body, request.headers.get("x-hub-signature-256"))
+    await _enforce_public_webhook_rate_limit(source_id, session)
+    try:
+        payload = GitHubWebhookPayload.model_validate_json(raw_body)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail="Invalid GitHub webhook payload") from exc
+    action = payload.action
+    issue = payload.issue
     if action not in {"opened", "edited", "reopened"} or not issue:
         return {"status": "ignored", "action": action}
-    text = _combine_feedback_text(issue.get("title", ""), issue.get("body", ""))
+    text = _combine_feedback_text(issue.title, issue.body)
     return await _create_processed_feedback(
         user_id=source.user_id,
         text=text,
         source="github",
-        author=(issue.get("user") or {}).get("login", ""),
-        source_url=issue.get("html_url", ""),
-        source_message_id=str(issue.get("id", "")),
+        author=issue.user.login,
+        source_url=issue.html_url,
+        source_message_id=str(issue.id),
         session=session,
     )
 
 
-async def _list_feedback_payload(priority: str, source: str, user: User, session: AsyncSession) -> list[dict]:
+async def _list_feedback_payload(
+    priority: str,
+    source: str,
+    user: User,
+    session: AsyncSession,
+    *,
+    limit: int,
+    cursor: str,
+) -> tuple[list[dict], str]:
     query = select(FeedbackEntry).where(FeedbackEntry.user_id == user.id)
     if priority:
         query = query.where(FeedbackEntry.priority == priority)
     if source:
         query = query.where(FeedbackEntry.source == source)
-    result = await session.execute(query.order_by(FeedbackEntry.created_at.desc()).limit(100))
-    return [_serialize(e) for e in result.scalars().all()]
+    if cursor:
+        try:
+            cursor_at, cursor_id = _decode_feedback_cursor(cursor)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        query = query.where(tuple_(FeedbackEntry.created_at, FeedbackEntry.id) < (cursor_at, cursor_id))
+    result = await session.execute(
+        query.order_by(FeedbackEntry.created_at.desc(), FeedbackEntry.id.desc()).limit(limit + 1)
+    )
+    entries = list(result.scalars().all())
+    has_more = len(entries) > limit
+    page = entries[:limit]
+    next_cursor = ""
+    if has_more and page:
+        last = page[-1]
+        next_cursor = _encode_feedback_cursor(last.created_at, last.id)
+    return [_serialize(entry) for entry in page], next_cursor
 
 
 @feedback_router.get("")
 async def list_feedback_root(
+    response: Response,
     priority: str = Query(default=""),
     source: str = Query(default=""),
+    limit: int = Query(default=100, ge=1, le=200),
+    cursor: str = Query(default=""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    return await _list_feedback_payload(priority, source, user, session)
+    items, next_cursor = await _list_feedback_payload(
+        priority, source, user, session, limit=limit, cursor=cursor
+    )
+    if next_cursor:
+        response.headers["X-Next-Cursor"] = next_cursor
+    return items
 
 
 @feedback_router.get("/list")
 async def list_feedback(
+    response: Response,
     priority: str = Query(default=""),
     source: str = Query(default=""),
+    limit: int = Query(default=100, ge=1, le=200),
+    cursor: str = Query(default=""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    return await _list_feedback_payload(priority, source, user, session)
+    items, next_cursor = await _list_feedback_payload(
+        priority, source, user, session, limit=limit, cursor=cursor
+    )
+    if next_cursor:
+        response.headers["X-Next-Cursor"] = next_cursor
+    return items
 
 
 @feedback_router.get("/dedupe/summary")
@@ -1749,14 +2198,16 @@ async def list_clusters(
 async def get_cluster_detail(cluster_id: str, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     result = await session.execute(
         select(FeedbackEntry)
-        .where(FeedbackEntry.user_id == user.id)
+        .where(
+            FeedbackEntry.user_id == user.id,
+            FeedbackEntry.cluster_slug == cluster_id,
+        )
         .order_by(FeedbackEntry.created_at.desc())
         .limit(1000)
     )
     clusters = _build_cluster_payloads(list(result.scalars().all()))
-    for cluster in clusters:
-        if cluster["id"] == cluster_id:
-            return cluster
+    if clusters:
+        return clusters[0]
     raise HTTPException(status_code=404, detail="Cluster not found")
 
 
@@ -1769,7 +2220,10 @@ async def create_cluster_github_issue(
 ):
     result = await session.execute(
         select(FeedbackEntry)
-        .where(FeedbackEntry.user_id == user.id)
+        .where(
+            FeedbackEntry.user_id == user.id,
+            FeedbackEntry.cluster_slug == cluster_id,
+        )
         .order_by(FeedbackEntry.created_at.desc())
         .limit(1000)
     )
@@ -1786,9 +2240,9 @@ async def create_cluster_github_issue(
         )
     )
     source = source_result.scalar_one_or_none()
-    source_config = json.loads(getattr(source, "config_json", "{}") or "{}") if source else {}
+    source_config = _source_config(source) if source else {}
     repo = body.repo or source_config.get("repo", "")
-    token = getattr(source, "access_token", "") if source else ""
+    token = decrypt_secret(getattr(source, "access_token", "")) if source else ""
     if not repo or not token:
         raise HTTPException(status_code=400, detail="Connect GitHub with a repo and read/write issue token first.")
 
@@ -2021,8 +2475,8 @@ async def _complete_oauth_callback(
     access_token = token_payload.get("access_token", "")
     if not access_token:
         raise HTTPException(status_code=502, detail=f"{provider.title()} OAuth did not return an access token.")
-    source.access_token = access_token
-    source.refresh_token = token_payload.get("refresh_token", "")
+    source.access_token = encrypt_secret(access_token)
+    source.refresh_token = encrypt_secret(token_payload.get("refresh_token", ""))
     source.status = "connected"
     source.updated_at = _utc_now()
     session.add(source)
@@ -2131,7 +2585,8 @@ register_job_handler("feedbacklens", "analyze_feedback", process_feedback_analys
 
 
 async def handle_feedback_email(payload: dict):
-    send_email(
+    await _run_in_thread(
+        send_email,
         to=payload["to"],
         subject=payload["subject"],
         html_body=payload["html_body"],
@@ -2330,54 +2785,116 @@ async def cron_poll_feedback_sources(authorization: str | None = Header(default=
 # ---------------------------------------------------------------------------
 # Export endpoint — Skill: backend-architect + react-patterns
 # ---------------------------------------------------------------------------
+EXPORT_COLUMNS = [
+    "id", "text", "sentiment", "confidence", "themes", "is_urgent",
+    "draft_reply", "analysis_engine", "created_at",
+]
+
+
+def _export_row(entry: FeedbackEntry) -> dict[str, Any]:
+    created_at = _as_aware_utc(entry.created_at) or _utc_now()
+    return {
+        "id": entry.id,
+        "text": entry.text,
+        "sentiment": entry.sentiment or "",
+        "confidence": round(entry.confidence * 100, 1) if entry.confidence is not None else None,
+        "themes": ", ".join(_parse_themes(entry.themes_json)),
+        "is_urgent": entry.is_urgent,
+        "draft_reply": entry.draft_reply or "",
+        "analysis_engine": entry.analysis_engine or "",
+        "created_at": created_at.isoformat(),
+    }
+
+
+async def _iter_export_batches(user_id: int, session: AsyncSession):
+    cursor_at: datetime | None = None
+    cursor_id: int | None = None
+    while True:
+        query = select(FeedbackEntry).where(FeedbackEntry.user_id == user_id)
+        if cursor_at is not None and cursor_id is not None:
+            query = query.where(tuple_(FeedbackEntry.created_at, FeedbackEntry.id) < (cursor_at, cursor_id))
+        result = await session.execute(
+            query.order_by(FeedbackEntry.created_at.desc(), FeedbackEntry.id.desc()).limit(EXPORT_BATCH_SIZE)
+        )
+        batch = list(result.scalars().all())
+        if not batch:
+            break
+        yield batch
+        last = batch[-1]
+        cursor_at = _as_aware_utc(last.created_at) or _utc_now()
+        cursor_id = int(last.id)
+        if len(batch) < EXPORT_BATCH_SIZE:
+            break
+
+
+async def _stream_csv_export(user_id: int, session: AsyncSession):
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=EXPORT_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    yield buffer.getvalue().encode("utf-8")
+    buffer.seek(0)
+    buffer.truncate(0)
+    async for batch in _iter_export_batches(user_id, session):
+        for entry in batch:
+            writer.writerow(_export_row(entry))
+        yield buffer.getvalue().encode("utf-8")
+        buffer.seek(0)
+        buffer.truncate(0)
+
+
+async def _stream_json_export(user_id: int, session: AsyncSession):
+    yield b"["
+    first = True
+    async for batch in _iter_export_batches(user_id, session):
+        for entry in batch:
+            if not first:
+                yield b","
+            yield json.dumps(_export_row(entry), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            first = False
+    yield b"]"
+
+
+async def _stream_xlsx_export(user_id: int, session: AsyncSession):
+    from openpyxl import Workbook
+
+    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b") as temp_file:
+        workbook = Workbook(write_only=True)
+        sheet = workbook.create_sheet("Feedback")
+        sheet.append(EXPORT_COLUMNS)
+        async for batch in _iter_export_batches(user_id, session):
+            for entry in batch:
+                row = _export_row(entry)
+                sheet.append([row[column] for column in EXPORT_COLUMNS])
+        workbook.save(temp_file)
+        temp_file.seek(0)
+        while chunk := temp_file.read(64 * 1024):
+            yield chunk
+
+
 @feedback_router.get("/export")
 async def export_feedback(
     format: Literal["csv", "xlsx", "json"] = Query(default="csv"),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Export all feedback entries as CSV, XLSX, or JSON."""
-    result = await session.execute(
-        select(FeedbackEntry)
-        .where(FeedbackEntry.user_id == user.id)
-        .order_by(FeedbackEntry.created_at.desc())
-    )
-    entries = result.scalars().all()
-
-    rows = []
-    for e in entries:
-        created_at = _as_aware_utc(e.created_at) or _utc_now()
-        rows.append({
-            "id": e.id,
-            "text": e.text,
-            "sentiment": e.sentiment or "",
-            "confidence": round(e.confidence * 100, 1) if e.confidence else None,
-            "themes": ", ".join(json.loads(e.themes_json or "[]")),
-            "is_urgent": e.is_urgent,
-            "draft_reply": e.draft_reply or "",
-            "analysis_engine": e.analysis_engine or "",
-            "created_at": created_at.isoformat(),
-        })
-
+    """Export feedback with bounded Neon queries and streaming output."""
     if format == "json":
         return StreamingResponse(
-            io.BytesIO(json.dumps(rows, indent=2).encode()),
+            _stream_json_export(user.id, session),
             media_type="application/json",
             headers={"Content-Disposition": "attachment; filename=feedbacklens_export.json"}
         )
-
-    df = pd.DataFrame(rows)
-    buf = io.BytesIO()
     if format == "xlsx":
-        df.to_excel(buf, index=False, engine="openpyxl")
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = "feedbacklens_export.xlsx"
-    else:
-        df.to_csv(buf, index=False)
-        media_type = "text/csv"
-        filename = "feedbacklens_export.csv"
-    buf.seek(0)
-    return StreamingResponse(buf, media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
+        return StreamingResponse(
+            _stream_xlsx_export(user.id, session),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=feedbacklens_export.xlsx"},
+        )
+    return StreamingResponse(
+        _stream_csv_export(user.id, session),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=feedbacklens_export.csv"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2398,17 +2915,15 @@ async def bulk_import_feedback(
     non_empty = [text for text in body.texts if text and text.strip()]
     await _enforce_feedback_limit(user, len(non_empty), session)
     created_items: list[dict] = []
-    batch_candidates: list[FeedbackEntry] = []
+    batch_candidates = await _load_dedupe_candidates(user.id, session)
     duplicates_skipped = 0
     spam_rejected = 0
     for text in non_empty:
         try:
             cleaned = _clean_feedback_text(text)
-        except HTTPException as exc:
-            if exc.status_code == 400 and "spam" in str(exc.detail).lower():
-                spam_rejected += 1
-                continue
-            raise
+        except SpamDetectedError:
+            spam_rejected += 1
+            continue
         if _find_semantic_duplicate(cleaned, batch_candidates):
             duplicates_skipped += 1
             continue
@@ -2418,17 +2933,15 @@ async def bulk_import_feedback(
                 text=cleaned,
                 source="manual",
                 session=session,
+                candidates=batch_candidates,
             )
-        except HTTPException as exc:
-            if exc.status_code == 400 and "spam" in str(exc.detail).lower():
-                spam_rejected += 1
-                continue
-            raise
+        except SpamDetectedError:
+            spam_rejected += 1
+            continue
         if created.get("deduped"):
             duplicates_skipped += 1
             continue
         created_items.append(created)
-        batch_candidates.append(_entry_from_payload(created, user.id))
     await session.commit()
     return {
         "created": len(created_items),
@@ -2447,6 +2960,10 @@ async def bulk_import_csv(
     session: AsyncSession = Depends(get_session),
 ):
     """Import feedback from a CSV file. Reads the specified column as feedback texts."""
+    allowed_content_types = {"text/csv", "application/vnd.ms-excel"}
+    content_type = (file.content_type or "").split(";", 1)[0].lower()
+    if content_type and content_type not in allowed_content_types:
+        raise HTTPException(status_code=415, detail="CSV upload must use text/csv or application/vnd.ms-excel")
     content = await file.read()
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="CSV limited to 5MB for bulk import")
@@ -2460,17 +2977,15 @@ async def bulk_import_csv(
     texts = [text for text in df[column].dropna().astype(str).tolist() if text.strip()]
     await _enforce_feedback_limit(user, len(texts), session)
     created_items: list[dict] = []
-    batch_candidates: list[FeedbackEntry] = []
+    batch_candidates = await _load_dedupe_candidates(user.id, session)
     duplicates_skipped = 0
     spam_rejected = 0
     for text in texts[:500]:
         try:
             cleaned = _clean_feedback_text(text)
-        except HTTPException as exc:
-            if exc.status_code == 400 and "spam" in str(exc.detail).lower():
-                spam_rejected += 1
-                continue
-            raise
+        except SpamDetectedError:
+            spam_rejected += 1
+            continue
         if _find_semantic_duplicate(cleaned, batch_candidates):
             duplicates_skipped += 1
             continue
@@ -2480,17 +2995,15 @@ async def bulk_import_csv(
                 text=cleaned,
                 source="manual",
                 session=session,
+                candidates=batch_candidates,
             )
-        except HTTPException as exc:
-            if exc.status_code == 400 and "spam" in str(exc.detail).lower():
-                spam_rejected += 1
-                continue
-            raise
+        except SpamDetectedError:
+            spam_rejected += 1
+            continue
         if created.get("deduped"):
             duplicates_skipped += 1
             continue
         created_items.append(created)
-        batch_candidates.append(_entry_from_payload(created, user.id))
     await session.commit()
     return {
         "created": len(created_items),
@@ -2518,18 +3031,10 @@ async def generate_draft_reply(
     if not entry or entry.user_id != user.id:
         raise HTTPException(status_code=404, detail="Feedback not found")
 
-    def _fallback_draft(sentiment: str, is_urgent: bool) -> str:
-        if is_urgent:
-            return "Thanks for reaching out. We received your message and are treating it as a priority. Our team will follow up with the next step as soon as possible."
-        if sentiment == "negative":
-            return "Thanks for sharing this. We are sorry the experience did not meet expectations. Could you send a few more details so we can look into it quickly?"
-        if sentiment == "positive":
-            return "Thanks for the kind words. We appreciate you taking the time to share what is working well."
-        return "Thanks for the feedback. We have logged it for review and will use it while planning upcoming improvements."
-
-    draft = _fallback_draft(entry.sentiment or "neutral", entry.is_urgent)
+    draft = _support_draft(entry.sentiment or "neutral", entry.is_urgent, _parse_themes(entry.themes_json))
 
     entry.draft_reply = draft
+    entry.updated_at = _utc_now()
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
@@ -2550,6 +3055,11 @@ app = create_app(
         cron_router,
     ]
 )
+
+
+@app.exception_handler(SpamDetectedError)
+async def _spam_detected_handler(_request: Request, exc: SpamDetectedError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 if __name__ == "__main__":
     import uvicorn

@@ -72,6 +72,8 @@ class _QueryAwareSession:
             return _FakeExecuteResult(rows=[self.endpoint] if self.endpoint else [])
         if "FROM webhook_settings" in query_text:
             return _FakeExecuteResult(rows=[])
+        if "FROM webhook_forward_rules" in query_text:
+            return _FakeExecuteResult(rows=[])
         if "FROM users" in query_text:
             return _FakeExecuteResult(rows=[self.user] if self.user else [])
         if "FROM user_product_access" in query_text:
@@ -205,29 +207,21 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
             recent_webhook_count=LEGACY_WEBHOOKS_PER_MINUTE,
             product_access_rows=[SimpleNamespace(user_id=77, app_name="webhookmonitor", is_active=True)],
         )
-        persisted = []
-
         async def override_session():
             yield session
-
-        async def fake_persist_and_forward(**kwargs):
-            persisted.append(kwargs)
-
-        original_persist = webhook_main._persist_and_forward
-        webhook_main._persist_and_forward = fake_persist_and_forward
         webhook_main.app.dependency_overrides[get_session] = override_session
         try:
             response = TestClient(webhook_main.app).post("/in/paid-slug", json={"ok": True})
         finally:
-            webhook_main._persist_and_forward = original_persist
             webhook_main.app.dependency_overrides.clear()
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "received")
-        self.assertEqual(len(persisted), 1)
-        self.assertEqual(persisted[0]["user_id"], 77)
-        self.assertEqual(persisted[0]["query_params"], {})
-        self.assertTrue(persisted[0]["ip_address"])
+        requests = [item for item in session.added if isinstance(item, webhook_main.WebhookRequest)]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].user_id, 77)
+        self.assertEqual(requests[0].query_params_json, "{}")
+        self.assertTrue(requests[0].ip_address)
 
     def test_legacy_active_user_without_product_access_resolves_to_pro(self):
         session = _QueryAwareSession(user=_paid_user(77), product_access_rows=[])
@@ -258,6 +252,34 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
         self.assertIn("DROP CONSTRAINT", statements)
         self.assertIn("DROP INDEX IF EXISTS", statements)
         self.assertIn("%(user_id)%", statements)
+
+    def test_critical_hardening_schema_changes_have_deploy_migrations(self):
+        statements = "\n".join(db_migrations.MIGRATION_STATEMENTS)
+
+        required_fragments = (
+            "invoices ADD COLUMN IF NOT EXISTS promise_used_at",
+            "invoices ADD COLUMN IF NOT EXISTS promise_expires_at",
+            "uq_invoices_promise_token",
+            "uq_invoice_reply_events_provider_message",
+            "uq_feedback_entries_user_source_message_id_nonempty",
+            "CREATE TABLE IF NOT EXISTS webhook_event_idempotency",
+            "uq_webhook_event_idempotency",
+            "CREATE TABLE IF NOT EXISTS invoice_public_rate_limits",
+            "uq_invoice_public_rate_limit_window",
+            "CREATE TABLE IF NOT EXISTS invoice_audit_logs",
+            "uq_invoice_audit_source_action",
+            "uq_invoice_integration_forward_address_token",
+            "feedback_entries ADD COLUMN IF NOT EXISTS updated_at",
+            "feedback_entries ADD COLUMN IF NOT EXISTS analyzed_at",
+            "CREATE TABLE IF NOT EXISTS webhook_audit_logs",
+            "CREATE TABLE IF NOT EXISTS webhook_cron_rate_limits",
+            "uq_webhook_cron_rate_window",
+            "ix_webhook_replay_dedup",
+            "fk_webhook_requests_replay",
+        )
+        for fragment in required_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, statements)
 
 
 if __name__ == "__main__":

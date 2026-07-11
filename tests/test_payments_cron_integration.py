@@ -292,6 +292,7 @@ class CronIntegrationTests(unittest.TestCase):
             "feedback": feedback_main.weekly_summary_cron,
             "webhook_silence": webhook_main.check_webhook_silences,
             "webhook_cleanup": webhook_main.cleanup_old_logs,
+            "webhook_rate_limit": webhook_main._enforce_cron_rate_limit,
         }
 
         async def fake_job(name, result=None):
@@ -303,6 +304,7 @@ class CronIntegrationTests(unittest.TestCase):
         feedback_main.weekly_summary_cron = lambda: fake_job("feedback")
         webhook_main.check_webhook_silences = lambda: fake_job("webhook_silence")
         webhook_main.cleanup_old_logs = lambda: fake_job("webhook_cleanup", 2)
+        webhook_main._enforce_cron_rate_limit = lambda _job_name: fake_job("webhook_rate_limit")
 
         try:
             requests = [
@@ -322,9 +324,13 @@ class CronIntegrationTests(unittest.TestCase):
             feedback_main.weekly_summary_cron = originals["feedback"]
             webhook_main.check_webhook_silences = originals["webhook_silence"]
             webhook_main.cleanup_old_logs = originals["webhook_cleanup"]
+            webhook_main._enforce_cron_rate_limit = originals["webhook_rate_limit"]
 
         self.assertEqual([response.status_code for response in responses], [200, 200, 200, 200, 200])
-        self.assertEqual(calls, ["tracker", "invoice", "feedback", "webhook_silence", "webhook_cleanup"])
+        self.assertEqual(calls, [
+            "tracker", "invoice", "feedback", "webhook_rate_limit", "webhook_silence",
+            "webhook_rate_limit", "webhook_cleanup",
+        ])
         self.assertEqual(responses[-1].json()["deleted_count"], 2)
 
 
