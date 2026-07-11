@@ -40,7 +40,7 @@ Scope:
   - Deploy configuration contract: 4 tests OK.
   - Neon migration contract: OK; migrations applied successfully to Neon on 2026-07-10.
 - Final closure gate (2026-07-11):
-  - `python -m unittest discover -s tests -q`: 330 tests OK.
+  - `python -m unittest discover -s tests -q`: 331 tests OK after live cron timezone regression coverage.
   - `pnpm run typecheck`: 8/8 tasks OK.
   - `pnpm run lint`: 9/9 tasks OK.
   - Python compile, universal backend import and `git diff --check`: OK.
@@ -129,7 +129,7 @@ Purpose:
 
 ## Final Closure
 
-- Checklist result: 126 resolved, 1 not applicable, 0 pending.
+- Checklist result: 127 resolved, 1 not applicable, 0 pending.
 - The prevention skill is installed and validated.
 - All repository and Neon gates pass; deployment/live verification is recorded after the release commit.
 

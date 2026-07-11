@@ -8,7 +8,7 @@ Status legend:
 - `[x]` Resolved and verified
 - `[n/a]` Not applicable to the confirmed product architecture
 
-Final status (2026-07-11): **126 resolved, 1 not applicable, 0 pending, 0 in progress**.
+Final status (2026-07-11): **127 resolved, 1 not applicable, 0 pending, 0 in progress**.
 
 ## Confirmed Production Architecture
 
@@ -61,6 +61,7 @@ Final status (2026-07-11): **126 resolved, 1 not applicable, 0 pending, 0 in pro
 - [x] IF-28: Stream or page invoice export instead of loading everything into memory.
 - [x] IF-29: Default `weekly_digest_enabled` to opt-in false.
 - [x] IF-30: Default `immediate_alerts_enabled` to opt-in false.
+- [x] IF-31: Align InvoiceFollow timezone-aware Python datetimes with Neon `TIMESTAMPTZ` columns.
 
 ## WebhookMonitor
 
@@ -218,6 +219,7 @@ The verification commands below are the focused GREEN suites. RED regression tes
 | IF-23 | Gmail OAuth state remained reusable after callback success. | The state is cleared in the persisted integration settings after token exchange. | `python -m unittest tests.test_invoicefollow_production_pipeline -v` |
 | IF-29 | Weekly digests were enabled without explicit consent. | Default changed to opt-in `false`. | `python -m unittest tests.test_invoicefollow_production_pipeline -v` |
 | IF-30 | Immediate alerts were enabled without explicit consent. | Default changed to opt-in `false`. | `python -m unittest tests.test_invoicefollow_production_pipeline -v` |
+| IF-31 | Live cron passed aware UTC values through SQLAlchemy columns typed as timezone-naive, causing asyncpg `DataError` during overdue status updates. | All persisted InvoiceFollow timestamps now use `DateTime(timezone=True)` and an idempotent Neon migration converts legacy columns to `TIMESTAMPTZ ... AT TIME ZONE 'UTC'`. | Live cron reproduction; model/migration regression; full suite 331 tests OK; Neon column inspection |
 | IF-02 | The public limiter lived in one Python process. | Replaced it with an atomic Neon upsert keyed by bucket, hashed client and minute window; accepted hits commit immediately and the table has a cleanup expiry. | `test_public_rate_limit_uses_atomic_neon_counter`; InvoiceFollow 54 tests OK |
 | IF-06 | Two Render workers could run the same reminder/payment cron simultaneously. | Added Neon advisory locks around singleton cron jobs; a second worker exits with `skipped_locked`. | `test_cron_jobs_skip_when_neon_advisory_lock_is_already_held`; 54 tests OK |
 | IF-09 | Import capacity used count-then-insert without serialization. | Import/create capacity checks now take a per-user Neon transaction advisory lock and fail closed if the count cannot be read. | Atomic import and Neon failure tests; 54 tests OK |
@@ -255,7 +257,7 @@ The verification commands below are the focused GREEN suites. RED regression tes
 | WM-014 | All network failures collapsed into one generic forwarding error. | Added safe classification for timeout, DNS lookup, refused connection, generic connection and network failures. | Timeout/DNS/refused regression tests; focused suite 35 tests OK |
 | WM-019 | Public ingestion had no per-IP multi-worker limit. | Added a Neon-backed sliding one-minute count over persisted requests and returns 429 at the bounded threshold. | `test_ingestion_enforces_database_backed_per_ip_rate_limit`; focused suite 35 tests OK |
 | WM-021 | The legacy persistence helper could create another request when no request ID was supplied. | The helper now requires an already persisted request ID; ingestion owns the single durable insert path. | `test_persist_and_forward_requires_an_existing_request`; focused suite 35 tests OK |
-| WM-061 | Missing `ENCRYPTION_KEY` silently derived a public fallback key. | Webhook integration crypto now fails closed; a secure key was generated directly in Render after Neon was verified to contain no legacy secrets. | RED missing-key test; GREEN `test_crypto_rejects_missing_encryption_key`; full suite 330 tests OK |
+| WM-061 | Missing `ENCRYPTION_KEY` silently derived a public fallback key. | Webhook integration crypto now fails closed; a secure key was generated directly in Render after Neon was verified to contain no legacy secrets. | RED missing-key test; GREEN `test_crypto_rejects_missing_encryption_key`; full suite 331 tests OK |
 | WM-005 | Broad handlers could swallow task cancellation. | Async notification/network boundaries now re-raise `CancelledError` and log bounded operational failures. | Cancellation-safe source contract; WebhookMonitor suite 58 tests OK |
 | WM-013 | Forwarding committed intermediate request state. | Internal commits were replaced by flushes so `get_managed_session` owns one atomic commit/rollback boundary. | Failure/timeout tests assert no partial commit; 58 tests OK |
 | WM-018 | Repeated downstream failures continued hammering a target. | Added a Neon-backed recent-failure threshold and structured `circuit_open` result. | Circuit-breaker query contract; 58 tests OK |

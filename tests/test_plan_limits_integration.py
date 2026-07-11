@@ -271,6 +271,8 @@ class PlanLimitsIntegrationTests(unittest.TestCase):
             "uq_invoice_integration_forward_address_token",
             "feedback_entries ADD COLUMN IF NOT EXISTS updated_at",
             "feedback_entries ADD COLUMN IF NOT EXISTS analyzed_at",
+            "AS utc_columns(table_name, column_name)",
+            "TYPE TIMESTAMPTZ",
             "CREATE TABLE IF NOT EXISTS webhook_audit_logs",
             "CREATE TABLE IF NOT EXISTS webhook_cron_rate_limits",
             "uq_webhook_cron_rate_window",

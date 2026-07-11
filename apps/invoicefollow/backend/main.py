@@ -36,7 +36,7 @@ from backend_core.product_insights import summarize_invoices
 from backend_core.worker import register_job_handler
 from backend_core.plan_limits import resolve_user_plan
 from zoneinfo import ZoneInfo
-from sqlalchemy import UniqueConstraint, update, case, func, and_, text
+from sqlalchemy import Column, DateTime, UniqueConstraint, update, case, func, and_, text
 import hashlib
 from cryptography.fernet import Fernet
 from openpyxl import Workbook
@@ -298,9 +298,9 @@ class InvoicePublicRateLimit(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     bucket: str = Field(index=True)
     client_key: str = Field(index=True)
-    window_started_at: datetime = Field(index=True)
+    window_started_at: datetime = Field(sa_column=Column(DateTime(timezone=True), index=True, nullable=False))
     request_count: int = Field(default=1)
-    expires_at: datetime = Field(index=True)
+    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), index=True, nullable=False))
 
 
 class Invoice(SQLModel, table=True):
@@ -323,16 +323,19 @@ class Invoice(SQLModel, table=True):
     reminders_sent: int = Field(default=0)
     last_reminder_date: Optional[date] = None
     promise_token: Optional[str] = Field(default=None, index=True)
-    promise_used_at: Optional[datetime] = None
-    promise_expires_at: Optional[datetime] = Field(default_factory=lambda: _utc_now() + timedelta(days=30))
+    promise_used_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    promise_expires_at: Optional[datetime] = Field(
+        default_factory=lambda: _utc_now() + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     payment_promise_date: Optional[date] = None
     schedule_paused_until: Optional[date] = None
     manual_review_reason: str = Field(default="")
     notes: str = Field(default="")
     cron_paused: bool = Field(default=False)
-    paid_at: Optional[datetime] = None
-    created_at: datetime = Field(default_factory=_utc_now)
-    updated_at: datetime = Field(default_factory=_utc_now)
+    paid_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    created_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class InvoiceSettings(SQLModel, table=True):
@@ -363,13 +366,13 @@ class InvoiceIntegrationSettings(SQLModel, table=True):
     gmail_state: str = Field(default="")
     gmail_access_token: str = Field(default="")
     gmail_refresh_token: str = Field(default="")
-    gmail_token_expires_at: Optional[datetime] = None
+    gmail_token_expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     stripe_connected: bool = Field(default=False)
     stripe_account_label: str = Field(default="")
     stripe_api_key: str = Field(default="")
     forward_address_token: str = Field(default_factory=_token_urlsafe, index=True)
-    created_at: datetime = Field(default_factory=_utc_now)
-    updated_at: datetime = Field(default_factory=_utc_now)
+    created_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class InvoiceDetectedDraft(SQLModel, table=True):
@@ -393,7 +396,7 @@ class InvoiceDetectedDraft(SQLModel, table=True):
     confidence: float = Field(default=0)
     status: str = Field(default="needs_review", index=True)
     parsed_json: str = Field(default="{}")
-    created_at: datetime = Field(default_factory=_utc_now)
+    created_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class InvoiceReminderLog(SQLModel, table=True):
@@ -410,7 +413,10 @@ class InvoiceReminderLog(SQLModel, table=True):
     body_preview: str = Field(default="")
     response_intent: str = Field(default="")
     response_excerpt: str = Field(default="")
-    sent_at: datetime = Field(default_factory=_utc_now, index=True)
+    sent_at: datetime = Field(
+        default_factory=_utc_now,
+        sa_column=Column(DateTime(timezone=True), index=True, nullable=False),
+    )
 
 
 class InvoiceReplyEvent(SQLModel, table=True):
@@ -427,7 +433,10 @@ class InvoiceReplyEvent(SQLModel, table=True):
     text: str = Field(default="")
     intent_label: str = Field(default="DESCONOCIDO", index=True)
     action_taken: str = Field(default="")
-    received_at: datetime = Field(default_factory=_utc_now, index=True)
+    received_at: datetime = Field(
+        default_factory=_utc_now,
+        sa_column=Column(DateTime(timezone=True), index=True, nullable=False),
+    )
 
 
 class InvoicePaymentEvent(SQLModel, table=True):
@@ -442,7 +451,10 @@ class InvoicePaymentEvent(SQLModel, table=True):
     currency: str = Field(default="USD")
     status: str = Field(default="succeeded", index=True)
     raw_json: str = Field(default="{}")
-    detected_at: datetime = Field(default_factory=_utc_now, index=True)
+    detected_at: datetime = Field(
+        default_factory=_utc_now,
+        sa_column=Column(DateTime(timezone=True), index=True, nullable=False),
+    )
 
 
 class InvoiceAuditLog(SQLModel, table=True):
@@ -467,7 +479,10 @@ class InvoiceAuditLog(SQLModel, table=True):
     source: str = Field(default="api", index=True)
     source_event_id: str = Field(index=True)
     details_json: str = Field(default="{}")
-    created_at: datetime = Field(default_factory=_utc_now, index=True)
+    created_at: datetime = Field(
+        default_factory=_utc_now,
+        sa_column=Column(DateTime(timezone=True), index=True, nullable=False),
+    )
 
 
 @dataclass(frozen=True)

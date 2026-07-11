@@ -239,6 +239,18 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
         self.assertIsNotNone(now.tzinfo)
         self.assertEqual(now.utcoffset(), timezone.utc.utcoffset(None))
 
+    def test_invoicefollow_persisted_timestamps_are_timezone_aware(self):
+        timestamp_columns = (
+            invoice_main.Invoice.__table__.c.created_at,
+            invoice_main.Invoice.__table__.c.updated_at,
+            invoice_main.Invoice.__table__.c.promise_expires_at,
+            invoice_main.InvoiceReminderLog.__table__.c.sent_at,
+            invoice_main.InvoiceReplyEvent.__table__.c.received_at,
+            invoice_main.InvoicePaymentEvent.__table__.c.detected_at,
+        )
+
+        self.assertTrue(all(column.type.timezone for column in timestamp_columns))
+
     def test_invoice_settings_notifications_are_opt_in(self):
         settings = invoice_main.InvoiceSettings(user_id=1)
 

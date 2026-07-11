@@ -98,6 +98,25 @@ MIGRATION_STATEMENTS = [
     ),
     "CREATE INDEX IF NOT EXISTS idx_invoice_public_rate_limits_expires_at ON invoice_public_rate_limits (expires_at)",
     (
+        "DO $$ DECLARE target RECORD; BEGIN FOR target IN SELECT * FROM (VALUES "
+        "('invoice_public_rate_limits','window_started_at'), "
+        "('invoice_public_rate_limits','expires_at'), "
+        "('invoices','promise_used_at'), ('invoices','promise_expires_at'), "
+        "('invoices','paid_at'), ('invoices','created_at'), ('invoices','updated_at'), "
+        "('invoice_integration_settings','gmail_token_expires_at'), "
+        "('invoice_integration_settings','created_at'), ('invoice_integration_settings','updated_at'), "
+        "('invoice_detected_drafts','created_at'), ('invoice_reminder_logs','sent_at'), "
+        "('invoice_reply_events','received_at'), ('invoice_payment_events','detected_at'), "
+        "('invoice_audit_logs','created_at')"
+        ") AS utc_columns(table_name, column_name) LOOP "
+        "IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() "
+        "AND information_schema.columns.table_name = target.table_name "
+        "AND information_schema.columns.column_name = target.column_name "
+        "AND data_type = 'timestamp without time zone') THEN "
+        "EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I AT TIME ZONE ''UTC''', "
+        "target.table_name, target.column_name, target.column_name); END IF; END LOOP; END $$;"
+    ),
+    (
         "CREATE TABLE IF NOT EXISTS invoice_audit_logs ("
         "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, actor_user_id INTEGER, actor_type VARCHAR DEFAULT 'user', "
         "entity_type VARCHAR DEFAULT 'invoice', entity_id INTEGER, action VARCHAR NOT NULL, source VARCHAR DEFAULT 'api', "
