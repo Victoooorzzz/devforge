@@ -63,6 +63,8 @@ class DashboardLiveQaRegressionTests(unittest.TestCase):
         self.assertIn('query: search || ""', page)
         self.assertIn("Confirm clear", page)
         self.assertIn("Payload must be valid JSON", page)
+        clear_handler = page[page.index("const handleClearHistory"):page.index("const handleCopy")]
+        self.assertLess(clear_handler.index("await refreshWebhooks(false)"), clear_handler.index("setRequests([])"))
 
     def test_pricetrackr_dashboard_excludes_deleted_rows_and_preserves_ten_minute_frequency(self):
         page = (ROOT / "apps" / "pricetrackr" / "frontend" / "src" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")

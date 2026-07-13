@@ -238,9 +238,12 @@ export default function DashboardPage() {
     try {
       // DELETE /webhooks/requests
       await apiClient.delete("/webhooks/requests?confirm=CONFIRM");
+      setHasServerSearch(false);
+      await refreshWebhooks(false);
+      // Apply the destructive result after any in-flight refresh finishes so a
+      // stale pre-delete response cannot repopulate the table.
       setRequests([]);
       setSelected(null);
-      await refreshWebhooks(false);
       showToast({ tone: "success", message: "Your connection history was cleared." });
     } catch {
       showToast({ tone: "error", message: "We could not clear your history. Retry in a moment." });
