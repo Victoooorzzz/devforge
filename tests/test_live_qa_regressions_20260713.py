@@ -64,7 +64,7 @@ class DashboardLiveQaRegressionTests(unittest.TestCase):
         self.assertIn("Confirm clear", page)
         self.assertIn("Payload must be valid JSON", page)
         clear_handler = page[page.index("const handleClearHistory"):page.index("const handleCopy")]
-        self.assertLess(clear_handler.index("await refreshWebhooks(false)"), clear_handler.index("setRequests([])"))
+        self.assertLess(clear_handler.index("setRequests([])"), clear_handler.index("void refreshWebhooks(false)"))
         self.assertIn("historyClearedRef.current && nextRequests.length === 0", page)
         self.assertIn("historyClearedRef.current = true", clear_handler)
 
