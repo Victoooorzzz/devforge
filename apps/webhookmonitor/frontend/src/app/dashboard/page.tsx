@@ -158,6 +158,7 @@ export default function DashboardPage() {
   const [hasServerSearch, setHasServerSearch] = useState(false);
   const intervalRef                   = useRef<NodeJS.Timeout | null>(null);
   const exportRef                     = useRef<HTMLDivElement>(null);
+  const historyClearedRef             = useRef(false);
   const editedPayloadInvalid = isEditingPayload && (() => {
     try { JSON.parse(retryPayload); return false; } catch { return true; }
   })();
@@ -180,8 +181,16 @@ export default function DashboardPage() {
 
     if (configResult.status === "fulfilled") setEndpointUrl(configResult.value.data.endpoint_url);
     if (endpointResult.status === "fulfilled") setEndpoints(endpointResult.value.data);
-    if (summaryResult.status === "fulfilled") setSummary(summaryResult.value.data);
-    if (logsResult.status === "fulfilled" && !hasServerSearch) setRequests(logsResult.value.data);
+    if (summaryResult.status === "fulfilled" && !historyClearedRef.current) {
+      setSummary(summaryResult.value.data);
+    }
+    if (logsResult.status === "fulfilled") {
+      const nextRequests = logsResult.value.data;
+      if (historyClearedRef.current && nextRequests.length === 0) {
+        historyClearedRef.current = false;
+      }
+      if (!historyClearedRef.current && !hasServerSearch) setRequests(nextRequests);
+    }
     if (profileResult.status === "fulfilled") {
       const nextPlan = profileResult.value.data.plans_by_product?.webhookmonitor || "free";
       const nextLimit = profileResult.value.data.dashboard_limits_by_product?.webhookmonitor?.[nextPlan]?.max_endpoints;
@@ -238,14 +247,24 @@ export default function DashboardPage() {
     try {
       // DELETE /webhooks/requests
       await apiClient.delete("/webhooks/requests?confirm=CONFIRM");
+      historyClearedRef.current = true;
       setHasServerSearch(false);
       await refreshWebhooks(false);
       // Apply the destructive result after any in-flight refresh finishes so a
       // stale pre-delete response cannot repopulate the table.
       setRequests([]);
       setSelected(null);
+      setSummary((current) => current ? {
+        ...current,
+        total_requests: 0,
+        recent_24h: 0,
+        retry_pressure: 0,
+        failed_forwards: 0,
+        auto_retry_enabled: 0,
+      } : current);
       showToast({ tone: "success", message: "Your connection history was cleared." });
     } catch {
+      historyClearedRef.current = false;
       showToast({ tone: "error", message: "We could not clear your history. Retry in a moment." });
     }
   };
