@@ -74,6 +74,7 @@ class PriceTrackrUnitTests(unittest.IsolatedAsyncioTestCase):
 
         # Frequency limit checking (Free limit is 24h, Pro is 1h)
         reject_price_frequency_if_needed("pro", pro_limits, 1) # should pass
+        reject_price_frequency_if_needed("team", PRICETRACKR_LIMITS["team"], 1 / 6)
         reject_price_frequency_if_needed("free", free_limits, 24) # should pass
 
         with self.assertRaises(Exception):
@@ -89,6 +90,16 @@ class PriceTrackrUnitTests(unittest.IsolatedAsyncioTestCase):
             reject_tracker_count_if_needed("free", free_limits, 5)
         with self.assertRaises(Exception):
             reject_tracker_count_if_needed("free", free_limits, 6)
+
+    def test_team_frequency_export_and_worker_schedule_contracts(self):
+        backend = (ROOT / "apps" / "pricetrackr" / "backend" / "main.py").read_text(encoding="utf-8")
+        migrations = (ROOT / "packages" / "backend_core" / "db_migrations.py").read_text(encoding="utf-8")
+        cron = (ROOT / "scripts" / "sync_cron_jobs.py").read_text(encoding="utf-8")
+
+        self.assertIn('@tracker_router.get("/export-file")', backend)
+        self.assertIn("1 / 6", backend)
+        self.assertIn("ALTER COLUMN check_frequency_hours TYPE DOUBLE PRECISION", migrations)
+        self.assertIn("minutes\": [0, 10, 20, 30, 40, 50]", cron)
 
     @patch("apps.pricetrackr.backend.main.send_email")
     async def test_alert_rate_limiting_by_type_and_direction(self, mock_send_email):

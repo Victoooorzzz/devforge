@@ -48,7 +48,7 @@ def create_app(
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["Content-Disposition"],
+        expose_headers=["Content-Disposition", "X-DevForge-Deep-Clean", "X-DevForge-Deep-Clean-Report"],
     )
 
     # Health check

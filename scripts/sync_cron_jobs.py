@@ -87,7 +87,7 @@ def job_specs(secret: str) -> list[dict[str, Any]]:
                 "timezone": "America/Lima",
                 "expiresAt": 0,
                 "hours": [-1],
-                "minutes": [0],
+                "minutes": [0, 10, 20, 30, 40, 50],
                 "mdays": [-1],
                 "months": [-1],
                 "wdays": [-1],

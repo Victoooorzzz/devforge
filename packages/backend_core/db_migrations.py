@@ -147,6 +147,7 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS in_stock BOOLEAN",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS next_check_at TIMESTAMP",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS check_frequency_hours INTEGER DEFAULT 24",
+    "ALTER TABLE tracked_urls ALTER COLUMN check_frequency_hours TYPE DOUBLE PRECISION USING check_frequency_hours::DOUBLE PRECISION",
     "ALTER TABLE tracked_urls ADD COLUMN IF NOT EXISTS alert_threshold DOUBLE PRECISION",
     "ALTER TABLE webhook_requests ADD COLUMN IF NOT EXISTS user_id INTEGER",
     "ALTER TABLE webhook_endpoints ADD COLUMN IF NOT EXISTS name VARCHAR DEFAULT 'Default endpoint'",

@@ -63,7 +63,7 @@ class TrackedUrl(SQLModel, table=True):
     in_stock: Optional[bool] = None            # stock status
     last_checked: Optional[datetime] = None
     next_check_at: Optional[datetime] = None   # when to check next (dynamic frequency)
-    check_frequency_hours: int = Field(default=24)  # 1, 6, 12, or 24 hours
+    check_frequency_hours: float = Field(default=24)  # 10 minutes for Team; 1, 6, 12, or 24 hours
     alert_threshold: Optional[float] = None
     status: str = Field(default="active")
     created_at: datetime = Field(default_factory=_utc_now)
@@ -152,7 +152,7 @@ def generate_slug(label: str) -> str:
 class TrackerCreate(BaseModel):
     url: str
     label: str
-    check_frequency_hours: int = 24  # 1, 6, 12, or 24
+    check_frequency_hours: float = 24
     selector_1: Optional[str] = None
     selector_2: Optional[str] = None
     selector_3: Optional[str] = None
@@ -163,7 +163,7 @@ class TrackerCreate(BaseModel):
 class TrackerUpdate(BaseModel):
     label: Optional[str] = None
     url: Optional[str] = None
-    check_frequency_hours: Optional[int] = None
+    check_frequency_hours: Optional[float] = None
     alert_threshold: Optional[float] = None
     selector_1: Optional[str] = None
     selector_2: Optional[str] = None
@@ -174,7 +174,14 @@ class TrackerUpdate(BaseModel):
 
 
 class TrackerFrequencyUpdate(BaseModel):
-    hours: int  # must be 1, 6, 12, or 24
+    hours: float
+
+
+ALLOWED_CHECK_FREQUENCY_HOURS = (1 / 6, 1.0, 6.0, 12.0, 24.0)
+
+
+def _is_allowed_check_frequency(hours: float) -> bool:
+    return any(abs(hours - allowed) < 0.001 for allowed in ALLOWED_CHECK_FREQUENCY_HOURS)
 
 
 class TrackerPrefsUpdate(BaseModel):
@@ -1068,8 +1075,8 @@ async def create_tracker(body: TrackerCreate, user: User = Depends(get_current_u
 
     # Bug 15: Reject invalid frequencies explicitly instead of silent coercion
     freq_hours = body.check_frequency_hours
-    if freq_hours not in (1, 6, 12, 24):
-        raise HTTPException(status_code=400, detail="Frequency must be 1, 6, 12, or 24 hours")
+    if not _is_allowed_check_frequency(freq_hours):
+        raise HTTPException(status_code=400, detail="Frequency must be 10 minutes, 1, 6, 12, or 24 hours")
     plan, limits = await get_pricetrackr_limits(user, session)
     reject_price_frequency_if_needed(plan, limits, freq_hours)
 
@@ -1209,10 +1216,10 @@ async def update_tracker_frequency(
 ):
     """
     Update the check frequency for a specific tracker.
-    Allowed values: 1h, 6h, 12h, 24h.
+    Allowed values: 10m, 1h, 6h, 12h, 24h (subject to plan limits).
     """
-    if body.hours not in (1, 6, 12, 24):
-        raise HTTPException(status_code=400, detail="Frequency must be 1, 6, 12, or 24 hours")
+    if not _is_allowed_check_frequency(body.hours):
+        raise HTTPException(status_code=400, detail="Frequency must be 10 minutes, 1, 6, 12, or 24 hours")
     plan, limits = await get_pricetrackr_limits(user, session)
     reject_price_frequency_if_needed(plan, limits, body.hours)
 
@@ -1289,8 +1296,8 @@ async def update_tracker(
         t.slug = generate_slug(body.label)
 
     if body.check_frequency_hours is not None:
-        if body.check_frequency_hours not in (1, 6, 12, 24):
-            raise HTTPException(status_code=400, detail="Frequency must be 1, 6, 12, or 24 hours")
+        if not _is_allowed_check_frequency(body.check_frequency_hours):
+            raise HTTPException(status_code=400, detail="Frequency must be 10 minutes, 1, 6, 12, or 24 hours")
         plan, limits = await get_pricetrackr_limits(user, session)
         reject_price_frequency_if_needed(plan, limits, body.check_frequency_hours)
         t.check_frequency_hours = body.check_frequency_hours
@@ -1403,6 +1410,55 @@ async def confirm_tracker_change(
 # ---------------------------------------------------------------------------
 # Export endpoint — Skill: backend-architect
 # ---------------------------------------------------------------------------
+def _build_tracker_export(trackers: list[TrackedUrl], fmt: str) -> tuple[bytes, str, str]:
+    rows = [
+        {
+            "id": tracker.id,
+            "label": tracker.label,
+            "url": tracker.url,
+            "current_price": tracker.current_price,
+            "previous_price": tracker.previous_price,
+            "min_price_ever": tracker.min_price,
+            "in_stock": tracker.in_stock,
+            "alert_threshold": tracker.alert_threshold,
+            "last_checked": tracker.last_checked.isoformat() if tracker.last_checked else None,
+            "check_frequency_hours": tracker.check_frequency_hours,
+            "status": tracker.status,
+            "slug": tracker.slug,
+            "is_public": tracker.is_public,
+        }
+        for tracker in trackers
+    ]
+    if fmt == "json":
+        return json.dumps(rows, indent=2).encode("utf-8"), "application/json", "json"
+    frame = pd.DataFrame(rows)
+    buffer = io.BytesIO()
+    if fmt == "xlsx":
+        frame.to_excel(buffer, index=False, engine="openpyxl")
+        return buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+    frame.to_csv(buffer, index=False)
+    return buffer.getvalue(), "text/csv", "csv"
+
+
+@tracker_router.get("/export-file")
+async def download_tracker_export(
+    format: Literal["csv", "xlsx", "json"] = Query(default="csv"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        select(TrackedUrl)
+        .where(TrackedUrl.user_id == user.id, TrackedUrl.deleted_at == None)  # noqa: E711
+        .order_by(TrackedUrl.created_at.desc())
+    )
+    content, media_type, extension = _build_tracker_export(result.scalars().all(), format)
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="pricetrackr-export.{extension}"'},
+    )
+
+
 @tracker_router.post("/export")
 async def trigger_export_job(
     format: Literal["csv", "xlsx", "json"] = Query(default="csv"),

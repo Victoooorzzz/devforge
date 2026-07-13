@@ -36,7 +36,7 @@ from backend_core.product_insights import summarize_invoices
 from backend_core.worker import register_job_handler
 from backend_core.plan_limits import resolve_user_plan
 from zoneinfo import ZoneInfo
-from sqlalchemy import Column, DateTime, UniqueConstraint, update, case, func, and_, text
+from sqlalchemy import Column, DateTime, UniqueConstraint, update, delete, case, func, and_, text
 import hashlib
 from cryptography.fernet import Fernet
 from openpyxl import Workbook
@@ -2424,6 +2424,18 @@ async def update_invoice(invoice_id: int, body: InvoiceUpdate, user: User = Depe
     session.add(invoice)
     await session.flush()
     return _invoice_to_dict(invoice)
+
+
+@invoice_router.delete("/{invoice_id}")
+async def delete_invoice(invoice_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    invoice = await _get_invoice_or_404(session, user.id, invoice_id)
+    await session.execute(delete(InvoiceReminderLog).where(InvoiceReminderLog.invoice_id == invoice_id, InvoiceReminderLog.user_id == user.id))
+    await session.execute(delete(InvoiceReplyEvent).where(InvoiceReplyEvent.invoice_id == invoice_id, InvoiceReplyEvent.user_id == user.id))
+    await session.execute(delete(InvoicePaymentEvent).where(InvoicePaymentEvent.invoice_id == invoice_id, InvoicePaymentEvent.user_id == user.id))
+    await session.execute(delete(InvoiceAuditLog).where(InvoiceAuditLog.entity_type == "invoice", InvoiceAuditLog.entity_id == invoice_id, InvoiceAuditLog.user_id == user.id))
+    await session.delete(invoice)
+    await session.flush()
+    return {"status": "deleted", "invoice_id": invoice_id}
 
 
 @invoice_router.post("/{invoice_id}/pause")

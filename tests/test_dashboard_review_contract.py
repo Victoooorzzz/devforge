@@ -96,6 +96,19 @@ class DashboardReviewContractTest(unittest.TestCase):
         self.assertNotIn('apiClient.post<DetectedMetadata>("/trackers/detect"', add_form)
         self.assertNotIn('apiClient.post<TrackedUrl>("/trackers"', add_form)
 
+    def test_pricetrackr_ui_matches_threshold_export_and_soft_delete_contracts(self):
+        dashboard = read("apps/pricetrackr/frontend/src/app/dashboard/components/DashboardClient.tsx")
+        url_list = read("apps/pricetrackr/frontend/src/app/dashboard/components/UrlList.tsx")
+        export_button = read("apps/pricetrackr/frontend/src/app/dashboard/components/ExportButton.tsx")
+        urls_route = read("apps/pricetrackr/frontend/src/app/api/urls/route.ts")
+
+        self.assertIn("onThresholdChange", url_list)
+        self.assertNotIn("onToggleAlertPanel(t.id); // Triggers state update", url_list)
+        self.assertIn("handleAlertThresholdChange", dashboard)
+        self.assertIn('/trackers/export-file?format=', export_button)
+        self.assertIn("downloadFile", export_button)
+        self.assertIn("deleted_at IS NULL", urls_route)
+        self.assertIn('<option value={1 / 6}>10m Interval</option>', url_list)
     def test_feedbacklens_dashboard_has_sample_feedback_sources_cards_and_roi(self):
         page = read("apps/feedbacklens/frontend/src/app/dashboard/page.tsx")
 

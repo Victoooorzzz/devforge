@@ -295,6 +295,36 @@ class FeedbackLensProductionPipelineTests(unittest.TestCase):
         self.assertIn("signal: controller.signal", page)
         self.assertIn("took too long", page)
 
+    def test_feedback_delete_source_management_and_derived_refresh_contracts(self):
+        page = (ROOT / "apps" / "feedbacklens" / "frontend" / "src" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("handleDeleteFeedback", page)
+        self.assertIn("handleCreateSource", page)
+        self.assertIn("handleDeleteSource", page)
+        self.assertIn("refreshDerivedInsights", page)
+        self.assertIn("/feedback/${entry.id}", page)
+        self.assertIn("/sources/${source.id}", page)
+
+    def test_delete_feedback_removes_only_owned_entry(self):
+        entry = feedback_main.FeedbackEntry(id=22, user_id=42, text="Remove me")
+        session = _FakeSession(rows=[entry])
+
+        response = _client(session).delete("/feedback/22")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "deleted")
+        self.assertTrue(any(str(query).lstrip().upper().startswith("DELETE") for query in session.queries))
+
+    def test_source_list_excludes_deleted_sources_and_reanalysis_updates_derived_fields(self):
+        list_session = _FakeSession(rows=[])
+        response = _client(list_session).get("/sources")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("feedback_sources.status", str(list_session.queries[0]))
+
+        backend = (ROOT / "apps" / "feedbacklens" / "backend" / "main.py").read_text(encoding="utf-8")
+        analyze_block = backend[backend.index("async def analyze_feedback"):backend.index("async def process_feedback_analysis")]
+        self.assertIn("_apply_local_processing_async", analyze_block)
+
     def test_pricing_copy_matches_feedbacklens_limits(self):
         files = [
             ROOT / "apps" / "feedbacklens" / "frontend" / "src" / "config" / "product.ts",

@@ -215,6 +215,56 @@ class FileCleanerProductionPipelineTests(unittest.TestCase):
         self.assertTrue(file_main.pd.isna(result.dataframe["credit_score"].iloc[1]))
         self.assertTrue(result.report["deep_clean"]["warnings"])
 
+    def test_deep_clean_deduplicates_after_normalization_and_warns_on_invalid_values(self):
+        content = (
+            "Nombre,Correo,monto,fecha\n"
+            " ana lopez ,ANA@EXAMPLE.COM,\"$1,000.00\",2026-01-10\n"
+            "Ana Lopez,ana@example.com,1000,2026-01-10\n"
+            "Broken,bad-email,abc,not-a-date\n"
+        ).encode("utf-8")
+
+        result = file_main.run_deep_clean(content, "customers.csv")
+        report = result.report["deep_clean"]
+
+        self.assertEqual(len(result.dataframe), 2)
+        self.assertEqual(result.dataframe["monto"].iloc[0], 1000.0)
+        self.assertEqual(report["duplicates_removed_after_normalization"], 1)
+        self.assertTrue(any("fecha" in warning and "invalid" in warning for warning in report["warnings"]))
+        self.assertTrue(any("Correo" in warning and "invalid" in warning for warning in report["warnings"]))
+
+    def test_deep_clean_preserves_the_first_excel_sheet_name(self):
+        source = io.BytesIO()
+        with file_main.pd.ExcelWriter(source, engine="openpyxl") as writer:
+            file_main.pd.DataFrame([{"name": " Ana "}]).to_excel(writer, index=False, sheet_name="Dirty Customers")
+
+        result = file_main.run_deep_clean(source.getvalue(), "customers.xlsx")
+        workbook = file_main.pd.ExcelFile(result.output)
+
+        self.assertEqual(workbook.sheet_names, ["Dirty Customers"])
+
+    def test_fuzzy_matching_does_not_merge_different_people_or_email_local_parts(self):
+        frame = file_main.pd.DataFrame({
+            "name": ["John Doe", "Jane Doe"],
+            "email": ["john@example.com", "jane@example.com"],
+        })
+
+        report = file_main._run_fuzzy_matching(frame, {"enabled": True, "threshold": 85})
+
+        self.assertEqual(report["clusters_found"], 0)
+
+    def test_local_quality_analysis_reports_row_duplicates_and_invalid_business_values(self):
+        content = (
+            "name,amount,date\n"
+            " Ana ,abc,not-a-date\n"
+            " Ana ,abc,not-a-date\n"
+        ).encode("utf-8")
+
+        result = file_main._analyze_file_locally(content, "dirty.csv")
+        issues = " ".join(item["issue"].lower() for item in result["suggestions"])
+
+        self.assertIn("duplicate", issues)
+        self.assertIn("invalid", issues)
+
     def test_deep_clean_endpoint_is_pro_only(self):
         async def free_limits(_user, _session):
             return "free", FILECLEANER_LIMITS["free"]
@@ -401,6 +451,8 @@ class FileCleanerFrontendContractTests(unittest.TestCase):
             "Clean image or PDF",
         ]:
             self.assertIn(term, page)
+        self.assertIn("Confirm delete", page)
+        self.assertIn("needs_review_files", page)
 
     def test_cli_exposes_api_commands_for_pipeline_workflow(self):
         cli = (ROOT / "apps" / "filecleaner" / "cli" / "filecleaner.py").read_text(encoding="utf-8")

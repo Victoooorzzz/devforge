@@ -148,19 +148,37 @@ export function SubscriptionPanel({ profile, trialDaysLeft, onManage, busy = fal
 
 export function getSettingsErrorMessage(error: unknown, fallback: string) {
   const maybe = error as {
-    detail?: string;
-    response?: { data?: { detail?: string } | string };
+    detail?: unknown;
+    response?: { data?: { detail?: unknown } | string };
     message?: string;
   };
   const responseData = maybe.response?.data;
+
+  const normalizeDetail = (detail: unknown): string | null => {
+    if (typeof detail === "string" && detail.trim()) return detail;
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((item) => {
+          if (item && typeof item === "object" && "msg" in item && typeof item.msg === "string") {
+            return item.msg;
+          }
+          return typeof item === "string" ? item : JSON.stringify(item);
+        })
+        .filter(Boolean);
+      return messages.length ? messages.join("; ") : null;
+    }
+    if (detail && typeof detail === "object") return JSON.stringify(detail);
+    return null;
+  };
 
   if (typeof responseData === "string" && responseData) {
     return responseData;
   }
 
-  if (responseData && typeof responseData === "object" && responseData.detail) {
-    return responseData.detail;
+  if (responseData && typeof responseData === "object") {
+    const detail = normalizeDetail(responseData.detail);
+    if (detail) return detail;
   }
 
-  return maybe.detail || maybe.message || fallback;
+  return normalizeDetail(maybe.detail) || maybe.message || fallback;
 }

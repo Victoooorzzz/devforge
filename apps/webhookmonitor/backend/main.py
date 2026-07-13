@@ -1482,11 +1482,27 @@ async def delete_endpoint(
     if not endpoint:
         raise HTTPException(status_code=404, detail="Endpoint not found")
 
-    endpoint.is_active = False
-    session.add(endpoint)
+    await _record_audit_event(session, user.id, "endpoint_deleted", "endpoint", endpoint_id)
+    await session.execute(
+        delete(WebhookEventIdempotency).where(
+            WebhookEventIdempotency.user_id == user.id,
+            WebhookEventIdempotency.endpoint_id == endpoint_id,
+        )
+    )
+    await session.execute(
+        delete(WebhookRequest).where(
+            WebhookRequest.user_id == user.id,
+            WebhookRequest.endpoint_id == endpoint_id,
+        )
+    )
+    await session.execute(
+        delete(WebhookEndpoint).where(
+            WebhookEndpoint.id == endpoint_id,
+            WebhookEndpoint.user_id == user.id,
+        )
+    )
     await session.flush()
-    await _record_audit_event(session, user.id, "endpoint_soft_deleted", "endpoint", endpoint_id)
-    return {"status": "soft_deleted", "endpoint_id": endpoint_id}
+    return {"status": "deleted", "endpoint_id": endpoint_id}
 
 
 @webhook_router.get("/endpoints/{endpoint_id}/events")
@@ -1962,6 +1978,30 @@ async def _replay_event_impl(
             )
     except httpx.RequestError as exc:
         forward_error = _safe_forward_error(exc)
+
+    is_internal_capture_replay = (
+        body.mode == "exact"
+        and target_url.startswith(f"{WEBHOOK_PUBLIC_BASE_URL}/in/")
+    )
+    if is_internal_capture_replay and replay_status == "success":
+        try:
+            capture_result = json.loads(getattr(response, "text", "") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            capture_result = {}
+        captured_request_id = capture_result.get("request_id")
+        return {
+            "status": replay_status,
+            "event": {
+                "id": captured_request_id,
+                "replay_of_request_id": request.id,
+                "replay_target_url": target_url,
+                "replay_status": replay_status,
+            },
+            "target_url": target_url,
+            "response_status": status_code,
+            "error": forward_error,
+            "response_body": _safe_forward_error(getattr(response, "text", "")),
+        }
 
     replay_request = WebhookRequest(
         endpoint_id=request.endpoint_id,

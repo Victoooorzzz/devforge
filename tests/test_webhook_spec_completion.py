@@ -351,6 +351,29 @@ class WebhookEndpointAndMetadataSpecTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(session.deleted_queries, [])
 
+    def test_delete_endpoint_removes_owned_endpoint_events_and_idempotency_rows(self):
+        endpoint = webhook_main.WebhookEndpoint(id=99, user_id=42, slug="abc", name="QA")
+        session = _FakeSession([[endpoint]])
+
+        response = _client(session).delete("/webhooks/endpoints/99")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "deleted")
+        deleted_sql = "\n".join(str(query) for query in session.deleted_queries)
+        self.assertIn("webhook_event_idempotency", deleted_sql)
+        self.assertIn("webhook_requests", deleted_sql)
+        self.assertIn("webhook_endpoints", deleted_sql)
+
+    def test_clear_history_requires_confirmation_and_deletes_owned_requests(self):
+        missing = _client(_FakeSession()).delete("/webhooks/requests")
+        self.assertEqual(missing.status_code, 422)
+
+        session = _FakeSession()
+        confirmed = _client(session).delete("/webhooks/requests?confirm=CONFIRM")
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(len(session.deleted_queries), 1)
+        self.assertIn("webhook_requests.user_id", str(session.deleted_queries[0]))
+
     def test_ingestion_enforces_database_backed_per_ip_rate_limit(self):
         endpoint = webhook_main.WebhookEndpoint(id=99, user_id=42, slug="abc", name="Default")
         session = _FakeSession([
@@ -459,15 +482,15 @@ class WebhookEndpointAndMetadataSpecTests(unittest.TestCase):
         self.assertEqual(job.job_type, "scheduled_webhook_export")
         self.assertEqual(job.payload["format"], "json")
 
-    def test_soft_delete_deactivates_endpoint_without_deleting_logs(self):
+    def test_delete_endpoint_removes_endpoint_and_logs(self):
         endpoint = webhook_main.WebhookEndpoint(id=99, user_id=42, slug="abc", name="Default")
         session = _FakeSession([[endpoint]])
 
         response = _client(session).delete("/webhooks/endpoints/99")
 
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(endpoint.is_active)
-        self.assertEqual(session.deleted_queries, [])
+        self.assertEqual(response.json()["status"], "deleted")
+        self.assertEqual(len(session.deleted_queries), 3)
 
     def test_v1_aliases_cover_ingestion_and_authenticated_webhook_routes(self):
         paths = {route.path for route in webhook_main.app.routes}
@@ -648,6 +671,31 @@ class WebhookReplaySearchSpecTests(unittest.TestCase):
         self.assertEqual(replay.replay_of_request_id, 7)
         self.assertEqual(replay.replay_target_url, "https://example.com/webhook")
         self.assertEqual(replay.replay_status, "success")
+
+    def test_exact_replay_to_capture_url_does_not_persist_a_second_duplicate_row(self):
+        original = _request(7, path="/in/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        session = _FakeSession([[original]])
+
+        class FakeAsyncClient:
+            def __init__(self, timeout=None):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def request(self, **kwargs):
+                return SimpleNamespace(status_code=200, text='{"status":"received","request_id":88}')
+
+        with patch.object(webhook_main.httpx, "AsyncClient", FakeAsyncClient):
+            response = _client(session).post("/webhooks/events/7/replay", json={"mode": "exact"})
+
+        self.assertEqual(response.status_code, 200)
+        replay_rows = [item for item in session.added if isinstance(item, webhook_main.WebhookRequest)]
+        self.assertEqual(replay_rows, [])
+        self.assertEqual(response.json()["event"]["id"], 88)
 
     def test_search_filters_json_path_status_method_provider_and_date(self):
         matching = _request(8, last_retry_status=202, signature_provider="stripe")

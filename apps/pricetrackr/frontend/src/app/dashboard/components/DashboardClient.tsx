@@ -156,8 +156,23 @@ export default function DashboardClient({
     });
   };
 
+  const handleAlertThresholdChange = (id: number, value: string) => {
+    setAlertConfigs((prev) => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] || { open: true, saving: false, testing: false, saved: false }),
+        threshold: value,
+        open: true,
+      },
+    }));
+  };
+
   const handleSaveAlert = async (id: number, thresholdStr: string) => {
-    if (!thresholdStr) return;
+    const threshold = Number(thresholdStr);
+    if (!Number.isFinite(threshold) || threshold <= 0) {
+      showToast({ tone: "error", message: "Enter a price threshold greater than zero." });
+      return;
+    }
 
     setAlertConfigs((prev) => ({
       ...prev,
@@ -166,7 +181,7 @@ export default function DashboardClient({
 
     try {
       await apiClient.patch(`/trackers/${id}/alert-threshold`, {
-        alert_threshold: parseFloat(thresholdStr),
+        alert_threshold: threshold,
         alert_email: userEmail,
       });
 
@@ -400,6 +415,7 @@ export default function DashboardClient({
                 onDelete={handleDelete}
                 alertConfigs={alertConfigs}
                 onToggleAlertPanel={handleToggleAlertPanel}
+                onThresholdChange={handleAlertThresholdChange}
                 onSaveAlert={handleSaveAlert}
                 onTestAlert={handleTestAlert}
                 deletingIds={deletingIds}

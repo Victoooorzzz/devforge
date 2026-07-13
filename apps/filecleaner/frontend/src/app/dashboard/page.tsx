@@ -89,6 +89,15 @@ interface FileSummary {
   error_files: number;
   rows_saved: number;
   quality_actions: number;
+  needs_review_files: number;
+}
+
+interface DeepCleanReportSummary {
+  rows_original: number;
+  rows_clean: number;
+  fixes: number;
+  warnings: number;
+  errors: number;
 }
 
 type ExportFormat = "csv" | "xlsx" | "json";
@@ -170,6 +179,8 @@ export default function DashboardPage() {
   const [utilityQuality, setUtilityQuality] = useState(82);
   const [utilityLoading, setUtilityLoading] = useState(false);
   const [utilityMessage, setUtilityMessage] = useState<string | null>(null);
+  const [deepCleanLoading, setDeepCleanLoading] = useState(false);
+  const [deepCleanMessage, setDeepCleanMessage] = useState<string | null>(null);
   const [profilePanel, setProfilePanel] = useState<FileProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -277,6 +288,8 @@ export default function DashboardPage() {
     try {
       await apiClient.delete(`/files/${fileId}`);
       setFiles(prev => prev.filter(f => f.id !== fileId));
+      setTotalFiles(prev => Math.max(0, prev - 1));
+      void refreshDashboard(page);
       showToast({ tone: "success", message: "Your file was deleted." });
     } catch {
       showToast({ tone: "error", message: "We could not delete your file. Retry in a moment." });
@@ -469,6 +482,38 @@ export default function DashboardPage() {
     input.click();
   };
 
+  const handleDeepCleanFile = async (fileInput: File) => {
+    setDeepCleanLoading(true);
+    setDeepCleanMessage(null);
+    trackEvent("feature_used", { feature_name: "filecleaner_deep_clean" });
+    try {
+      const formData = new FormData();
+      formData.append("file", fileInput);
+      const { filename, metadata } = await uploadAndDownloadFile("/files/deep-clean", formData, `deep-cleaned-${fileInput.name}`);
+      const report = metadata as DeepCleanReportSummary | undefined;
+      const reportText = report
+        ? `${report.rows_original} to ${report.rows_clean} rows; ${report.fixes} fixes, ${report.warnings} warnings, ${report.errors} errors.`
+        : "Report metadata unavailable.";
+      setDeepCleanMessage(`Downloaded ${filename}. ${reportText}`);
+      showToast({ tone: report && (report.warnings || report.errors) ? "info" : "success", message: `Deep clean downloaded as ${filename}. ${reportText}` });
+    } catch (e: any) {
+      showToast({ tone: "error", message: e.detail || e.message || "Deep clean is available for Pro users with CSV, JSON, XLSX, or XLS files." });
+    } finally {
+      setDeepCleanLoading(false);
+    }
+  };
+
+  const openDeepClean = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,.json,.xlsx,.xls";
+    input.onchange = e => {
+      const f = (e.target as HTMLInputElement).files?.[0];
+      if (f) handleDeepCleanFile(f);
+    };
+    input.click();
+  };
+
   const statusIcon = (status: string) => {
     if (status === "pending" || status === "queued") return <Clock className="text-amber-500" size={16} />;
     if (status === "processing") return <RefreshCw className="animate-spin text-indigo-500" size={16} />;
@@ -527,6 +572,18 @@ export default function DashboardPage() {
           >
             {utilityLoading ? <InlineSpinner /> : <ImageIcon size={14} />}
             <span>{utilityLoading ? "Cleaning file" : "Clean image or PDF"}</span>
+          </button>
+
+          <button
+            onClick={openDeepClean}
+            disabled={deepCleanLoading}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all"
+            style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)", border: "1px solid var(--color-border)", opacity: deepCleanLoading ? 0.7 : 1 }}
+            title="Deep clean business datasets with semantic rules. Pro plan required."
+          >
+            {deepCleanLoading ? <InlineSpinner /> : <Sparkles size={14} />}
+            <span>{deepCleanLoading ? "Deep cleaning" : "Deep clean"}</span>
+            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-500">Pro</span>
           </button>
 
           {/* Export Dropdown */}
@@ -601,7 +658,7 @@ export default function DashboardPage() {
             { label: "Files ready", value: summary.completed_files.toLocaleString(), tone: "text-emerald-500" },
             { label: "Rows cleaned", value: summary.rows_saved.toLocaleString(), tone: "text-[var(--color-primary)]" },
             { label: "Cleanup actions", value: summary.quality_actions.toLocaleString(), tone: "text-sky-400" },
-            { label: "Files needing review", value: summary.error_files.toLocaleString(), tone: summary.error_files ? "text-red-500" : "text-emerald-500" },
+            { label: "Files needing review", value: summary.needs_review_files.toLocaleString(), tone: summary.needs_review_files ? "text-red-500" : "text-emerald-500" },
           ].map(stat => (
             <div key={stat.label} className="p-4 rounded-xl" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
               <p className="text-[10px] uppercase font-bold tracking-wider opacity-50 mb-1">{stat.label}</p>
@@ -770,6 +827,24 @@ export default function DashboardPage() {
           )}
         </div>
       )}
+
+      <div className="mb-8 p-4 rounded-xl flex flex-col md:flex-row md:items-center md:justify-between gap-4"
+        style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+        <div className="min-w-0">
+          <div className="mb-1 flex items-center gap-2">
+            <p className="text-xs font-bold uppercase tracking-wider opacity-50">Deep clean</p>
+            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-500">Pro</span>
+          </div>
+          <p className="text-sm opacity-70">
+            Semantic cleanup for business datasets: emails, phones, currency, dates, countries, documents, credit scores, and cross-date consistency.
+          </p>
+          {deepCleanMessage && <p className="text-xs text-emerald-500 mt-2">{deepCleanMessage}</p>}
+        </div>
+        <button onClick={openDeepClean} disabled={deepCleanLoading} className="btn-primary flex shrink-0 items-center justify-center gap-2">
+          {deepCleanLoading ? <InlineSpinner /> : <Sparkles size={14} />}
+          {deepCleanLoading ? "Deep cleaning" : "Run deep clean"}
+        </button>
+      </div>
 
       <div className="mb-8 p-4 rounded-xl flex flex-col md:flex-row md:items-end gap-4"
         style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
@@ -961,9 +1036,11 @@ export default function DashboardPage() {
                     )}
                     <button
                       onClick={e => { e.stopPropagation(); handleDelete(file.id); }}
-                      className="p-2 rounded-lg hover:bg-red-500/10 text-red-500/60 hover:text-red-500 transition-colors"
+                      aria-label={deleteConfirmId === file.id ? "Confirm delete" : "Delete file"}
+                      className={`flex items-center gap-1 rounded-lg p-2 transition-colors ${deleteConfirmId === file.id ? "bg-red-500 text-white" : "text-red-500/60 hover:bg-red-500/10 hover:text-red-500"}`}
                     >
                       <Trash2 size={18} />
+                      {deleteConfirmId === file.id ? <span className="text-[10px] font-bold">Confirm delete</span> : null}
                     </button>
                     {file.report && (isExpanded ? <ChevronUp size={20} className="opacity-30" /> : <ChevronDown size={20} className="opacity-30" />)}
                   </div>

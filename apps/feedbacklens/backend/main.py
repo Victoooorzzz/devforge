@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import Column, DateTime, func, Index, or_, text as sa_text, tuple_
+from sqlalchemy import Column, DateTime, func, Index, or_, text as sa_text, tuple_, delete
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Field, SQLModel, select
 from pydantic import BaseModel, ConfigDict, EmailStr, Field as PydanticField, TypeAdapter, ValidationError
@@ -1835,7 +1835,7 @@ def _serialize_source(source: FeedbackSource) -> dict:
 async def list_sources(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     result = await session.execute(
         select(FeedbackSource)
-        .where(FeedbackSource.user_id == user.id)
+        .where(FeedbackSource.user_id == user.id, FeedbackSource.status != "deleted")
         .order_by(FeedbackSource.created_at.desc())
     )
     return [_serialize_source(source) for source in result.scalars().all()]
@@ -2066,7 +2066,9 @@ async def ingest_github_issue_webhook(
     source_id: int = Query(...),
     session: AsyncSession = Depends(get_session),
 ):
-    source_result = await session.execute(select(FeedbackSource).where(FeedbackSource.id == source_id))
+    source_result = await session.execute(
+        select(FeedbackSource).where(FeedbackSource.id == source_id, FeedbackSource.status != "deleted")
+    )
     source = source_result.scalar_one_or_none()
     if not source or source.source_type != "github":
         raise HTTPException(status_code=404, detail="GitHub source not found")
@@ -2172,6 +2174,24 @@ async def get_dedupe_summary(user: User = Depends(get_current_user), session: As
         .limit(DEDUPE_LOOKBACK_LIMIT)
     )
     return _build_dedupe_summary(list(result.scalars().all()))
+
+
+@feedback_router.delete("/{entry_id}")
+async def delete_feedback(
+    entry_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        select(FeedbackEntry).where(FeedbackEntry.id == entry_id, FeedbackEntry.user_id == user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    await session.execute(
+        delete(FeedbackEntry).where(FeedbackEntry.id == entry_id, FeedbackEntry.user_id == user.id)
+    )
+    await session.commit()
+    return {"status": "deleted", "feedback_id": entry_id}
 
 
 @clusters_router.get("")
@@ -2531,14 +2551,7 @@ async def analyze_feedback(entry_id: int, user: User = Depends(get_current_user)
 
     prefs_result = await session.execute(select(FeedbackSettings).where(FeedbackSettings.user_id == user.id))
     prefs = prefs_result.scalar_one_or_none()
-    analysis = await _analyze_feedback_locally_async(entry.text, getattr(prefs, "custom_prompt", ""))
-
-    entry.sentiment = analysis["sentiment"]
-    entry.confidence = analysis["confidence"]
-    entry.themes_json = json.dumps(analysis["themes"])
-    entry.is_urgent = analysis["is_urgent"]
-    entry.draft_reply = analysis.get("draft_reply")
-    entry.analysis_engine = analysis["engine"]
+    await _apply_local_processing_async(entry, getattr(prefs, "custom_prompt", ""))
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
@@ -2566,14 +2579,7 @@ async def process_feedback_analysis(payload: dict):
         prefs = s_res.scalar_one_or_none()
         custom_prompt = getattr(prefs, "custom_prompt", "")
 
-        analysis = await _analyze_feedback_locally_async(entry.text, custom_prompt)
-
-        entry.sentiment = analysis["sentiment"]
-        entry.confidence = analysis["confidence"]
-        entry.themes_json = json.dumps(analysis["themes"])
-        entry.is_urgent = analysis["is_urgent"]
-        entry.draft_reply = analysis.get("draft_reply")
-        entry.analysis_engine = analysis["engine"]
+        analysis = await _apply_local_processing_async(entry, custom_prompt)
 
         session.add(entry)
         await session.commit()

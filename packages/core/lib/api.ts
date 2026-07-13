@@ -154,7 +154,7 @@ export async function uploadAndDownloadFile(
   path: string,
   formData: FormData,
   fallbackFilename: string
-): Promise<{ filename: string }> {
+): Promise<{ filename: string; metadata?: unknown }> {
   const response = await fetch(getApiUrl(path), {
     method: "POST",
     headers: authHeaders(),
@@ -179,6 +179,15 @@ export async function uploadAndDownloadFile(
   }
 
   const filename = filenameFromDisposition(response.headers.get("Content-Disposition"), fallbackFilename);
+  const metadataHeader = response.headers.get("X-DevForge-Deep-Clean-Report");
+  let metadata: unknown;
+  if (metadataHeader) {
+    try {
+      metadata = JSON.parse(metadataHeader);
+    } catch {
+      metadata = undefined;
+    }
+  }
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -186,5 +195,5 @@ export async function uploadAndDownloadFile(
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
-  return { filename };
+  return { filename, metadata };
 }

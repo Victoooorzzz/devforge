@@ -13,7 +13,7 @@ import {
 } from "@devforge/ui";
 import { 
   Sparkles, MessageSquare, Download, Upload, ChevronDown,
-  Copy, Check, X, FileText, AlertCircle, Loader2
+  Copy, Check, X, FileText, AlertCircle, Loader2, Trash2, Plus
 } from "lucide-react";
 
 const dashboardProduct = getProduct("feedbacklens");
@@ -31,6 +31,26 @@ const sampleFeedback = [
   "Love the weekly digest, but I need one-click reply drafts for angry customers.",
   "Pricing is fair, yet duplicate requests make our roadmap meeting noisy.",
 ];
+
+const FEEDBACK_ACTION_TIMEOUT_MS = 20000;
+
+async function runFeedbackActionWithTimeout<T>(
+  actionName: string,
+  action: (controller: AbortController) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), FEEDBACK_ACTION_TIMEOUT_MS);
+  try {
+    return await action(controller);
+  } catch (error: any) {
+    if (controller.signal.aborted || error?.name === "AbortError") {
+      throw new Error(`${actionName} took too long. Please retry in a moment.`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 interface FeedbackEntry {
   id: number;
@@ -91,7 +111,7 @@ interface FeedbackSource {
   source_type: string;
   display_name: string;
   status: string;
-  poll_frequency_hours: number;
+  poll_frequency_hours: number | null;
   last_polled_at?: string | null;
   forward_address?: string;
   webhook_path?: string;
@@ -150,6 +170,12 @@ export default function DashboardPage() {
   const [clusters, setClusters]     = useState<FeedbackCluster[]>([]);
   const [digest, setDigest]         = useState<DigestPayload | null>(null);
   const [githubIssueClusterId, setGithubIssueClusterId] = useState<string | null>(null);
+  const [managingSources, setManagingSources] = useState(false);
+  const [sourceForm, setSourceForm] = useState({ source_type: "email", display_name: "" });
+  const [savingSource, setSavingSource] = useState(false);
+  const [deletingSourceId, setDeletingSourceId] = useState<number | null>(null);
+  const [feedbackDeleteConfirmId, setFeedbackDeleteConfirmId] = useState<number | null>(null);
+  const [deletingFeedbackIds, setDeletingFeedbackIds] = useState<Set<number>>(new Set());
   const [loading, setLoading]         = useState(true);
   const [loadError, setLoadError]     = useState(false);
   const [toast, setToast]             = useState<DashboardToast | null>(null);
@@ -188,6 +214,19 @@ export default function DashboardPage() {
     setLoading(false);
   }, []);
 
+  const refreshDerivedInsights = useCallback(async () => {
+    const [summaryResult, dedupeResult, clustersResult, digestResult] = await Promise.allSettled([
+      apiClient.get<WeeklySummary>("/feedback/summary/weekly"),
+      apiClient.get<DedupeSummary>("/feedback/dedupe/summary"),
+      apiClient.get<ClusterResponse>("/clusters?days=30"),
+      apiClient.get<DigestPayload>("/digest?days=7"),
+    ]);
+    if (summaryResult.status === "fulfilled") setWeeklySummary(summaryResult.value.data);
+    if (dedupeResult.status === "fulfilled") setDedupeSummary(dedupeResult.value.data);
+    if (clustersResult.status === "fulfilled") setClusters(clustersResult.value.data.clusters);
+    if (digestResult.status === "fulfilled") setDigest(digestResult.value.data);
+  }, []);
+
   useEffect(() => {
     refreshFeedback();
   }, [refreshFeedback]);
@@ -207,7 +246,9 @@ export default function DashboardPage() {
     setSubmitting(true);
     trackEvent("feature_used", { feature_name: "add_feedback" });
     try {
-      const { data } = await apiClient.post<FeedbackEntry>("/feedback", { text });
+      const { data } = await runFeedbackActionWithTimeout("Saving and reviewing feedback", (controller) =>
+        apiClient.post<FeedbackEntry>("/feedback", { text }, { signal: controller.signal })
+      );
       setText("");
       if (data.deduped) {
         setEntries(prev => prev.some(entry => entry.id === data.duplicate_of_id) ? prev : [data, ...prev]);
@@ -218,8 +259,8 @@ export default function DashboardPage() {
         showToast({ tone: "success", message: "Feedback saved. We are finding what your user is saying." });
         handleAnalyze(data.id);
       }
-    } catch {
-      showToast({ tone: "error", message: "We could not save that feedback. Check the text and try again." });
+    } catch (error: any) {
+      showToast({ tone: "error", message: error.message || "We could not save that feedback. Check the text and try again." });
     }
     finally { setSubmitting(false); }
   };
@@ -228,26 +269,81 @@ export default function DashboardPage() {
     setAnalyzing(prev => new Set(prev).add(id));
     trackEvent("feature_used", { feature_name: "analyze_feedback" });
     try {
-      const { data } = await apiClient.post<FeedbackEntry>(`/feedback/${id}/analyze`);
+      const { data } = await runFeedbackActionWithTimeout("Reviewing feedback", (controller) =>
+        apiClient.post<FeedbackEntry>(`/feedback/${id}/analyze`, undefined, { signal: controller.signal })
+      );
       setEntries(prev => prev.map(e => e.id === id ? data : e));
       if (selected?.id === id) setSelected(data);
+      await refreshDerivedInsights();
       showToast({ tone: "success", message: "Feedback reviewed. Themes and urgency are updated." });
-    } catch {
-      showToast({ tone: "error", message: "We could not review this feedback. Retry from the row." });
+    } catch (error: any) {
+      showToast({ tone: "error", message: error.message || "We could not review this feedback. Retry from the row." });
     }
     finally { setAnalyzing(prev => { const s = new Set(prev); s.delete(id); return s; }); }
+  };
+
+  const handleDeleteFeedback = async (entry: FeedbackEntry) => {
+    if (feedbackDeleteConfirmId !== entry.id) {
+      setFeedbackDeleteConfirmId(entry.id);
+      showToast({ tone: "info", message: "Click Delete again to permanently remove this feedback." });
+      window.setTimeout(() => setFeedbackDeleteConfirmId(current => current === entry.id ? null : current), 5000);
+      return;
+    }
+    setFeedbackDeleteConfirmId(null);
+    setDeletingFeedbackIds(prev => new Set(prev).add(entry.id));
+    try {
+      await apiClient.delete(`/feedback/${entry.id}`);
+      setEntries(prev => prev.filter(item => item.id !== entry.id));
+      if (selected?.id === entry.id) setSelected(null);
+      await refreshDerivedInsights();
+      showToast({ tone: "success", message: "Feedback permanently deleted." });
+    } catch {
+      showToast({ tone: "error", message: "Feedback could not be deleted." });
+    } finally {
+      setDeletingFeedbackIds(prev => { const next = new Set(prev); next.delete(entry.id); return next; });
+    }
+  };
+
+  const handleCreateSource = async () => {
+    if (!sourceForm.display_name.trim()) return;
+    setSavingSource(true);
+    try {
+      const { data } = await apiClient.post<FeedbackSource>("/sources", sourceForm);
+      setSources(prev => [data, ...prev]);
+      setSourceForm(current => ({ ...current, display_name: "" }));
+      showToast({ tone: "success", message: `${data.display_name} source added.` });
+    } catch {
+      showToast({ tone: "error", message: "Source could not be added. Check your plan limit." });
+    } finally {
+      setSavingSource(false);
+    }
+  };
+
+  const handleDeleteSource = async (source: FeedbackSource) => {
+    setDeletingSourceId(source.id);
+    try {
+      await apiClient.delete(`/sources/${source.id}`);
+      setSources(prev => prev.filter(item => item.id !== source.id));
+      showToast({ tone: "success", message: `${source.display_name} removed and quota released.` });
+    } catch {
+      showToast({ tone: "error", message: "Source could not be removed." });
+    } finally {
+      setDeletingSourceId(null);
+    }
   };
 
   const handleDraftReply = async (id: number) => {
     setDraftingIds(prev => new Set(prev).add(id));
     trackEvent("feature_used", { feature_name: "draft_reply" });
     try {
-      const { data } = await apiClient.post<FeedbackEntry>(`/feedback/${id}/draft-reply`);
+      const { data } = await runFeedbackActionWithTimeout("Writing reply draft", (controller) =>
+        apiClient.post<FeedbackEntry>(`/feedback/${id}/draft-reply`, undefined, { signal: controller.signal })
+      );
       setEntries(prev => prev.map(e => e.id === id ? data : e));
       if (selected?.id === id) setSelected(data);
       showToast({ tone: "success", message: "Reply draft is ready." });
-    } catch {
-      showToast({ tone: "error", message: "We could not write a reply draft. Retry from the feedback row." });
+    } catch (error: any) {
+      showToast({ tone: "error", message: error.message || "We could not write a reply draft. Retry from the feedback row." });
     }
     finally { setDraftingIds(prev => { const s = new Set(prev); s.delete(id); return s; }); }
   };
@@ -302,6 +398,7 @@ export default function DashboardPage() {
       // Reload entries
       const { data: newEntries } = await apiClient.get<FeedbackEntry[]>("/feedback/list");
       setEntries(newEntries);
+      await refreshDerivedInsights();
       showToast({ tone: "success", message: `${data.created} feedback items imported. ${data.duplicates_skipped} duplicates skipped.` });
     } catch {
       showToast({ tone: "error", message: "We could not import those feedback items. Keep one item per line and try again." });
@@ -319,6 +416,7 @@ export default function DashboardPage() {
       setBulkResult(data);
       const { data: newEntries } = await apiClient.get<FeedbackEntry[]>("/feedback/list");
       setEntries(newEntries);
+      await refreshDerivedInsights();
       showToast({ tone: "success", message: `${data.created} feedback items imported from CSV. ${data.duplicates_skipped} duplicates skipped.` });
     } catch {
       showToast({ tone: "error", message: "We could not read that CSV. Check that it has a text column." });
@@ -514,8 +612,41 @@ export default function DashboardPage() {
                 <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--color-text-secondary)" }}>Sources</p>
                 <p className="text-sm" style={{ color: "var(--color-text)" }}>{sources.length} connected or staged channels</p>
               </div>
-              <a href="/dashboard/settings" className="text-xs font-bold text-[var(--color-accent)]">Manage</a>
+              <button type="button" onClick={() => setManagingSources(value => !value)} className="text-xs font-bold text-[var(--color-accent)]">
+                {managingSources ? "Done" : "Manage"}
+              </button>
             </div>
+            {managingSources ? (
+              <div className="mb-3 space-y-2 rounded-lg p-3" style={{ backgroundColor: "var(--color-surface-high)" }}>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[110px_1fr_auto]">
+                  <select
+                    value={sourceForm.source_type}
+                    onChange={event => setSourceForm(current => ({ ...current, source_type: event.target.value }))}
+                    className="input-field px-2 py-1.5 text-xs"
+                  >
+                    <option value="email">Email</option>
+                    <option value="canny">Canny</option>
+                    <option value="manual">Manual</option>
+                    <option value="github">GitHub</option>
+                    <option value="reddit">Reddit</option>
+                    <option value="twitter">X/Twitter</option>
+                  </select>
+                  <input
+                    value={sourceForm.display_name}
+                    onChange={event => setSourceForm(current => ({ ...current, display_name: event.target.value }))}
+                    className="input-field px-2 py-1.5 text-xs"
+                    placeholder="Source name"
+                  />
+                  <button type="button" onClick={handleCreateSource} disabled={savingSource || !sourceForm.display_name.trim()} className="btn-primary flex items-center justify-center gap-1 px-3 py-1.5 text-xs">
+                    {savingSource ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                    Add
+                  </button>
+                </div>
+                <p className="text-[10px]" style={{ color: "var(--color-text-secondary)" }}>
+                  Email, Canny, and Manual work immediately. OAuth sources are staged until authorization is completed.
+                </p>
+              </div>
+            ) : null}
             <div className="space-y-2">
               {sources.length === 0 ? (
                 <div className="grid grid-cols-1 gap-2">
@@ -534,9 +665,16 @@ export default function DashboardPage() {
                       {source.source_type} · every {source.poll_frequency_hours}h
                     </p>
                   </div>
-                  <span className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${source.status === "connected" ? "text-emerald-500 bg-emerald-500/10" : "text-amber-500 bg-amber-500/10"}`}>
-                    {source.status}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${source.status === "connected" ? "text-emerald-500 bg-emerald-500/10" : "text-amber-500 bg-amber-500/10"}`}>
+                      {source.status}
+                    </span>
+                    {managingSources ? (
+                      <button type="button" onClick={() => handleDeleteSource(source)} disabled={deletingSourceId === source.id} aria-label={`Delete ${source.display_name}`} className="rounded p-1 text-red-500 hover:bg-red-500/10">
+                        {deletingSourceId === source.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>
@@ -748,6 +886,16 @@ export default function DashboardPage() {
                         {analyzing.has(entry.id) ? "Reviewing" : "Review"}
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); void handleDeleteFeedback(entry); }}
+                      disabled={deletingFeedbackIds.has(entry.id)}
+                      aria-label={`Delete feedback ${entry.id}`}
+                      className="text-xs px-2 py-1 rounded flex items-center gap-1 text-red-500 transition-colors hover:bg-red-500/10 disabled:opacity-60"
+                    >
+                      {deletingFeedbackIds.has(entry.id) ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
+                      {feedbackDeleteConfirmId === entry.id ? "Confirm delete" : "Delete"}
+                    </button>
                   </div>
                 </div>
                 {entry.themes && entry.themes.length > 0 && (

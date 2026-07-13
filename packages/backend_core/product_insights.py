@@ -58,6 +58,17 @@ def summarize_files(records: Iterable[Any]) -> dict[str, Any]:
     duplicates_removed = sum(int(_number(_get(item, "duplicates_removed"))) for item in completed)
     empty_removed = sum(int(_number(_get(item, "empty_removed"))) for item in completed)
     whitespace_fixed = sum(int(_number(_get(item, "whitespace_fixed"))) for item in completed)
+    review_completed = 0
+    for item in completed:
+        raw_report = _get(item, "report_json", "{}") or "{}"
+        try:
+            report = raw_report if isinstance(raw_report, dict) else json.loads(raw_report)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            report = {}
+        invalid_rows = int(_number(report.get("schema_validation", {}).get("invalid_rows")))
+        anomaly_flags = int(_number(report.get("anomaly_detection", {}).get("total_flags")))
+        if invalid_rows or anomaly_flags:
+            review_completed += 1
 
     return {
         "total_files": len(items),
@@ -68,6 +79,7 @@ def summarize_files(records: Iterable[Any]) -> dict[str, Any]:
         "empty_removed": empty_removed,
         "whitespace_fixed": whitespace_fixed,
         "quality_actions": duplicates_removed + empty_removed + whitespace_fixed,
+        "needs_review_files": len(errored) + review_completed,
     }
 
 

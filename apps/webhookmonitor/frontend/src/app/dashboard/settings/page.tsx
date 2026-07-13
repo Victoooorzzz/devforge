@@ -285,7 +285,7 @@ export default function SettingsPage() {
     trackEvent("webhook_history_cleared");
 
     try {
-      await apiClient.delete("/webhooks/requests");
+      await apiClient.delete("/webhooks/requests?confirm=CONFIRM");
       setConfirmClearHistory(false);
       setToast({ tone: "success", message: "Webhook request history cleared successfully." });
     } catch (error) {

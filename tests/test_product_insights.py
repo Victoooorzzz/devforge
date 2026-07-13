@@ -26,6 +26,7 @@ class ProductInsightsTests(unittest.TestCase):
                 "duplicates_removed": 10,
                 "empty_removed": 5,
                 "whitespace_fixed": 8,
+                "report_json": '{"schema_validation":{"invalid_rows":2},"anomaly_detection":{"total_flags":1}}',
             },
             {"status": "error", "rows_original": 0, "rows_clean": 0},
         ])
@@ -35,6 +36,7 @@ class ProductInsightsTests(unittest.TestCase):
         self.assertEqual(summary["error_files"], 1)
         self.assertEqual(summary["rows_saved"], 20)
         self.assertEqual(summary["quality_actions"], 23)
+        self.assertEqual(summary["needs_review_files"], 2)
 
     def test_summarizes_invoice_cash_risk(self):
         today = date(2026, 6, 17)

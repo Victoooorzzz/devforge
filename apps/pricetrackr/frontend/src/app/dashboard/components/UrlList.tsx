@@ -11,6 +11,7 @@ interface UrlListProps {
   onDelete: (id: number) => Promise<void>;
   alertConfigs: Record<number, AlertConfig>;
   onToggleAlertPanel: (id: number) => void;
+  onThresholdChange: (id: number, value: string) => void;
   onSaveAlert: (id: number, threshold: string) => Promise<void>;
   onTestAlert: (id: number) => Promise<void>;
   deletingIds: Set<number>;
@@ -24,6 +25,7 @@ export default function UrlList({
   onDelete,
   alertConfigs,
   onToggleAlertPanel,
+  onThresholdChange,
   onSaveAlert,
   onTestAlert,
   deletingIds,
@@ -162,9 +164,10 @@ export default function UrlList({
                 <div className="flex flex-col">
                   <select
                     value={t.check_frequency_hours}
-                    onChange={(e) => onUpdateFrequency(t.id, parseInt(e.target.value))}
+                    onChange={(e) => onUpdateFrequency(t.id, parseFloat(e.target.value))}
                     className="text-xs bg-zinc-900 border border-white/5 rounded px-2 py-1 cursor-pointer font-medium text-zinc-400 focus:outline-none focus:border-indigo-500"
                   >
+                    <option value={1 / 6}>10m Interval</option>
                     <option value={1}>1h Interval</option>
                     <option value={6}>6h Interval</option>
                     <option value={12}>12h Interval</option>
@@ -229,20 +232,13 @@ export default function UrlList({
                         step="0.01"
                         placeholder={t.current_price ? (parseFloat(t.current_price as any) * 0.9).toFixed(2) : "0.00"}
                         value={alertCfg.threshold}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          onToggleAlertPanel(t.id); // Triggers state update
-                          // We pass the new value by executing onSaveAlert/onToggleAlertPanel state logic in DashboardClient
-                        }}
+                        onChange={(e) => onThresholdChange(t.id, e.target.value)}
                         className="input-field pl-5 py-1 text-xs w-28 font-mono"
                         id={`alert-threshold-input-${t.id}`}
                       />
                     </div>
                     <button
-                      onClick={() => {
-                        const inputEl = document.getElementById(`alert-threshold-input-${t.id}`) as HTMLInputElement;
-                        onSaveAlert(t.id, inputEl?.value || "");
-                      }}
+                      onClick={() => onSaveAlert(t.id, alertCfg.threshold)}
                       disabled={alertCfg.saving}
                       className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors"
                     >

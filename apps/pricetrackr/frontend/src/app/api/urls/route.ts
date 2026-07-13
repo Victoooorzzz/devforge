@@ -17,6 +17,7 @@ export async function GET(request: NextRequest) {
     const trackers = await sql`
       SELECT * FROM tracked_urls
       WHERE user_id = ${user.userId}
+        AND deleted_at IS NULL
       ORDER BY created_at DESC
     `;
 

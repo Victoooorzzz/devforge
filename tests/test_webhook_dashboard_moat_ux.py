@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD_PAGE = ROOT / "apps" / "webhookmonitor" / "frontend" / "src" / "app" / "dashboard" / "page.tsx"
 SETTINGS_PAGE = ROOT / "apps" / "webhookmonitor" / "frontend" / "src" / "app" / "dashboard" / "settings" / "page.tsx"
+SETTINGS_UX = ROOT / "packages" / "ui" / "components" / "SettingsUX.tsx"
 FEATURE_DOC = ROOT / "docs" / "features" / "webhookmonitor-event-export.md"
 SPEC_DOCS = [
     ROOT / "docs" / "features" / "webhookmonitor-replay-search-api.md",
@@ -57,6 +58,28 @@ class WebhookDashboardMoatUxTests(unittest.TestCase):
         self.assertIn("Fallback URL", source)
         self.assertIn("Slack Webhook URL", source)
         self.assertIn("Discord Webhook URL", source)
+
+    def test_clear_history_sends_the_backend_confirmation_contract(self):
+        dashboard = DASHBOARD_PAGE.read_text(encoding="utf-8")
+        settings = SETTINGS_PAGE.read_text(encoding="utf-8")
+
+        self.assertIn('/webhooks/requests?confirm=CONFIRM', dashboard)
+        self.assertIn('/webhooks/requests?confirm=CONFIRM', settings)
+
+    def test_dashboard_distinguishes_empty_history_from_empty_search_results(self):
+        source = DASHBOARD_PAGE.read_text(encoding="utf-8")
+
+        self.assertIn("hasActiveSearch", source)
+        self.assertIn("No deliveries match your search filters", source)
+        self.assertIn('if (logsResult.status === "fulfilled" && !hasServerSearch)', source)
+        self.assertIn("Clear search", source)
+        self.assertNotIn('data.total === 1 ? "" : "ies"', source)
+
+    def test_api_validation_details_are_normalized_before_rendering(self):
+        source = SETTINGS_UX.read_text(encoding="utf-8")
+
+        self.assertIn("Array.isArray(detail)", source)
+        self.assertIn("JSON.stringify(detail)", source)
 
     def test_feature_contract_doc_exists_for_frontend_implementation(self):
         self.assertTrue(FEATURE_DOC.exists())

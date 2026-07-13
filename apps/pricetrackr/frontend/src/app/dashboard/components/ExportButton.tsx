@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { apiClient } from "@devforge/core";
+import { apiClient, downloadFile } from "@devforge/core";
 import { Download, ChevronDown, Loader2, FileSpreadsheet, FileJson, AlertCircle, Check } from "lucide-react";
 
 type ExportFormat = "csv" | "xlsx" | "json";
@@ -91,8 +91,9 @@ export default function ExportButton({ showToast }: ExportButtonProps) {
     showToast({ tone: "info", message: `Preparing your ${format.toUpperCase()} export...` });
 
     try {
-      const { data } = await apiClient.post<ExportJobResponse>(`/trackers/export?format=${format}`);
-      setCurrentJob(data);
+      await downloadFile(`/trackers/export-file?format=${format}`, `pricetrackr-export.${format}`);
+      setExporting(false);
+      showToast({ tone: "success", message: `${format.toUpperCase()} export downloaded.` });
     } catch (err) {
       setExporting(false);
       showToast({ tone: "error", message: "Failed to initialize export job. Please retry." });

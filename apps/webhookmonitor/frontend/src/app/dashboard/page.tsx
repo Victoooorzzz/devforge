@@ -9,6 +9,7 @@ import {
   InlineErrorState,
   InlineSpinner,
   WelcomeSteps,
+  getSettingsErrorMessage,
   type DashboardToast,
 } from "@devforge/ui";
 import { 
@@ -154,6 +155,7 @@ export default function DashboardPage() {
   const [loadError, setLoadError]     = useState(false);
   const [toast, setToast]             = useState<DashboardToast | null>(null);
   const [clearConfirm, setClearConfirm] = useState(false);
+  const [hasServerSearch, setHasServerSearch] = useState(false);
   const intervalRef                   = useRef<NodeJS.Timeout | null>(null);
   const exportRef                     = useRef<HTMLDivElement>(null);
 
@@ -176,7 +178,7 @@ export default function DashboardPage() {
     if (configResult.status === "fulfilled") setEndpointUrl(configResult.value.data.endpoint_url);
     if (endpointResult.status === "fulfilled") setEndpoints(endpointResult.value.data);
     if (summaryResult.status === "fulfilled") setSummary(summaryResult.value.data);
-    if (logsResult.status === "fulfilled") setRequests(logsResult.value.data);
+    if (logsResult.status === "fulfilled" && !hasServerSearch) setRequests(logsResult.value.data);
     if (profileResult.status === "fulfilled") {
       const nextPlan = profileResult.value.data.plans_by_product?.webhookmonitor || "free";
       const nextLimit = profileResult.value.data.dashboard_limits_by_product?.webhookmonitor?.[nextPlan]?.max_endpoints;
@@ -192,7 +194,7 @@ export default function DashboardPage() {
       setLoadError(true);
     }
     if (showLoading) setLoading(false);
-  }, [logStatus]);
+  }, [logStatus, hasServerSearch]);
 
   useEffect(() => {
     refreshWebhooks();
@@ -232,7 +234,7 @@ export default function DashboardPage() {
     trackEvent("feature_used", { feature_name: "clear_webhook_history" });
     try {
       // DELETE /webhooks/requests
-      await apiClient.delete("/webhooks/requests");
+      await apiClient.delete("/webhooks/requests?confirm=CONFIRM");
       setRequests([]);
       setSelected(null);
       showToast({ tone: "success", message: "Your connection history was cleared." });
@@ -261,7 +263,7 @@ export default function DashboardPage() {
       setEndpointForm({ name: "", methods: "POST" });
       showToast({ tone: "success", message: "Endpoint created. Copy its URL into your provider." });
     } catch (error: any) {
-      showToast({ tone: "error", message: error.response?.data?.detail || "Endpoint could not be created." });
+      showToast({ tone: "error", message: getSettingsErrorMessage(error, "Endpoint could not be created.") });
     } finally {
       setCreatingEndpoint(false);
     }
@@ -306,7 +308,7 @@ export default function DashboardPage() {
       if (endpoint.endpoint_url === endpointUrl) setEndpointUrl("");
       showToast({ tone: "success", message: "Endpoint and its events were deleted." });
     } catch (error: any) {
-      showToast({ tone: "error", message: error.response?.data?.detail || "Endpoint could not be deleted." });
+      showToast({ tone: "error", message: getSettingsErrorMessage(error, "Endpoint could not be deleted.") });
     } finally {
       setDeletingEndpointId(null);
     }
@@ -325,7 +327,7 @@ export default function DashboardPage() {
       });
       showToast({ tone: "success", message: "Retry queued. We are sending this connection again." });
     } catch (err: any) {
-      showToast({ tone: "error", message: err.response?.data?.detail || "We could not retry this delivery. Check the payload and try again." });
+      showToast({ tone: "error", message: getSettingsErrorMessage(err, "We could not retry this delivery. Check the payload and try again.") });
     } finally {
       setIsRetrying(false);
     }
@@ -333,6 +335,7 @@ export default function DashboardPage() {
 
   const handleServerSearch = async () => {
     setIsSearching(true);
+    setHasServerSearch(true);
     trackEvent("feature_used", { feature_name: "webhook_search" });
     try {
       const { data } = await apiClient.post<{ total: number; items: WebhookRequest[] }>("/webhooks/search", {
@@ -347,12 +350,24 @@ export default function DashboardPage() {
       });
       setRequests(data.items);
       setSelected(data.items[0] || null);
-      showToast({ tone: "success", message: `Search returned ${data.total} delivery${data.total === 1 ? "" : "ies"}.` });
+      showToast({ tone: "success", message: `Search returned ${data.total === 1 ? "1 delivery" : `${data.total} deliveries`}.` });
     } catch (err: any) {
-      showToast({ tone: "error", message: err.response?.data?.detail || "We could not search deliveries." });
+      showToast({ tone: "error", message: getSettingsErrorMessage(err, "We could not search deliveries.") });
     } finally {
       setIsSearching(false);
     }
+  };
+
+  const clearServerSearch = () => {
+    setSearch("");
+    setJsonSearchPath("");
+    setJsonSearchEquals("");
+    setMethodFilter("");
+    setProviderFilter("");
+    setDateFrom("");
+    setDateTo("");
+    setLogStatus("all");
+    setHasServerSearch(false);
   };
 
   const handleReplay = async () => {
@@ -364,6 +379,14 @@ export default function DashboardPage() {
       } catch {
         showToast({ tone: "error", message: "Replay headers must be valid JSON." });
         return;
+      }
+      if (retryPayload.trim()) {
+        try {
+          JSON.parse(retryPayload);
+        } catch {
+          showToast({ tone: "error", message: "Replay payload must be valid JSON." });
+          return;
+        }
       }
     }
 
@@ -382,7 +405,7 @@ export default function DashboardPage() {
       });
       refreshWebhooks(false);
     } catch (err: any) {
-      showToast({ tone: "error", message: err.response?.data?.detail || "We could not replay this delivery." });
+      showToast({ tone: "error", message: getSettingsErrorMessage(err, "We could not replay this delivery.") });
     } finally {
       setIsReplaying(false);
     }
@@ -403,7 +426,7 @@ export default function DashboardPage() {
       setDiffResult(data);
       showToast({ tone: "success", message: "Delivery diff generated." });
     } catch (err: any) {
-      showToast({ tone: "error", message: err.response?.data?.detail || "We could not compare these deliveries." });
+      showToast({ tone: "error", message: getSettingsErrorMessage(err, "We could not compare these deliveries.") });
     } finally {
       setIsDiffing(false);
     }
@@ -432,7 +455,7 @@ export default function DashboardPage() {
         message: data.valid ? "Payload matches the schema." : "Schema validation found payload drift.",
       });
     } catch (err: any) {
-      showToast({ tone: "error", message: err.response?.data?.detail || "We could not validate this payload." });
+      showToast({ tone: "error", message: getSettingsErrorMessage(err, "We could not validate this payload.") });
     } finally {
       setIsValidatingSchema(false);
     }
@@ -492,6 +515,9 @@ export default function DashboardPage() {
       r.method.toLowerCase().includes(q)
     );
   });
+  const hasActiveSearch = hasServerSearch || Boolean(
+    search.trim() || jsonSearchPath.trim() || jsonSearchEquals.trim() || methodFilter || providerFilter || dateFrom || dateTo || logStatus !== "all"
+  );
 
   const formatTime = (iso: string) => {
     const d = new Date(iso);
@@ -680,7 +706,7 @@ export default function DashboardPage() {
 
       {loading && requests.length === 0 && <div className="px-4"><DashboardSkeleton rows={5} /></div>}
 
-      {!loading && !loadError && requests.length === 0 && (
+      {!loading && !loadError && requests.length === 0 && !hasActiveSearch && (
         <div className="px-4">
           <WelcomeSteps
             title="Send your first webhook"
@@ -827,6 +853,11 @@ export default function DashboardPage() {
             >
               {isSearching ? "Searching..." : "Run search"}
             </button>
+            {hasActiveSearch ? (
+              <button type="button" onClick={clearServerSearch} className="md:col-span-2 rounded-lg px-3 py-2 text-xs font-bold" style={{ backgroundColor: "var(--color-surface-high)", color: "var(--color-text-secondary)" }}>
+                Clear search
+              </button>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap gap-1 rounded-lg p-1 mb-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
@@ -854,7 +885,7 @@ export default function DashboardPage() {
               <div className="h-full flex flex-col items-center justify-center opacity-20 py-20">
                 <Activity size={48} className="mb-4" />
                 <p className="text-sm font-medium">
-                  {search ? "No deliveries match your search" : "Waiting for your first webhook..."}
+                  {hasActiveSearch ? "No deliveries match your search filters" : "Waiting for your first webhook..."}
                 </p>
               </div>
             ) : (

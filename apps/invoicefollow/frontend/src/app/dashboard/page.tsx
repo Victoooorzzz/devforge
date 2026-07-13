@@ -21,8 +21,10 @@ import {
   FileText,
   History,
   Pause,
+  Pencil,
   Play,
   Plus,
+  Trash2,
   Upload,
 } from "lucide-react";
 
@@ -170,6 +172,8 @@ export default function DashboardPage() {
   const [importing, setImporting] = useState(false);
   const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
   const [showForm, setShowForm] = useState(false);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [toast, setToast] = useState<DashboardToast | null>(null);
   const [form, setForm] = useState({
@@ -240,20 +244,64 @@ export default function DashboardPage() {
     setSaving(true);
     trackEvent("feature_used", { feature_name: "invoicefollow_manual_tracking_record" });
     try {
-      const { data } = await apiClient.post<Invoice>("/invoices", {
+      const payload = {
         ...form,
         amount: Number(form.amount),
         issued_date: form.issued_date || null,
-      });
-      setInvoices((current) => [data, ...current]);
+      };
+      const { data } = editingInvoiceId
+        ? await apiClient.put<Invoice>(`/invoices/${editingInvoiceId}`, payload)
+        : await apiClient.post<Invoice>("/invoices", payload);
+      setInvoices((current) => editingInvoiceId ? current.map(invoice => invoice.id === editingInvoiceId ? data : invoice) : [data, ...current]);
       setForm({ client_name: "", client_email: "", amount: "", currency: "USD", due_date: "", issued_date: "", invoice_number: "", notes: "" });
+      setEditingInvoiceId(null);
       setShowForm(false);
-      showToast({ tone: "success", message: "Existing invoice record is now tracked." });
+      showToast({ tone: "success", message: editingInvoiceId ? "Invoice record updated." : "Existing invoice record is now tracked." });
       refresh();
     } catch (error: any) {
       showToast({ tone: "error", message: error.detail || "We could not save this tracking record." });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const beginEdit = (invoice: Invoice) => {
+    setEditingInvoiceId(invoice.id);
+    setForm({
+      client_name: invoice.client_name,
+      client_email: invoice.client_email,
+      amount: String(invoice.amount),
+      currency: invoice.currency,
+      due_date: invoice.due_date,
+      issued_date: invoice.issued_date || "",
+      invoice_number: invoice.invoice_number || "",
+      notes: invoice.notes || "",
+    });
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const deleteInvoice = async (invoice: Invoice) => {
+    if (deleteConfirmId !== invoice.id) {
+      setDeleteConfirmId(invoice.id);
+      return;
+    }
+    setLoadingIds(current => new Set(current).add(invoice.id));
+    try {
+      await apiClient.delete(`/invoices/${invoice.id}`);
+      setInvoices(current => current.filter(item => item.id !== invoice.id));
+      if (selected?.id === invoice.id) setSelected(null);
+      setDeleteConfirmId(null);
+      showToast({ tone: "success", message: "Invoice record deleted." });
+      await refresh();
+    } catch {
+      showToast({ tone: "error", message: "Invoice could not be deleted." });
+    } finally {
+      setLoadingIds(current => {
+        const next = new Set(current);
+        next.delete(invoice.id);
+        return next;
+      });
     }
   };
 
@@ -331,7 +379,6 @@ export default function DashboardPage() {
     try {
       const { data } = await apiClient.post<DetectedInvoiceDraft>("/invoices/detect-email", {
         ...emailDraftInput,
-        source: "forward",
       });
       setDetectedDraft(data);
       showToast({
@@ -403,7 +450,11 @@ export default function DashboardPage() {
               {importing ? <InlineSpinner /> : <Upload size={14} />}
               Import existing invoice records
             </button>
-            <button type="button" onClick={() => setShowForm((value) => !value)} className="btn-primary flex items-center gap-2">
+            <button type="button" onClick={() => {
+              setEditingInvoiceId(null);
+              setForm({ client_name: "", client_email: "", amount: "", currency: "USD", due_date: "", issued_date: "", invoice_number: "", notes: "" });
+              setShowForm((value) => !value);
+            }} className="btn-primary flex items-center gap-2">
               <Plus size={14} />
               Add existing invoice record
             </button>
@@ -445,6 +496,7 @@ export default function DashboardPage() {
 
         {showForm ? (
           <form onSubmit={saveRecord} className="grid grid-cols-1 gap-3 rounded-lg p-4 md:grid-cols-4" style={{ backgroundColor: "var(--color-surface)" }}>
+            <p className="text-sm font-bold md:col-span-4" style={{ color: "var(--color-text)" }}>{editingInvoiceId ? "Edit invoice record" : "Add existing invoice record"}</p>
             <input className="input-field" placeholder="Client" value={form.client_name} onChange={(event) => setForm({ ...form, client_name: event.target.value })} required />
             <input className="input-field" type="email" placeholder="Client email" value={form.client_email} onChange={(event) => setForm({ ...form, client_email: event.target.value })} required />
             <input className="input-field" placeholder="Invoice number" value={form.invoice_number} onChange={(event) => setForm({ ...form, invoice_number: event.target.value })} />
@@ -452,12 +504,18 @@ export default function DashboardPage() {
               <input className="input-field" type="number" step="0.01" min="0.01" placeholder="Amount" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} required />
               <input className="input-field" placeholder="USD" value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value.toUpperCase() })} required />
             </div>
-            <input className="input-field" type="date" value={form.issued_date} onChange={(event) => setForm({ ...form, issued_date: event.target.value })} />
-            <input className="input-field" type="date" value={form.due_date} onChange={(event) => setForm({ ...form, due_date: event.target.value })} required />
+            <label className="space-y-1 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+              <span>Issue date</span>
+              <input className="input-field w-full" type="date" value={form.issued_date} onChange={(event) => setForm({ ...form, issued_date: event.target.value })} />
+            </label>
+            <label className="space-y-1 text-xs" style={{ color: "var(--color-text-secondary)" }}>
+              <span>Due date</span>
+              <input className="input-field w-full" type="date" value={form.due_date} onChange={(event) => setForm({ ...form, due_date: event.target.value })} required />
+            </label>
             <input className="input-field md:col-span-2" placeholder="Notes" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
             <button type="submit" className="btn-primary md:col-span-4" disabled={saving}>
               {saving ? <InlineSpinner /> : null}
-              Save tracking record
+              {editingInvoiceId ? "Save changes" : "Save tracking record"}
             </button>
           </form>
         ) : null}
@@ -583,7 +641,7 @@ export default function DashboardPage() {
               />
             </div>
           ) : (
-            <table className="w-full min-w-[920px]">
+            <table className="w-full min-w-[1120px]">
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--color-border)" }}>
                   {["Client", "Amount", "Due", "Delay", "State", "Next step", "Actions"].map((header) => (
@@ -614,6 +672,10 @@ export default function DashboardPage() {
                             <History size={13} />
                             History
                           </button>
+                          <button type="button" onClick={() => beginEdit(invoice)} className="btn-secondary flex items-center gap-1 px-2 py-1 text-xs">
+                            <Pencil size={13} />
+                            Edit
+                          </button>
                           {invoice.status !== "paid" ? (
                             <button type="button" onClick={() => mutateInvoice(invoice.id, "mark-paid")} disabled={loadingIds.has(invoice.id)} className="btn-secondary flex items-center gap-1 px-2 py-1 text-xs">
                               <CheckCircle2 size={13} />
@@ -631,6 +693,10 @@ export default function DashboardPage() {
                               Resume
                             </button>
                           ) : null}
+                          <button type="button" onClick={() => void deleteInvoice(invoice)} disabled={loadingIds.has(invoice.id)} className="flex items-center gap-1 rounded px-2 py-1 text-xs text-red-500 transition-colors hover:bg-red-500/10 disabled:opacity-60">
+                            <Trash2 size={13} />
+                            {deleteConfirmId === invoice.id ? "Confirm delete" : "Delete"}
+                          </button>
                         </div>
                       </td>
                     </tr>

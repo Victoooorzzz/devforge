@@ -330,7 +330,7 @@ async def get_filecleaner_limits(user: User, session: AsyncSession) -> tuple[Pla
 
 
 
-def reject_price_frequency_if_needed(plan: PlanName, limits: PriceTrackrLimits, requested_hours: int) -> None:
+def reject_price_frequency_if_needed(plan: PlanName, limits: PriceTrackrLimits, requested_hours: float) -> None:
     if requested_hours < limits.min_check_frequency_hours:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

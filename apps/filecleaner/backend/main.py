@@ -527,7 +527,7 @@ def _load_df(
     except Exception as e:
         raise ValueError(f"Failed to load file: {str(e)}")
 
-def _save_df(df: pd.DataFrame, filename: str) -> io.BytesIO:
+def _save_df(df: pd.DataFrame, filename: str, *, sheet_name: str | None = None) -> io.BytesIO:
     buf = io.BytesIO()
     normalized = filename.lower()
     if normalized.endswith('.csv'):
@@ -535,7 +535,7 @@ def _save_df(df: pd.DataFrame, filename: str) -> io.BytesIO:
     elif normalized.endswith('.json'):
         buf.write(df.to_json(orient="records", force_ascii=False, indent=2).encode("utf-8"))
     else:
-        df.to_excel(buf, index=False)
+        df.to_excel(buf, index=False, sheet_name=(sheet_name or "Sheet1")[:31])
     buf.seek(0)
     return buf
 
@@ -693,6 +693,14 @@ class DeepCleanEngine:
             elif semantic in {"rating", "age_years", "amount", "percentage", "numeric"}:
                 self._clean_numeric_heuristic(column, semantic)
         self._validate_cross_columns()
+        rows_before_dedup = len(self.df)
+        self.df = self.df.drop_duplicates().reset_index(drop=True)
+        duplicates_removed = rows_before_dedup - len(self.df)
+        self.report["duplicates_removed_after_normalization"] = int(duplicates_removed)
+        if duplicates_removed:
+            self.report["fixes"].append(
+                f"Deduplication: {duplicates_removed} rows removed after semantic normalization"
+            )
         self.report["rows_clean"] = int(len(self.df))
         return self.df
 
@@ -741,6 +749,8 @@ class DeepCleanEngine:
                 self.semantics[str(column)] = "country"
             elif any(token in key for token in ["score", "puntaje", "credit_score"]):
                 self.semantics[str(column)] = "credit_score"
+            elif any(token in key for token in ["monto", "amount", "importe", "price", "precio", "currency"]):
+                self.semantics[str(column)] = "currency"
 
     def _is_id_column(self, series: pd.Series, sample: pd.Series) -> bool:
         if len(series) <= 10 or series.nunique(dropna=True) != len(series.dropna()):
@@ -843,6 +853,9 @@ class DeepCleanEngine:
             return text if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", text) else pd.NA
 
         self.df[column] = self.df[column].apply(fix_email)
+        invalidated = int((original.notna() & self.df[column].isna()).sum())
+        if invalidated:
+            self.report["warnings"].append(f"Email '{column}': {invalidated} invalid values removed")
         self.report["fixes"].append(f"Email '{column}': {_deep_changed_count(original, self.df[column])} fixed or invalidated")
 
     def _clean_phone(self, column: str) -> None:
@@ -861,6 +874,9 @@ class DeepCleanEngine:
             return parsed
 
         self.df[column] = self.df[column].apply(parse)
+        invalidated = int((original.notna() & self.df[column].isna()).sum())
+        if invalidated:
+            self.report["warnings"].append(f"Currency '{column}': {invalidated} invalid values removed")
         self.report["fixes"].append(f"Currency '{column}': {_deep_changed_count(original, self.df[column])} parsed")
 
     def _clean_date(self, column: str) -> None:
@@ -872,6 +888,9 @@ class DeepCleanEngine:
         if future_mask.sum() > 0:
             self.report["warnings"].append(f"Date '{column}': {int(future_mask.sum())} future dates removed")
             parsed = parsed.where(~future_mask, pd.NaT)
+        invalidated = int((original.notna() & parsed.isna()).sum())
+        if invalidated:
+            self.report["warnings"].append(f"Date '{column}': {invalidated} invalid values removed")
         self.df[column] = parsed.dt.strftime("%Y-%m-%d").where(parsed.notna(), pd.NA)
         self.report["fixes"].append(f"Date '{column}': {_deep_changed_count(original, self.df[column])} normalized")
 
@@ -998,9 +1017,15 @@ def run_deep_clean(content: bytes, filename: str) -> FileCleanerPipelineResult:
         "deep_clean": engine.report,
         "download_format": filename.rsplit(".", 1)[-1].lower() if "." in filename else "csv",
     }
+    sheet_name = None
+    if filename.lower().endswith((".xlsx", ".xls")):
+        try:
+            sheet_name = pd.ExcelFile(io.BytesIO(content)).sheet_names[0]
+        except (ValueError, IndexError):
+            sheet_name = None
     return FileCleanerPipelineResult(
         dataframe=cleaned,
-        output=_save_df(cleaned, filename),
+        output=_save_df(cleaned, filename, sheet_name=sheet_name),
         report=report,
         detection=detection,
     )
@@ -1284,6 +1309,23 @@ def _score_similarity(left: str, right: str) -> dict[str, int]:
         return {"levenshtein": score, "jaro_winkler": _jaro_winkler_similarity(left, right), "token_set": score}
 
 
+def _identity_values_compatible(column: str, left: str, right: str, threshold: int) -> bool:
+    key = column.lower()
+    if any(token in key for token in ("email", "correo", "mail")):
+        left_parts = left.lower().split("@", 1)
+        right_parts = right.lower().split("@", 1)
+        if len(left_parts) != 2 or len(right_parts) != 2 or left_parts[1] != right_parts[1]:
+            return False
+        local_scores = _score_similarity(left_parts[0], right_parts[0])
+        return max(local_scores["levenshtein"], local_scores["jaro_winkler"]) >= threshold
+    if any(token in key for token in ("name", "nombre", "contact", "customer", "cliente")):
+        left_first = left.lower().split()[0] if left.split() else ""
+        right_first = right.lower().split()[0] if right.split() else ""
+        first_scores = _score_similarity(left_first, right_first)
+        return max(first_scores["levenshtein"], first_scores["jaro_winkler"]) >= threshold
+    return True
+
+
 def _run_fuzzy_matching(df: pd.DataFrame, config: dict[str, Any], max_rows: int = DEFAULT_MAX_FUZZY_ROWS) -> dict[str, Any]:
     if not config.get("enabled", True):
         return {"enabled": False, "clusters_found": 0, "clusters": []}
@@ -1329,7 +1371,7 @@ def _run_fuzzy_matching(df: pd.DataFrame, config: dict[str, Any], max_rows: int 
 
                 scores = _score_similarity(v1, v2)
                 score = max(scores.values())
-                if score >= threshold:
+                if score >= threshold and _identity_values_compatible(column, v1, v2, threshold):
                     adj[v1].append((v2, score, scores))
                     adj[v2].append((v1, score, scores))
 
@@ -2759,6 +2801,55 @@ def _validate_gemini_output(data: Any, total_rows: int, total_columns: int) -> d
                 })
     return validated
 
+
+def _analyze_file_locally(file_content: bytes, fname: str) -> dict[str, Any]:
+    df = _load_df(file_content, fname, nrows=100)
+    preview = df.head(20)
+    suggestions: list[dict[str, str]] = []
+    duplicate_rows = int(preview.duplicated(keep=False).sum())
+    if duplicate_rows:
+        suggestions.append({
+            "column": "All columns",
+            "issue": f"{duplicate_rows} duplicate rows found",
+            "fix": "Remove exact duplicates after normalization",
+            "severity": "high",
+        })
+
+    for col in preview.columns:
+        series = preview[col]
+        null_pct = series.isnull().mean()
+        if null_pct > 0.5:
+            suggestions.append({"column": str(col), "issue": f"{int(null_pct*100)}% null values", "fix": "Review or remove this column", "severity": "high"})
+        if series.dtype == object or str(series.dtype).startswith("string"):
+            strings = series.dropna().astype(str)
+            if strings.str.strip().ne(strings).any():
+                suggestions.append({"column": str(col), "issue": "Leading or trailing whitespace", "fix": "Trim whitespace", "severity": "low"})
+
+            key = str(col).lower()
+            invalid_count = 0
+            if any(token in key for token in ("date", "fecha", "created", "updated", "due")):
+                invalid_count = int(pd.to_datetime(strings, errors="coerce", format="mixed").isna().sum())
+            elif any(token in key for token in ("amount", "monto", "importe", "price", "precio", "total")):
+                invalid_count = int(strings.apply(lambda value: not isinstance(_parse_currency(value)[0], (int, float))).sum())
+            elif any(token in key for token in ("email", "correo", "mail")):
+                invalid_count = int((~strings.str.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", na=False)).sum())
+            if invalid_count:
+                suggestions.append({
+                    "column": str(col),
+                    "issue": f"{invalid_count} invalid business values",
+                    "fix": "Review invalid values before cleaning",
+                    "severity": "high",
+                })
+
+    return {
+        "total_rows": len(df),
+        "total_columns": len(df.columns),
+        "preview_rows": len(preview),
+        "suggestions": suggestions,
+        "summary": f"Found {len(suggestions)} cleanup opportunities in the first {len(preview)} rows.",
+        "engine": "heuristic",
+    }
+
 @file_router.post("/ai-analyze")
 async def ai_analyze_file(
     file: UploadFile = File(...),
@@ -2771,30 +2862,6 @@ async def ai_analyze_file(
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="AI analyze limited to 10MB")
-
-    def analyze_locally(file_content: bytes, fname: str):
-        df = _load_df(file_content, fname, nrows=100)
-        preview = df.head(20)
-        suggestions = []
-        for col in preview.columns:
-            null_pct = preview[col].isnull().mean()
-            if null_pct > 0.5:
-                suggestions.append({"column": col, "issue": f"{int(null_pct*100)}% valores nulos", "fix": "Considerar eliminar esta columna", "severity": "high"})
-            elif preview[col].dtype == object:
-                has_spaces = preview[col].dropna().str.strip().ne(preview[col].dropna()).any()
-                if has_spaces:
-                    suggestions.append({"column": col, "issue": "Espacios en blanco al inicio/fin", "fix": "Aplicar strip() automáticamente", "severity": "low"})
-            if preview[col].dtype == object:
-                dup_ratio = 1 - preview[col].nunique() / max(len(preview[col].dropna()), 1)
-                if dup_ratio > 0.8:
-                    suggestions.append({"column": col, "issue": f"{int(dup_ratio*100)}% valores duplicados", "fix": "Alta repetición — revisar si es categórico", "severity": "medium"})
-        return {
-            "total_rows": len(df),
-            "total_columns": len(df.columns),
-            "preview_rows": len(preview),
-            "suggestions": suggestions,
-            "engine": "heuristic",
-        }
 
     async def analyze_with_gemini(file_content: bytes, fname: str):
         if not settings.gemini_api_key:
@@ -2837,7 +2904,7 @@ Here are the first 20 rows of the CSV:
 
     result = await analyze_with_gemini(content, file.filename or "file.csv")
     if result is None:
-        result = await run_in_threadpool(analyze_locally, content, file.filename or "file.csv")
+        result = await run_in_threadpool(_analyze_file_locally, content, file.filename or "file.csv")
     return result
 
 

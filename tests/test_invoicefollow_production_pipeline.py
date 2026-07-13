@@ -102,7 +102,7 @@ def _trial_user():
         id=1,
         email="owner@example.test",
         hashed_password="unused",
-        trial_ends_at=datetime.utcnow() + timedelta(days=1),
+        trial_ends_at=datetime.now(timezone.utc) + timedelta(days=1),
     )
 
 
@@ -164,6 +164,39 @@ class InvoiceFollowProductionPipelineTests(unittest.TestCase):
             self.assertNotIn("Issue invoice", text)
         self.assertIn("Import existing invoice records", dashboard)
         self.assertIn("Track existing invoices", landing)
+
+    def test_dashboard_email_detection_does_not_claim_forward_without_message_id(self):
+        dashboard = (ROOT / "apps" / "invoicefollow" / "frontend" / "src" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")
+
+        self.assertNotIn('source: "forward"', dashboard)
+        self.assertIn("setDetectedDraft(data)", dashboard)
+        self.assertIn("Confirm and track", dashboard)
+
+    def test_invoice_can_be_deleted_by_its_owner(self):
+        invoice = invoice_main.Invoice(
+            id=42,
+            user_id=1,
+            client_name="Acme",
+            client_email="billing@acme.test",
+            amount=1200,
+            due_date=date(2026, 7, 15),
+        )
+        session = _FakeSession(responses=[[invoice]])
+
+        response = _client(session).delete("/invoices/42")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "deleted", "invoice_id": 42})
+        self.assertIs(session.deleted, invoice)
+
+    def test_dashboard_exposes_edit_delete_and_accessible_date_fields(self):
+        dashboard = (ROOT / "apps" / "invoicefollow" / "frontend" / "src" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")
+
+        self.assertIn('apiClient.put<Invoice>(`/invoices/${editingInvoiceId}`', dashboard)
+        self.assertIn('apiClient.delete(`/invoices/${invoice.id}`)', dashboard)
+        self.assertIn("Confirm delete", dashboard)
+        self.assertIn("Due date", dashboard)
+        self.assertIn("Issue date", dashboard)
 
     def test_detects_existing_invoice_from_email_without_creating_legal_document(self):
         parsed = invoice_main.parse_invoice_email(
