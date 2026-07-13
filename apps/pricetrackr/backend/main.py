@@ -262,7 +262,7 @@ async def run_price_updates():
             # Queue pressure check BEFORE updating next_check_at
             pending_res = await session.execute(
                 select(func.count(TrackedUrl.id)).where(
-                    TrackedUrl.status == "active",
+                    TrackedUrl.status.in_(("active", "needs_selector")),
                     TrackedUrl.deleted_at == None,  # noqa: E711
                     (TrackedUrl.next_check_at == None) | (TrackedUrl.next_check_at <= now),
                 )
@@ -272,7 +272,7 @@ async def run_price_updates():
             # Only fetch trackers that are due for a check
             result = await session.execute(
                 select(TrackedUrl).where(
-                    TrackedUrl.status == "active",
+                    TrackedUrl.status.in_(("active", "needs_selector")),
                     TrackedUrl.deleted_at == None,  # noqa: E711
                     (TrackedUrl.next_check_at == None) | (TrackedUrl.next_check_at <= now),  # noqa: E711
                 )
@@ -663,7 +663,7 @@ async def process_price_check(payload: dict):
     async with get_managed_session() as session:
         result = await session.execute(select(TrackedUrl).where(TrackedUrl.id == tracker_id))
         t = result.scalar_one_or_none()
-        if not t or t.status not in ("active",) or t.deleted_at is not None:
+        if not t or t.status not in ("active", "needs_selector") or t.deleted_at is not None:
             # Bug 8: Mark as completed for deleted/inactive trackers to prevent infinite retries
             return {"status": "skipped", "reason": "Tracker inactive or deleted"}
 
@@ -816,11 +816,11 @@ async def process_price_check(payload: dict):
 
                 t.in_stock = new_stock
                 t.last_text = new_text
+                t.last_checked = now
+                t.status = "active"
+                session.add(t)
 
                 if price_changed or stock_changed or text_changed:
-                    t.last_checked = now
-                    session.add(t)
-
                     # Record in price history
                     history = PriceHistory(
                         tracker_id=t.id,

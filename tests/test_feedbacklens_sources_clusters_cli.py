@@ -169,7 +169,7 @@ class FeedbackLensSourcesClustersCliTests(unittest.TestCase):
         client = _client(_FakeSession(responses=[entries, entries, entries, [github_source]]))
         with patch.object(feedback_main, "_post_github_issue", fake_issue):
             clusters = client.get("/clusters")
-            digest = client.get("/digest")
+            digest = client.get("/feedbacklens/digest")
             issue = client.post("/clusters/checkout/github-issue", json={"repo": "acme/app"})
 
         self.assertEqual(clusters.status_code, 200)

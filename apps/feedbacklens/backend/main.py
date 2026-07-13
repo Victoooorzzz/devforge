@@ -2280,7 +2280,7 @@ async def create_cluster_github_issue(
     }
 
 
-@digest_router.get("/digest")
+@digest_router.get("/feedbacklens/digest")
 async def get_digest(days: int = Query(default=7, ge=1, le=90), user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     since = _utc_now() - timedelta(days=days)
     result = await session.execute(

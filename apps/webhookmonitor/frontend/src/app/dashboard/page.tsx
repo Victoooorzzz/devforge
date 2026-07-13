@@ -158,6 +158,9 @@ export default function DashboardPage() {
   const [hasServerSearch, setHasServerSearch] = useState(false);
   const intervalRef                   = useRef<NodeJS.Timeout | null>(null);
   const exportRef                     = useRef<HTMLDivElement>(null);
+  const editedPayloadInvalid = isEditingPayload && (() => {
+    try { JSON.parse(retryPayload); return false; } catch { return true; }
+  })();
 
   const showToast = useCallback((nextToast: DashboardToast) => {
     setToast(nextToast);
@@ -237,6 +240,7 @@ export default function DashboardPage() {
       await apiClient.delete("/webhooks/requests?confirm=CONFIRM");
       setRequests([]);
       setSelected(null);
+      await refreshWebhooks(false);
       showToast({ tone: "success", message: "Your connection history was cleared." });
     } catch {
       showToast({ tone: "error", message: "We could not clear your history. Retry in a moment." });
@@ -316,6 +320,10 @@ export default function DashboardPage() {
 
   const handleRetry = async () => {
     if (!selected) return;
+    if (editedPayloadInvalid) {
+      showToast({ tone: "error", message: "Payload must be valid JSON before retrying." });
+      return;
+    }
     setIsRetrying(true);
     trackEvent("feature_used", { feature_name: "retry_webhook", custom_payload: isEditingPayload });
     try {
@@ -346,7 +354,7 @@ export default function DashboardPage() {
         provider: providerFilter,
         date_from: dateFrom || null,
         date_to: dateTo || null,
-        query: search || null,
+        query: search || "",
       });
       setRequests(data.items);
       setSelected(data.items[0] || null);
@@ -596,7 +604,7 @@ export default function DashboardPage() {
             className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all"
           >
             <Trash2 size={16} />
-            <span>Clear history</span>
+            <span>{clearConfirm ? "Confirm clear" : "Clear history"}</span>
           </button>
         </div>
       </div>
@@ -1274,7 +1282,7 @@ export default function DashboardPage() {
                     />
                     <div className="flex items-center gap-2 text-[10px] text-amber-500/70 p-2">
                       <AlertCircle size={12} />
-                      <span>You are about to retry this delivery with an edited payload.</span>
+                      <span>{editedPayloadInvalid ? "Payload must be valid JSON before retrying." : "You are about to retry this delivery with an edited payload."}</span>
                     </div>
                   </div>
                 ) : (
@@ -1288,7 +1296,7 @@ export default function DashboardPage() {
             <div className="p-6 bg-black/5 border-t border-[var(--color-border)]">
               <button
                 onClick={handleRetry}
-                disabled={isRetrying}
+                disabled={isRetrying || editedPayloadInvalid}
                 className={`w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg ${isEditingPayload ? "bg-amber-500 hover:bg-amber-600 shadow-amber-500/20" : "bg-[var(--color-primary)] hover:opacity-90 shadow-[var(--color-primary)]/20"}`}
                 style={{ color: "#000", opacity: isRetrying ? 0.7 : 1 }}
               >

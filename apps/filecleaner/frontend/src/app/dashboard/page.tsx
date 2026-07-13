@@ -543,7 +543,7 @@ export default function DashboardPage() {
             Data Cleaning Hub
           </h1>
           <p className="text-sm opacity-60" style={{ color: "var(--color-text)" }}>
-            Smart normalization for CSV and Excel datasets. Up to 100MB.
+            Smart normalization for CSV and Excel datasets, up to your plan limit.
           </p>
         </div>
 
@@ -963,7 +963,7 @@ export default function DashboardPage() {
           Drop your file here or click to upload
         </p>
         <p className="text-xs opacity-50" style={{ color: "var(--color-text)" }}>
-          CSV, JSON, XLSX, or XLS up to 100MB. We clean it in the background.
+          CSV, JSON, XLSX, or XLS up to your plan limit. We clean it in the background.
         </p>
       </div>
 

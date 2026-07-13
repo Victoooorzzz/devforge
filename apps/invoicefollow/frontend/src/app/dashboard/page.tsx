@@ -30,7 +30,7 @@ import {
 
 const dashboardProduct = getProduct("invoicefollow");
 
-type InvoiceStatus = "pending" | "paid" | "overdue" | "paused" | "in_sequence" | "finalized";
+type InvoiceStatus = "pending" | "paid" | "overdue" | "paused" | "in_sequence" | "finalized" | "disputed";
 
 interface Invoice {
   id: number;
@@ -47,6 +47,10 @@ interface Invoice {
   cron_paused?: boolean;
   schedule_paused_until?: string | null;
   manual_review_reason?: string;
+  amount_paid?: number;
+  disputed?: boolean;
+  approval_required?: boolean;
+  approval_status?: string;
   notes?: string;
 }
 
@@ -119,6 +123,7 @@ const statusStyles: Record<string, { backgroundColor: string; color: string }> =
   in_sequence: { backgroundColor: "rgba(14,165,233,0.13)", color: "#0284C7" },
   finalized: { backgroundColor: "rgba(115,115,115,0.14)", color: "#525252" },
   paid: { backgroundColor: "rgba(16,185,129,0.14)", color: "#059669" },
+  disputed: { backgroundColor: "rgba(239,68,68,0.13)", color: "#DC2626" },
 };
 
 function money(amount: number, currency: string) {
@@ -134,6 +139,8 @@ function daysOverdue(dueDate: string) {
 
 function nextStep(invoice: Invoice) {
   if (invoice.status === "paid") return "Paid";
+  if (invoice.disputed || invoice.status === "disputed") return "Manual dispute review";
+  if (invoice.approval_required) return "Awaiting manual approval";
   if (invoice.cron_paused || invoice.status === "paused") return invoice.schedule_paused_until ? `Paused until ${invoice.schedule_paused_until}` : "Paused";
   const late = daysOverdue(invoice.due_date);
   if (late >= 45) return "Manual action";
@@ -333,15 +340,32 @@ export default function DashboardPage() {
     input.click();
   };
 
-  const mutateInvoice = async (id: number, action: "pause" | "resume" | "mark-paid") => {
+  const mutateInvoice = async (id: number, action: "pause" | "resume" | "mark-paid" | "partial-payment" | "dispute" | "approve", invoice?: Invoice) => {
     setLoadingIds((current) => new Set(current).add(id));
     trackEvent("feature_used", { feature_name: `invoicefollow_${action}` });
     try {
-      await apiClient.post(`/invoices/${id}/${action}`);
-      showToast({ tone: "success", message: action === "mark-paid" ? "Payment marked." : action === "pause" ? "Sequence paused." : "Sequence resumed." });
-      refresh();
-    } catch {
-      showToast({ tone: "error", message: "Action failed. Retry from the row." });
+      let payload: Record<string, unknown> | undefined;
+      if (action === "partial-payment") {
+        const remaining = Math.max((invoice?.amount ?? 0) - (invoice?.amount_paid ?? 0), 0);
+        const entered = window.prompt(`Partial payment amount (remaining ${money(remaining, invoice?.currency || "USD")}):`);
+        if (entered === null) return;
+        const amount = Number(entered);
+        if (!Number.isFinite(amount) || amount <= 0 || amount > remaining) {
+          showToast({ tone: "error", message: "Enter a positive amount no greater than the remaining balance." });
+          return;
+        }
+        payload = { amount, currency: invoice?.currency };
+      }
+      await apiClient.post(`/invoices/${id}/${action}`, payload);
+      const messages: Record<string, string> = {
+        "mark-paid": "Payment marked.", pause: "Sequence paused.", resume: "Sequence resumed.",
+        "partial-payment": "Partial payment recorded. Manual approval is now required.",
+        dispute: "Invoice disputed and reminders paused.", approve: "Manual action approved and reminders resumed.",
+      };
+      showToast({ tone: "success", message: messages[action] });
+      await refresh();
+    } catch (error: any) {
+      showToast({ tone: "error", message: error.detail || "Action failed. Retry from the row." });
     } finally {
       setLoadingIds((current) => {
         const next = new Set(current);
@@ -659,7 +683,10 @@ export default function DashboardPage() {
                         <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>{invoice.client_name}</p>
                         <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>{invoice.client_email} · {invoice.invoice_number || "No number"}</p>
                       </td>
-                      <td className="px-4 py-3 font-mono text-sm" style={{ color: "var(--color-text)" }}>{money(invoice.amount, invoice.currency)}</td>
+                      <td className="px-4 py-3 font-mono text-sm" style={{ color: "var(--color-text)" }}>
+                        <p>{money(invoice.amount, invoice.currency)}</p>
+                        {(invoice.amount_paid ?? 0) > 0 ? <p className="text-[10px] text-emerald-500">Paid {money(invoice.amount_paid ?? 0, invoice.currency)}</p> : null}
+                      </td>
                       <td className="px-4 py-3 text-sm" style={{ color: "var(--color-text-secondary)" }}>{invoice.due_date}</td>
                       <td className="px-4 py-3 text-sm font-semibold" style={{ color: late > 0 ? "#DC2626" : "var(--color-text-secondary)" }}>{late}d</td>
                       <td className="px-4 py-3">
@@ -680,6 +707,21 @@ export default function DashboardPage() {
                             <button type="button" onClick={() => mutateInvoice(invoice.id, "mark-paid")} disabled={loadingIds.has(invoice.id)} className="btn-secondary flex items-center gap-1 px-2 py-1 text-xs">
                               <CheckCircle2 size={13} />
                               Paid
+                            </button>
+                          ) : null}
+                          {invoice.status !== "paid" ? (
+                            <button type="button" onClick={() => mutateInvoice(invoice.id, "partial-payment", invoice)} disabled={loadingIds.has(invoice.id)} className="btn-secondary px-2 py-1 text-xs">
+                              Partial
+                            </button>
+                          ) : null}
+                          {invoice.status !== "paid" && !invoice.disputed ? (
+                            <button type="button" onClick={() => mutateInvoice(invoice.id, "dispute")} disabled={loadingIds.has(invoice.id)} className="btn-secondary px-2 py-1 text-xs text-red-500">
+                              Dispute
+                            </button>
+                          ) : null}
+                          {invoice.status !== "paid" && invoice.approval_required ? (
+                            <button type="button" onClick={() => mutateInvoice(invoice.id, "approve")} disabled={loadingIds.has(invoice.id)} className="btn-secondary px-2 py-1 text-xs text-emerald-500">
+                              Approve
                             </button>
                           ) : null}
                           {invoice.status !== "paid" && !invoice.cron_paused ? (

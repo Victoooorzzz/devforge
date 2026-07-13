@@ -447,7 +447,7 @@ class FileCleanerFrontendContractTests(unittest.TestCase):
             "Schema validation",
             "Anomaly detection",
             "Normalization",
-            "100MB",
+            "up to your plan limit",
             "Clean image or PDF",
         ]:
             self.assertIn(term, page)

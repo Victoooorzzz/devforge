@@ -278,9 +278,10 @@ export default function AddUrlForm({ onSuccess, onCancel, showToast }: AddUrlFor
               </label>
               <select
                 value={checkFrequencyHours}
-                onChange={(e) => setCheckFrequencyHours(parseInt(e.target.value))}
+                onChange={(e) => setCheckFrequencyHours(parseFloat(e.target.value))}
                 className="input-field w-full text-sm cursor-pointer"
               >
+                <option value="0.1666666667">Every 10 Minutes (Team)</option>
                 <option value={1}>Every Hour</option>
                 <option value={6}>Every 6 Hours</option>
                 <option value={12}>Every 12 Hours</option>

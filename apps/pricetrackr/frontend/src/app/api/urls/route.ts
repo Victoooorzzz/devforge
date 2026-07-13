@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
         const trackerId = t.id;
         const label = t.label || t.url || `Tracker ${trackerId}`;
         const lastChecked = t.last_checked ? new Date(t.last_checked) : null;
-        const frequencyHours = parseInt(t.check_frequency_hours) || 24;
+        const frequencyHours = parseFloat(t.check_frequency_hours) || 24;
         const staleAfterHours = Math.max(frequencyHours * 2, 24);
         const currentPrice = t.current_price;
         const inStock = t.in_stock;

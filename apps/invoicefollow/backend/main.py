@@ -333,6 +333,10 @@ class Invoice(SQLModel, table=True):
     manual_review_reason: str = Field(default="")
     notes: str = Field(default="")
     cron_paused: bool = Field(default=False)
+    amount_paid: float = Field(default=0)
+    disputed: bool = Field(default=False, index=True)
+    approval_required: bool = Field(default=False, index=True)
+    approval_status: str = Field(default="not_required")
     paid_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     created_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
     updated_at: datetime = Field(default_factory=_utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
@@ -560,8 +564,8 @@ class InvoiceUpdate(BaseModel):
         if value is None:
             return value
         cleaned = value.strip().lower()
-        if cleaned not in {"pending", "overdue", "paid", "cancelled"}:
-            raise ValueError("status must be pending, overdue, paid, or cancelled")
+        if cleaned not in {"pending", "overdue", "paid", "cancelled", "disputed"}:
+            raise ValueError("status must be pending, overdue, paid, cancelled, or disputed")
         return cleaned
 
     @field_validator("currency")
@@ -573,6 +577,18 @@ class InvoiceUpdate(BaseModel):
         if not re.fullmatch(r"[A-Z]{3}", cleaned):
             raise ValueError("currency must be a 3-letter code")
         return cleaned
+
+
+class PartialPaymentRequest(BaseModel):
+    amount: float
+    currency: Optional[str] = None
+
+    @field_validator("amount")
+    @classmethod
+    def amount_must_be_positive(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("partial payment amount must be greater than 0")
+        return value
 
 
 class InvoiceEmailDetectRequest(BaseModel):
@@ -2462,9 +2478,89 @@ async def resume_invoice(invoice_id: int, user: User = Depends(get_current_user)
     return {"status": "resumed", "invoice": _invoice_to_dict(invoice)}
 
 
+@invoice_router.post("/{invoice_id}/partial-payment")
+async def record_partial_payment(
+    invoice_id: int,
+    body: PartialPaymentRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    invoice = await _get_invoice_or_404(session, user.id, invoice_id)
+    remaining = max(float(invoice.amount) - float(invoice.amount_paid or 0), 0)
+    if invoice.status == "paid" or remaining <= 0:
+        raise HTTPException(status_code=409, detail="Invoice is already paid")
+    if body.amount > remaining:
+        raise HTTPException(status_code=400, detail=f"Payment exceeds remaining balance of {remaining:.2f}")
+
+    invoice.amount_paid = round(float(invoice.amount_paid or 0) + body.amount, 2)
+    invoice.updated_at = _utc_now()
+    invoice.disputed = False
+    payment_currency = (body.currency or invoice.currency).upper()
+    session.add(InvoicePaymentEvent(
+        user_id=user.id,
+        invoice_id=invoice.id,
+        provider="manual",
+        provider_event_id=f"manual-{invoice.id}-{secrets.token_urlsafe(8)}",
+        amount=body.amount,
+        currency=payment_currency,
+        status="succeeded",
+        raw_json=json.dumps({"source": "dashboard", "partial": body.amount < remaining}),
+    ))
+    if invoice.amount_paid >= float(invoice.amount):
+        _mark_invoice_paid(invoice)
+    else:
+        invoice.approval_required = True
+        invoice.approval_status = "pending"
+        invoice.cron_paused = True
+        invoice.manual_review_reason = f"Partial payment recorded. Remaining balance: {float(invoice.amount) - invoice.amount_paid:.2f} {invoice.currency}. Approve to resume reminders."
+    session.add(invoice)
+    await session.flush()
+    return {"status": "paid" if invoice.status == "paid" else "partial", "invoice": _invoice_to_dict(invoice)}
+
+
+@invoice_router.post("/{invoice_id}/dispute")
+async def dispute_invoice(invoice_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    invoice = await _get_invoice_or_404(session, user.id, invoice_id)
+    if invoice.status == "paid":
+        raise HTTPException(status_code=409, detail="Paid invoices cannot be disputed")
+    invoice.status = "disputed"
+    invoice.disputed = True
+    invoice.cron_paused = True
+    invoice.approval_required = True
+    invoice.approval_status = "pending"
+    invoice.manual_review_reason = "Invoice disputed manually. Review and approve before reminders resume."
+    invoice.updated_at = _utc_now()
+    session.add(invoice)
+    await session.flush()
+    return {"status": "disputed", "invoice": _invoice_to_dict(invoice)}
+
+
+@invoice_router.post("/{invoice_id}/approve")
+async def approve_invoice_action(invoice_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    invoice = await _get_invoice_or_404(session, user.id, invoice_id)
+    if invoice.status == "paid":
+        raise HTTPException(status_code=409, detail="Paid invoices need no approval")
+    invoice.disputed = False
+    invoice.status = "overdue" if invoice.due_date < date.today() else "pending"
+    invoice.cron_paused = False
+    invoice.schedule_paused_until = None
+    invoice.approval_required = False
+    invoice.approval_status = "approved"
+    invoice.manual_review_reason = "Manual review approved. Reminder sequence resumed."
+    invoice.updated_at = _utc_now()
+    session.add(invoice)
+    await session.flush()
+    return {"status": "approved", "invoice": _invoice_to_dict(invoice)}
+
+
 def _mark_invoice_paid(invoice: Invoice) -> dict[str, Any]:
     invoice.status = "paid"
     invoice.cron_paused = True
+    invoice.amount_paid = float(invoice.amount)
+    invoice.disputed = False
+    invoice.approval_required = False
+    invoice.approval_status = "not_required"
+    invoice.manual_review_reason = ""
     invoice.paid_at = _utc_now()
     invoice.updated_at = _utc_now()
     return {"status": "paid", "invoice": _invoice_to_dict(invoice)}

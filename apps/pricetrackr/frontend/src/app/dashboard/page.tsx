@@ -13,6 +13,7 @@ export default async function DashboardPage() {
   const trackers = await sql`
     SELECT * FROM tracked_urls
     WHERE user_id = ${user.userId}
+      AND deleted_at IS NULL
     ORDER BY created_at DESC
   `;
 
@@ -52,7 +53,7 @@ export default async function DashboardPage() {
     const trackerId = t.id;
     const label = t.label || t.url || `Tracker ${trackerId}`;
     const lastChecked = t.last_checked ? new Date(t.last_checked) : null;
-    const frequencyHours = parseInt(t.check_frequency_hours) || 24;
+    const frequencyHours = parseFloat(t.check_frequency_hours) || 24;
     const staleAfterHours = Math.max(frequencyHours * 2, 24);
     const currentPrice = t.current_price;
     const inStock = t.in_stock;
@@ -108,7 +109,7 @@ export default async function DashboardPage() {
     min_price: t.min_price !== null ? parseFloat(t.min_price) : null,
     in_stock: t.in_stock,
     last_checked: t.last_checked ? new Date(t.last_checked).toISOString() : null,
-    check_frequency_hours: parseInt(t.check_frequency_hours) || 24,
+    check_frequency_hours: parseFloat(t.check_frequency_hours) || 24,
     status: t.status,
     alert_threshold: t.alert_threshold !== null ? parseFloat(t.alert_threshold) : null,
     pending_price: t.pending_price !== null ? parseFloat(t.pending_price) : null,

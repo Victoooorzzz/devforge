@@ -195,7 +195,7 @@ export default function DashboardPage() {
       apiClient.get<DedupeSummary>("/feedback/dedupe/summary"),
       apiClient.get<FeedbackSource[]>("/sources"),
       apiClient.get<ClusterResponse>("/clusters?days=30"),
-      apiClient.get<DigestPayload>("/digest?days=7"),
+      apiClient.get<DigestPayload>("/feedbacklens/digest?days=7"),
     ]);
     if (entriesResult.status === "fulfilled") setEntries(entriesResult.value.data);
     if (summaryResult.status === "fulfilled") setWeeklySummary(summaryResult.value.data);
@@ -219,7 +219,7 @@ export default function DashboardPage() {
       apiClient.get<WeeklySummary>("/feedback/summary/weekly"),
       apiClient.get<DedupeSummary>("/feedback/dedupe/summary"),
       apiClient.get<ClusterResponse>("/clusters?days=30"),
-      apiClient.get<DigestPayload>("/digest?days=7"),
+      apiClient.get<DigestPayload>("/feedbacklens/digest?days=7"),
     ]);
     if (summaryResult.status === "fulfilled") setWeeklySummary(summaryResult.value.data);
     if (dedupeResult.status === "fulfilled") setDedupeSummary(dedupeResult.value.data);
@@ -274,7 +274,7 @@ export default function DashboardPage() {
       );
       setEntries(prev => prev.map(e => e.id === id ? data : e));
       if (selected?.id === id) setSelected(data);
-      await refreshDerivedInsights();
+      await refreshFeedback();
       showToast({ tone: "success", message: "Feedback reviewed. Themes and urgency are updated." });
     } catch (error: any) {
       showToast({ tone: "error", message: error.message || "We could not review this feedback. Retry from the row." });
@@ -295,7 +295,7 @@ export default function DashboardPage() {
       await apiClient.delete(`/feedback/${entry.id}`);
       setEntries(prev => prev.filter(item => item.id !== entry.id));
       if (selected?.id === entry.id) setSelected(null);
-      await refreshDerivedInsights();
+      await refreshFeedback();
       showToast({ tone: "success", message: "Feedback permanently deleted." });
     } catch {
       showToast({ tone: "error", message: "Feedback could not be deleted." });

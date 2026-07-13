@@ -638,6 +638,12 @@ DEEP_CLEAN_COUNTRY_CODES = {
     "bo": "BO",
 }
 
+COUNTRY_CALLING_CODES = {
+    "US": "+1", "CA": "+1", "PE": "+51", "MX": "+52", "ES": "+34",
+    "DE": "+49", "GB": "+44", "CL": "+56", "AR": "+54", "CO": "+57",
+    "BR": "+55", "EC": "+593", "BO": "+591",
+}
+
 INVALID_DEEP_CLEAN_CATEGORIES = {"???", "desconocido", "unknown", "n/a", "na", "999", "none", "null", ""}
 
 
@@ -837,7 +843,7 @@ class DeepCleanEngine:
     def _basic_clean(self) -> None:
         text_columns = [column for column in self.df.columns if self.df[column].dtype == object or str(self.df[column].dtype).startswith("string")]
         for column in text_columns:
-            self.df[column] = self.df[column].astype("string").str.strip()
+            self.df[column] = self.df[column].astype("string").str.strip().str.replace(r"\s+", " ", regex=True)
             self.df[column] = self.df[column].replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
 
     def _clean_email(self, column: str) -> None:
@@ -860,7 +866,20 @@ class DeepCleanEngine:
 
     def _clean_phone(self, column: str) -> None:
         original = self.df[column].copy()
-        self.df[column] = self.df[column].apply(_normalize_phone)
+        country_column = next(
+            (candidate for candidate, semantic in self.semantics.items() if semantic == "country" and candidate in self.df.columns),
+            None,
+        )
+        if country_column:
+            self.df[column] = self.df.apply(
+                lambda row: _normalize_phone(
+                    row[column],
+                    COUNTRY_CALLING_CODES.get(_normalize_country(row[country_column]), "+1"),
+                ),
+                axis=1,
+            )
+        else:
+            self.df[column] = self.df[column].apply(_normalize_phone)
         self.report["fixes"].append(f"Phone '{column}': {_deep_changed_count(original, self.df[column])} normalized")
 
     def _clean_currency(self, column: str) -> None:
@@ -1323,6 +1342,21 @@ def _identity_values_compatible(column: str, left: str, right: str, threshold: i
         right_first = right.lower().split()[0] if right.split() else ""
         first_scores = _score_similarity(left_first, right_first)
         return max(first_scores["levenshtein"], first_scores["jaro_winkler"]) >= threshold
+    return True
+
+
+def _rows_identity_compatible(left: pd.Series, right: pd.Series, threshold: int) -> bool:
+    identity_columns = [
+        column for column in left.index
+        if any(token in str(column).lower() for token in ("email", "correo", "mail", "name", "nombre", "contact", "customer", "cliente"))
+    ]
+    for column in identity_columns:
+        left_value = left.get(column)
+        right_value = right.get(column)
+        if pd.isna(left_value) or pd.isna(right_value):
+            continue
+        if not _identity_values_compatible(str(column), str(left_value).strip(), str(right_value).strip(), threshold):
+            return False
     return True
 
 
@@ -2517,7 +2551,7 @@ async def fuzzy_check(
                     continue
                 scores = _score_similarity(str_rows[i], str_rows[j])
                 score = max(scores.values())
-                if score >= thresh:
+                if score >= thresh and _rows_identity_compatible(df.iloc[i], df.iloc[j], thresh):
                     group.append(j)
                     visited.add(j)
             if len(group) > 1:
@@ -2902,9 +2936,19 @@ Here are the first 20 rows of the CSV:
             logger.warning(f"Gemini AI analyze failed: {e}")
             return None
 
-    result = await analyze_with_gemini(content, file.filename or "file.csv")
+    filename = file.filename or "file.csv"
+    result = await analyze_with_gemini(content, filename)
+    heuristic = await run_in_threadpool(_analyze_file_locally, content, filename)
     if result is None:
-        result = await run_in_threadpool(_analyze_file_locally, content, file.filename or "file.csv")
+        result = heuristic
+    else:
+        existing = {(item.get("column"), item.get("issue")) for item in result.get("suggestions", [])}
+        result.setdefault("suggestions", []).extend(
+            item for item in heuristic["suggestions"]
+            if (item.get("column"), item.get("issue")) not in existing
+        )
+        result["preview_rows"] = heuristic["preview_rows"]
+        result["summary"] = f"Found {len(result['suggestions'])} cleanup opportunities in the first {heuristic['preview_rows']} rows."
     return result
 
 
