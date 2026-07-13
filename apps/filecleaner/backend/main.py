@@ -653,6 +653,14 @@ def _deep_changed_count(before: pd.Series, after: pd.Series) -> int:
     return int((before_cmp != after_cmp).sum())
 
 
+def _is_text_series(series: pd.Series) -> bool:
+    """Recognize text columns across pandas 2 object/string and pandas 3 str dtypes."""
+    return bool(
+        pd.api.types.is_object_dtype(series.dtype)
+        or pd.api.types.is_string_dtype(series.dtype)
+    )
+
+
 class DeepCleanEngine:
     """Semantic business cleaner for tabular FileCleaner uploads."""
 
@@ -841,7 +849,7 @@ class DeepCleanEngine:
         return bool(words.between(1, 4).mean() > 0.7 and has_numbers.mean() < 0.2 and title_case.mean() > 0.5)
 
     def _basic_clean(self) -> None:
-        text_columns = [column for column in self.df.columns if self.df[column].dtype == object or str(self.df[column].dtype).startswith("string")]
+        text_columns = [column for column in self.df.columns if _is_text_series(self.df[column])]
         for column in text_columns:
             self.df[column] = self.df[column].astype("string").str.strip().str.replace(r"\s+", " ", regex=True)
             self.df[column] = self.df[column].replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
@@ -1375,7 +1383,7 @@ def _run_fuzzy_matching(df: pd.DataFrame, config: dict[str, Any], max_rows: int 
 
     columns = config.get("columns") or [
         column for column in df.columns
-        if df[column].dtype == object or str(df[column].dtype).startswith("string")
+        if _is_text_series(df[column])
     ]
     threshold = int(config.get("threshold", 85))
     clusters: list[dict[str, Any]] = []
@@ -1609,7 +1617,7 @@ def _run_anomaly_detection(df: pd.DataFrame, config: dict[str, Any]) -> dict[str
         column for column in df.columns if pd.api.types.is_numeric_dtype(df[column])
     ]
     categorical_columns = config.get("categorical_columns") or [
-        column for column in df.columns if df[column].dtype == object or str(df[column].dtype).startswith("string")
+        column for column in df.columns if _is_text_series(df[column])
     ]
     flags: list[dict[str, Any]] = []
 
@@ -2854,7 +2862,7 @@ def _analyze_file_locally(file_content: bytes, fname: str) -> dict[str, Any]:
         null_pct = series.isnull().mean()
         if null_pct > 0.5:
             suggestions.append({"column": str(col), "issue": f"{int(null_pct*100)}% null values", "fix": "Review or remove this column", "severity": "high"})
-        if series.dtype == object or str(series.dtype).startswith("string"):
+        if _is_text_series(series):
             strings = series.dropna().astype(str)
             if strings.str.strip().ne(strings).any():
                 suggestions.append({"column": str(col), "issue": "Leading or trailing whitespace", "fix": "Trim whitespace", "severity": "low"})

@@ -16,6 +16,10 @@ import apps.invoicefollow.backend.main as invoicefollow
 
 
 class FileCleanerLiveQaRegressionTests(unittest.TestCase):
+    def test_text_dtype_detection_uses_pandas_compatibility_helpers(self):
+        self.assertTrue(filecleaner._is_text_series(filecleaner.pd.Series(["a"], dtype="object")))
+        self.assertTrue(filecleaner._is_text_series(filecleaner.pd.Series(["a"], dtype="string")))
+
     def test_deep_clean_collapses_internal_whitespace_and_uses_row_country_for_phones(self):
         df = filecleaner.pd.DataFrame(
             {
