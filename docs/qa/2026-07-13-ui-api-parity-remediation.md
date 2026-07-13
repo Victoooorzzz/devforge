@@ -57,6 +57,13 @@ La paridad de los flujos centrales de los cinco productos queda cubierta en cód
 
 Estas exclusiones no son gaps de producto: no son acciones interactivas de dashboard y mantienen controles de autenticación, firma o secreto propios.
 
-## Gate pendiente
+## Gate de producción
 
-La paridad queda verificada localmente. La condición final de producción exige desplegar backend/frontend afectados y repetir los flujos autenticados en `*.devforgeapp.pro`, incluyendo limpieza de residuos QA.
+- Commit funcional: `825c049` en `main`.
+- Vercel: los cinco proyectos frontend quedaron `READY` sobre `825c049`.
+- Render: `devforge-universal-backend` quedó `live` sobre `825c049`; `/health` respondió HTTP 200.
+- Dominios canónicos: los cinco dashboards `*.devforgeapp.pro` respondieron HTTP 200.
+- OpenAPI vivo: confirmó `DELETE /feedback/{entry_id}`, `DELETE /invoices/{invoice_id}`, `GET /trackers/export-file`, `POST /webhooks/search` y `POST /files/deep-clean`.
+- QA autenticada: WebhookMonitor mantuvo resultados y mostró `Clear search`; PriceTrackr conservó el primer carácter del umbral; FeedbackLens abrió creación/gestión de fuentes; InvoiceFollow detectó un borrador con 100% de confianza, lo confirmó y eliminó el registro QA sin dejar residuo.
+
+El gate funcional y de paridad queda cerrado. La rotación del token de Vercel expuesto por la salida del CLI se registra como acción operativa separada; el script quedó endurecido en `377b260` para redactar tokens en futuras ejecuciones.
