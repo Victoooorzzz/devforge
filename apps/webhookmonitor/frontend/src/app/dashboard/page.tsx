@@ -236,7 +236,7 @@ export default function DashboardPage() {
     }
   }, [selected]);
 
-  const handleClearHistory = async () => {
+  const handleClearHistory = () => {
     if (!clearConfirmRef.current) {
       clearConfirmRef.current = true;
       setClearConfirm(true);
@@ -262,16 +262,16 @@ export default function DashboardPage() {
       failed_forwards: 0,
       auto_retry_enabled: 0,
     } : current);
-    try {
-      // DELETE /webhooks/requests
-      await apiClient.delete("/webhooks/requests?confirm=CONFIRM");
-      showToast({ tone: "success", message: "Your connection history was cleared." });
-      void refreshWebhooks(false);
-    } catch {
-      historyClearedRef.current = false;
-      void refreshWebhooks(false);
-      showToast({ tone: "error", message: "We could not clear your history. Retry in a moment." });
-    }
+    void apiClient.delete("/webhooks/requests?confirm=CONFIRM")
+      .then(() => {
+        showToast({ tone: "success", message: "Your connection history was cleared." });
+        void refreshWebhooks(false);
+      })
+      .catch(() => {
+        historyClearedRef.current = false;
+        void refreshWebhooks(false);
+        showToast({ tone: "error", message: "We could not clear your history. Retry in a moment." });
+      });
   };
 
   const handleCopy = () => {
