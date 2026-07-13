@@ -80,11 +80,16 @@ function Invoke-VercelDeploy {
     )
 
     if (Get-Command vercel -ErrorAction SilentlyContinue) {
-        & vercel deploy --prod --yes --token $Token --cwd $Cwd
-        return
+        $deployOutput = & vercel deploy --prod --yes --token $Token --cwd $Cwd 2>&1
     }
-
-    & corepack pnpm dlx vercel@latest deploy --prod --yes --token $Token --cwd $Cwd
+    else {
+        $deployOutput = & corepack pnpm dlx vercel@latest deploy --prod --yes --token $Token --cwd $Cwd 2>&1
+    }
+    $deployExitCode = $LASTEXITCODE
+    $deployOutput | ForEach-Object { [string]$_ -replace [regex]::Escape($Token), "[REDACTED]" } | Write-Host
+    if ($deployExitCode -ne 0) {
+        throw "Vercel deployment failed with exit code $deployExitCode."
+    }
 }
 
 $apps = @(
