@@ -158,6 +158,7 @@ export default function DashboardPage() {
   const [hasServerSearch, setHasServerSearch] = useState(false);
   const intervalRef                   = useRef<NodeJS.Timeout | null>(null);
   const exportRef                     = useRef<HTMLDivElement>(null);
+  const clearConfirmRef               = useRef(false);
   const historyClearedRef             = useRef(false);
   const editedPayloadInvalid = isEditingPayload && (() => {
     try { JSON.parse(retryPayload); return false; } catch { return true; }
@@ -236,12 +237,17 @@ export default function DashboardPage() {
   }, [selected]);
 
   const handleClearHistory = async () => {
-    if (!clearConfirm) {
+    if (!clearConfirmRef.current) {
+      clearConfirmRef.current = true;
       setClearConfirm(true);
       showToast({ tone: "info", message: "Click Clear history again to delete all webhook logs." });
-      window.setTimeout(() => setClearConfirm(false), 5000);
+      window.setTimeout(() => {
+        clearConfirmRef.current = false;
+        setClearConfirm(false);
+      }, 5000);
       return;
     }
+    clearConfirmRef.current = false;
     setClearConfirm(false);
     trackEvent("feature_used", { feature_name: "clear_webhook_history" });
     historyClearedRef.current = true;

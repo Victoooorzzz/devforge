@@ -68,6 +68,8 @@ class DashboardLiveQaRegressionTests(unittest.TestCase):
         self.assertLess(clear_handler.index("setRequests([])"), clear_handler.index('await apiClient.delete("/webhooks/requests?confirm=CONFIRM")'))
         self.assertIn("historyClearedRef.current && nextRequests.length === 0", page)
         self.assertIn("historyClearedRef.current = true", clear_handler)
+        self.assertIn("if (!clearConfirmRef.current)", clear_handler)
+        self.assertIn("clearConfirmRef.current = true", clear_handler)
 
     def test_pricetrackr_dashboard_excludes_deleted_rows_and_preserves_ten_minute_frequency(self):
         page = (ROOT / "apps" / "pricetrackr" / "frontend" / "src" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")
