@@ -244,25 +244,26 @@ export default function DashboardPage() {
     }
     setClearConfirm(false);
     trackEvent("feature_used", { feature_name: "clear_webhook_history" });
+    historyClearedRef.current = true;
+    setHasServerSearch(false);
+    setRequests([]);
+    setSelected(null);
+    setSummary((current) => current ? {
+      ...current,
+      total_requests: 0,
+      recent_24h: 0,
+      retry_pressure: 0,
+      failed_forwards: 0,
+      auto_retry_enabled: 0,
+    } : current);
     try {
       // DELETE /webhooks/requests
       await apiClient.delete("/webhooks/requests?confirm=CONFIRM");
-      historyClearedRef.current = true;
-      setHasServerSearch(false);
-      setRequests([]);
-      setSelected(null);
-      setSummary((current) => current ? {
-        ...current,
-        total_requests: 0,
-        recent_24h: 0,
-        retry_pressure: 0,
-        failed_forwards: 0,
-        auto_retry_enabled: 0,
-      } : current);
       showToast({ tone: "success", message: "Your connection history was cleared." });
       void refreshWebhooks(false);
     } catch {
       historyClearedRef.current = false;
+      void refreshWebhooks(false);
       showToast({ tone: "error", message: "We could not clear your history. Retry in a moment." });
     }
   };
