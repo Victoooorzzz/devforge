@@ -91,7 +91,7 @@ export function SuiteHomePage() {
         <div className="section-container grid gap-10 lg:grid-cols-[1fr_420px] lg:items-center">
           <div>
             <div className="mb-5 flex flex-wrap items-center gap-2">
-              <StatusBadge tone="success">5 focused tools</StatusBadge>
+              <StatusBadge tone="success">4 focused tools</StatusBadge>
               <StatusBadge tone="neutral">Shared auth + billing</StatusBadge>
               <StatusBadge tone="neutral">Built for small teams</StatusBadge>
               <StatusBadge tone="accent">No enterprise theater</StatusBadge>
@@ -121,13 +121,13 @@ export function SuiteHomePage() {
               <span className="font-mono text-xs" style={{ color: "var(--color-text-secondary)" }}>devforge/run-suite.ts</span>
             </div>
             <div className="mt-5 space-y-3 font-mono text-xs leading-relaxed">
-              <p><span style={{ color: "#A3A3A3" }}>const</span> tools = <span style={{ color: "#F5F5F5" }}>["FileCleaner", "Webhook Monitor", "FeedbackLens"]</span>;</p>
+              <p><span style={{ color: "#A3A3A3" }}>const</span> tools = <span style={{ color: "#F5F5F5" }}>["Webhook Monitor", "FeedbackLens", "PriceTrackr"]</span>;</p>
               <p><span style={{ color: "#A3A3A3" }}>await</span> DevForge.cleanUp(<span style={{ color: "#F59E0B" }}>"messy_ops"</span>);</p>
               <div className="rounded-md bg-black/40 p-3">
                 {[
-                  ["FileCleaner", "1,804 fixes queued"],
                   ["Webhook Monitor", "3 failed events replayed"],
                   ["PriceTrackr", "7 drops detected"],
+                  ["FeedbackLens", "12 new entries clustered"],
                 ].map(([name, value]) => (
                   <div key={name} className="suite-console-row flex items-center justify-between gap-4 py-2">
                     <span style={{ color: "var(--color-text)" }}>{name}</span>
@@ -146,7 +146,7 @@ export function SuiteHomePage() {
                 </div>
                 <div className="rounded-md border border-white/10 bg-black/30 p-3">
                   <p style={{ color: "var(--color-text-secondary)" }}>Demos</p>
-                  <p className="mt-1 text-lg font-bold" style={{ color: "var(--color-text)" }}>5</p>
+                  <p className="mt-1 text-lg font-bold" style={{ color: "var(--color-text)" }}>4</p>
                 </div>
               </div>
             </div>
@@ -157,7 +157,7 @@ export function SuiteHomePage() {
       <section id="products" className="py-16 md:py-20" style={{ backgroundColor: "var(--color-surface)" }}>
         <ProductGrid
           products={productCards}
-          title="Five focused tools, five annoying chores"
+          title="Four focused tools, four annoying chores"
           subtitle="Each product has a public demo, production dashboard paths, plan-aware limits, and copy that names the actual mess it handles."
         />
       </section>
@@ -166,7 +166,7 @@ export function SuiteHomePage() {
         <div className="section-container grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
           <div>
             <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-accent)" }}>Suite logic</p>
-            <h2 className="heading-section mt-3 text-3xl md:text-4xl">Why these five tools belong together</h2>
+            <h2 className="heading-section mt-3 text-3xl md:text-4xl">Why these four tools belong together</h2>
             <div className="mt-4 space-y-3 leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
               {DEVFORGE_SUITE.benefits.map((benefit) => (
                 <p key={benefit}>{benefit}</p>
@@ -177,7 +177,6 @@ export function SuiteHomePage() {
             <p className="text-xs font-semibold uppercase" style={{ color: "var(--color-text-secondary)" }}>Operational chain</p>
             <div className="mt-5 grid gap-3">
               {[
-                ["Messy file", "Clean headers before an import explodes"],
                 ["Broken integration", "Replay a failed webhook with evidence"],
                 ["Market change", "Notice price drops before margins move"],
                 ["Customer noise", "Cluster feedback with raw receipts"],

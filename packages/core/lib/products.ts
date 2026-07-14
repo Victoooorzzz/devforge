@@ -156,7 +156,7 @@ function withLimits(plans: ProductPlan[], limits: Record<PlanSlug, string[]>): P
   return plans.map((plan) => ({ ...plan, limits: limits[plan.slug] }));
 }
 
-export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
+const ALL_PRODUCTS: DevForgeProduct[] = [
   {
     slug: "filecleaner",
     name: "FileCleaner",
@@ -621,22 +621,24 @@ export const DEVFORGE_PRODUCTS: DevForgeProduct[] = [
   },
 ];
 
+export const DEVFORGE_PRODUCTS: DevForgeProduct[] = ALL_PRODUCTS.filter(p => p.slug !== "filecleaner");
+
 export const DEVFORGE_SUITE = {
   name: "DevForge",
   domain: "devforgeapp.pro",
   url: "https://devforgeapp.pro",
-  headline: "Five small tools for the ugly work behind clean software.",
-  description: "Clean messy files, replay failed webhooks, track competitor prices, organize feedback, and chase invoices without building five internal tools from scratch.",
+  headline: "Four small tools for the ugly work behind clean software.",
+  description: "Replay failed webhooks, track competitor prices, organize feedback, and chase invoices without building four internal tools from scratch.",
   audience: "Built for small teams that want practical tools without enterprise theater.",
   benefits: [
     "DevForge is a compact product suite for the operational chores developers usually postpone.",
-    "Each tool solves one painful workflow: dirty files, broken webhooks, price changes, noisy feedback, or unpaid invoices.",
+    "Each tool solves one painful workflow: broken webhooks, price changes, noisy feedback, or unpaid invoices.",
     "Same account, same billing logic, same dark little workshop.",
   ],
 };
 
 export function getProduct(slug: ProductSlug): DevForgeProduct {
-  const product = DEVFORGE_PRODUCTS.find((item) => item.slug === slug);
+  const product = ALL_PRODUCTS.find((item) => item.slug === slug);
   if (!product) {
     throw new Error(`Unknown DevForge product: ${slug}`);
   }
@@ -644,5 +646,5 @@ export function getProduct(slug: ProductSlug): DevForgeProduct {
 }
 
 export function getProductByDomain(domain: string): DevForgeProduct | undefined {
-  return DEVFORGE_PRODUCTS.find((product) => product.domain === domain);
+  return ALL_PRODUCTS.find((product) => product.domain === domain);
 }

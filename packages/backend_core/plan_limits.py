@@ -286,7 +286,7 @@ async def resolve_user_plan(user: User, session: AsyncSession, app_name: str) ->
                 UserProductAccess.is_active == True,  # noqa: E712
             )
         )
-        if any_access_result.scalar_one_or_none() is not None:
+        if any_access_result.first() is not None:
             return "free"
 
     return "pro"

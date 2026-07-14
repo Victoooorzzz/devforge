@@ -789,11 +789,11 @@ class DeepCleanEngine:
             return 0.0
         if sample_str.str.match(r"^\d+\.\d+$", na=False).mean() > 0.3:
             return 0.0
-        non_null = series.notna().sum()
-        parsed = pd.to_datetime(series, errors="coerce", format="mixed")
+        non_null = len(sample_str)
+        parsed = pd.to_datetime(sample_str, errors="coerce", format="mixed")
         score = parsed.notna().sum() / max(non_null, 1)
         if score < 0.5:
-            parsed_dayfirst = pd.to_datetime(series, dayfirst=True, errors="coerce", format="mixed")
+            parsed_dayfirst = pd.to_datetime(sample_str, dayfirst=True, errors="coerce", format="mixed")
             score = max(score, parsed_dayfirst.notna().sum() / max(non_null, 1))
         return float(score)
 

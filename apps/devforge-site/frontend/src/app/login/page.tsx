@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 function normalizeProduct(value: string | null): ProductSlug {
-  return DEVFORGE_PRODUCTS.some((product) => product.slug === value) ? (value as ProductSlug) : "filecleaner";
+  return DEVFORGE_PRODUCTS.some((product) => product.slug === value) ? (value as ProductSlug) : "webhookmonitor";
 }
 
 function LoginForm() {
