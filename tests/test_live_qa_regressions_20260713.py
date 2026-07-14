@@ -71,6 +71,8 @@ class DashboardLiveQaRegressionTests(unittest.TestCase):
         self.assertIn("historyClearedRef.current = true", clear_handler)
         self.assertIn("if (!clearConfirmRef.current)", clear_handler)
         self.assertIn("clearConfirmRef.current = true", clear_handler)
+        self.assertIn("refreshGenerationRef.current += 1", clear_handler)
+        self.assertIn("refreshGeneration !== refreshGenerationRef.current", page)
 
     def test_pricetrackr_dashboard_excludes_deleted_rows_and_preserves_ten_minute_frequency(self):
         page = (ROOT / "apps" / "pricetrackr" / "frontend" / "src" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")

@@ -160,6 +160,7 @@ export default function DashboardPage() {
   const exportRef                     = useRef<HTMLDivElement>(null);
   const clearConfirmRef               = useRef(false);
   const historyClearedRef             = useRef(false);
+  const refreshGenerationRef          = useRef(0);
   const editedPayloadInvalid = isEditingPayload && (() => {
     try { JSON.parse(retryPayload); return false; } catch { return true; }
   })();
@@ -170,6 +171,7 @@ export default function DashboardPage() {
   }, []);
 
   const refreshWebhooks = useCallback(async (showLoading = true) => {
+    const refreshGeneration = refreshGenerationRef.current;
     if (showLoading) setLoading(true);
     setLoadError(false);
     const [configResult, endpointResult, summaryResult, logsResult, profileResult] = await Promise.allSettled([
@@ -179,6 +181,11 @@ export default function DashboardPage() {
       apiClient.get<WebhookRequest[]>(`/webhooks/logs?status=${logStatus}`),
       apiClient.get<ProfilePlanResponse>("/auth/profile"),
     ]);
+
+    if (refreshGeneration !== refreshGenerationRef.current) {
+      if (showLoading) setLoading(false);
+      return;
+    }
 
     if (configResult.status === "fulfilled") setEndpointUrl(configResult.value.data.endpoint_url);
     if (endpointResult.status === "fulfilled") setEndpoints(endpointResult.value.data);
@@ -248,6 +255,7 @@ export default function DashboardPage() {
     setClearConfirm(false);
     trackEvent("feature_used", { feature_name: "clear_webhook_history" });
     historyClearedRef.current = true;
+    refreshGenerationRef.current += 1;
     setHasServerSearch(false);
     setRequests([]);
     setSelected(null);
