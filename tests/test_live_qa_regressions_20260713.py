@@ -67,7 +67,7 @@ class DashboardLiveQaRegressionTests(unittest.TestCase):
         self.assertLess(clear_handler.index("setRequests([])"), clear_handler.index("void refreshWebhooks(false)"))
         self.assertLess(clear_handler.index("setRequests([])"), clear_handler.index('void apiClient.delete("/webhooks/requests?confirm=CONFIRM")'))
         self.assertIn("const handleClearHistory = () =>", clear_handler)
-        self.assertIn("historyClearedRef.current && nextRequests.length === 0", page)
+        self.assertNotIn("historyClearedRef.current && nextRequests.length === 0", page)
         self.assertIn("historyClearedRef.current = true", clear_handler)
         self.assertIn("if (!clearConfirmRef.current)", clear_handler)
         self.assertIn("clearConfirmRef.current = true", clear_handler)

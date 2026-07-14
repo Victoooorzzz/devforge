@@ -187,9 +187,6 @@ export default function DashboardPage() {
     }
     if (logsResult.status === "fulfilled") {
       const nextRequests = logsResult.value.data;
-      if (historyClearedRef.current && nextRequests.length === 0) {
-        historyClearedRef.current = false;
-      }
       if (!historyClearedRef.current && !hasServerSearch) setRequests(nextRequests);
     }
     if (profileResult.status === "fulfilled") {
@@ -265,13 +262,22 @@ export default function DashboardPage() {
     void apiClient.delete("/webhooks/requests?confirm=CONFIRM")
       .then(() => {
         showToast({ tone: "success", message: "Your connection history was cleared." });
-        void refreshWebhooks(false);
+        window.setTimeout(() => {
+          historyClearedRef.current = false;
+          void refreshWebhooks(false);
+        }, 1500);
       })
       .catch(() => {
         historyClearedRef.current = false;
         void refreshWebhooks(false);
         showToast({ tone: "error", message: "We could not clear your history. Retry in a moment." });
       });
+    window.setTimeout(() => {
+      if (historyClearedRef.current) {
+        historyClearedRef.current = false;
+        void refreshWebhooks(false);
+      }
+    }, 15000);
   };
 
   const handleCopy = () => {
