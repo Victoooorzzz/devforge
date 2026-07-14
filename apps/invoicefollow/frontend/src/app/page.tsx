@@ -5,7 +5,7 @@ export default function HomePage() {
   const invoiceFollow = getProduct("invoicefollow");
   const landingProduct = {
     ...invoiceFollow,
-    headline: "Track existing invoices, automate reminders, and reconcile payments.",
+    headline: "Track existing invoices, automate reminders, and record payment progress.",
   };
 
   return <ProductLandingPage product={landingProduct} />;

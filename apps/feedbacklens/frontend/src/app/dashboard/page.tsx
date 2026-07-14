@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 
 const dashboardProduct = getProduct("feedbacklens");
+const SHOW_EXTERNAL_SOURCE_CONNECTORS = false;
+const SHOW_GITHUB_ISSUE_ACTION = false;
 
 const sourceCards = [
   { name: "GitHub", detail: "Issues and comments" },
@@ -497,7 +499,6 @@ export default function DashboardPage() {
             product={dashboardProduct}
             quotas={[
               { label: "Feedback this month", used: entries.length },
-              { label: "Sources", used: sources.length },
               { label: "Duplicate groups", used: dedupeSummary?.duplicate_groups ?? 0 },
             ]}
           />
@@ -605,8 +606,9 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-          <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+          {SHOW_EXTERNAL_SOURCE_CONNECTORS ? (
+            <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
             <div className="flex items-center justify-between gap-3 mb-3">
               <div>
                 <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--color-text-secondary)" }}>Sources</p>
@@ -678,7 +680,8 @@ export default function DashboardPage() {
                 </div>
               ))}
             </div>
-          </div>
+            </div>
+          ) : null}
 
           <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
             <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "var(--color-text-secondary)" }}>Weekly digest</p>
@@ -700,7 +703,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="p-4 rounded-lg" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
-            <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "var(--color-text-secondary)" }}>GitHub action queue</p>
+            <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "var(--color-text-secondary)" }}>Topic action queue</p>
             <p className="text-sm mb-3" style={{ color: "var(--color-text)" }}>{clusters.length} topic clusters ready for triage.</p>
             <div className="space-y-2">
               {clusters.slice(0, 3).map(cluster => (
@@ -712,14 +715,16 @@ export default function DashboardPage() {
                         {cluster.mention_count} mentions · {cluster.top_themes.slice(0, 2).join(", ") || "unlabeled"}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleCreateGitHubIssue(cluster)}
-                      disabled={githubIssueClusterId === cluster.id}
-                      className="rounded-md px-2 py-1 text-[10px] font-bold text-[var(--color-accent)] transition-colors hover:bg-black/10 disabled:opacity-60"
-                    >
-                      {githubIssueClusterId === cluster.id ? "Creating" : "GitHub Issue"}
-                    </button>
+                    {SHOW_GITHUB_ISSUE_ACTION ? (
+                      <button
+                        type="button"
+                        onClick={() => handleCreateGitHubIssue(cluster)}
+                        disabled={githubIssueClusterId === cluster.id}
+                        className="rounded-md px-2 py-1 text-[10px] font-bold text-[var(--color-accent)] transition-colors hover:bg-black/10 disabled:opacity-60"
+                      >
+                        {githubIssueClusterId === cluster.id ? "Creating" : "GitHub Issue"}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ))}

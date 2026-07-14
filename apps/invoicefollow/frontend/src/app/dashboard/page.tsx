@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 
 const dashboardProduct = getProduct("invoicefollow");
+const SHOW_EXTERNAL_CONNECTIONS = false;
 
 type InvoiceStatus = "pending" | "paid" | "overdue" | "paused" | "in_sequence" | "finalized" | "disputed";
 
@@ -507,11 +508,11 @@ export default function DashboardPage() {
         {!loading && !loadError && invoices.length === 0 ? (
           <WelcomeSteps
             title="Track your first existing invoice"
-            description="Import records, connect Gmail, or add a tracking record for an invoice already sent elsewhere."
+            description="Import records or add a tracking record for an invoice already sent elsewhere."
             steps={[
-              "Connect Gmail or import existing invoice records.",
+              "Import existing invoice records or add one with the tracking form.",
               "Confirm detected client, amount, currency, number, and due date.",
-              "Let InvoiceFollow run reminders, classify replies, and reconcile payments.",
+              "Let InvoiceFollow run reminders and track replies, disputes, approvals, and payments.",
             ]}
             actionLabel="Add existing invoice record"
             onAction={() => setShowForm(true)}
@@ -570,8 +571,9 @@ export default function DashboardPage() {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-          <section className="rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {SHOW_EXTERNAL_CONNECTIONS ? (
+            <section className="rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-bold" style={{ color: "var(--color-text)" }}>Connections</h2>
@@ -598,7 +600,8 @@ export default function DashboardPage() {
                 <p className="break-all font-mono text-xs" style={{ color: "var(--color-text)" }}>{settings.forward_address}</p>
               </div>
             ) : null}
-          </section>
+            </section>
+          ) : null}
 
           <section className="rounded-lg p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
             <h2 className="text-sm font-bold" style={{ color: "var(--color-text)" }}>Client risk scores</h2>

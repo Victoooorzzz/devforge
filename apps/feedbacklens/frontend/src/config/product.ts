@@ -11,7 +11,7 @@ export const product = {
   hero: {
     badge: "Local Analysis",
     headline: "Understand Your Users. Automatically.",
-    subtitle: "Collect feedback from any source, run local sentiment analysis, group repeated issues, and surface the insights that matter most.",
+    subtitle: "Paste feedback or import CSV data, run local sentiment analysis, group repeated issues, and surface the insights that matter most.",
     ctaText: "Start 7-Day Free Trial",
     ctaHref: "/register",
     secondaryCtaText: "See Features",
@@ -19,7 +19,7 @@ export const product = {
   },
   features: [
     { title: "Local Sentiment Analysis", description: "Classify feedback as positive, negative, or neutral with confidence scores without relying on external generation APIs." },
-    { title: "Feedback Collection", description: "Paste feedback manually, import from CSV, or use our API. Aggregate feedback from multiple channels in one place." },
+    { title: "Feedback Collection", description: "Paste feedback manually, import from CSV, or use the API to analyze it in one place." },
     { title: "Deduped Trend Detection", description: "Spot recurring themes and emerging issues without inflating counts from near-duplicate feedback." },
   ],
   pricing: {
@@ -33,7 +33,7 @@ export const product = {
       { text: "Theme detection", included: true },
       { text: "Near-duplicate detection", included: true },
       { text: "CSV import/export", included: true },
-      { text: "GitHub, Canny, X, and Reddit sources", included: true },
+      { text: "Bulk CSV and API import", included: true },
     ],
   },
   testimonials: [

@@ -50,7 +50,6 @@ const defaultQuotaByProduct: Record<DevForgeProduct["slug"], DashboardQuota[]> =
   ],
   feedbacklens: [
     { label: "Feedback this month", used: 0 },
-    { label: "Sources", used: 0 },
     { label: "Duplicate groups", used: 0 },
   ],
   pricetrackr: [
@@ -100,9 +99,9 @@ const quotaMetaByProduct: Record<DevForgeProduct["slug"], Record<string, Dashboa
 const defaultLockedByProduct: Record<DevForgeProduct["slug"], string[]> = {
   filecleaner: ["Schema validation", "Anomaly detection", "10k fuzzy matching", "Parallel batch"],
   webhookmonitor: ["Replay", "Payload diff", "Advanced search", "Longer retention"],
-  feedbacklens: ["GitHub issue creation", "Weekly digest", "More sources", "365-day history"],
+  feedbacklens: ["Weekly digest", "Bulk CSV import", "API import", "365-day history"],
   pricetrackr: ["Hourly checks", "Webhook alerts", "Custom selectors at scale", "10-minute team checks"],
-  invoicefollow: ["Gmail sync", "Stripe/PayPal reconciliation", "Weekly digest", "API access"],
+  invoicefollow: ["Weekly digest", "API access", "Bulk import", "Longer history"],
 };
 
 interface ProfilePlanResponse {

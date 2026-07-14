@@ -252,11 +252,11 @@ interface FeedbackRow {
 function FeedbackLensDemo() {
   const [filter, setFilter] = useState("all");
   const feedback: FeedbackRow[] = [
-    { id: "fb-21", source: "Canny", text: "csv import broke again w/ accents... same as last week :(", theme: "Import reliability", confidence: "92%", duplicateOf: "BUG-21", action: "Link duplicate", status: "urgent" },
+    { id: "fb-21", source: "CSV import", text: "csv import broke again w/ accents... same as last week :(", theme: "Import reliability", confidence: "92%", duplicateOf: "BUG-21", action: "Link duplicate", status: "urgent" },
     { id: "fb-20", source: "Email", text: "Not sure if bug or me but weekly digest never arrived", theme: "Reporting", confidence: "81%", duplicateOf: "-", action: "Investigate", status: "review" },
-    { id: "fb-19", source: "GitHub", text: "this is basically ticket #214, right?", theme: "Import reliability", confidence: "88%", duplicateOf: "BUG-21", action: "Merge thread", status: "duplicate" },
+    { id: "fb-19", source: "Pasted note", text: "this is basically ticket #214, right?", theme: "Import reliability", confidence: "88%", duplicateOf: "BUG-21", action: "Merge thread", status: "duplicate" },
     { id: "fb-18", source: "Sales note", text: "+1 on SSO. We can't onboard agency clients without it.", theme: "Team admin", confidence: "76%", duplicateOf: "-", action: "Add to roadmap", status: "review" },
-    { id: "fb-17", source: "Slack", text: "dashboard is nice but i need export before friday", theme: "Exports", confidence: "69%", duplicateOf: "-", action: "Human review", status: "review" },
+    { id: "fb-17", source: "Support note", text: "dashboard is nice but i need export before friday", theme: "Exports", confidence: "69%", duplicateOf: "-", action: "Human review", status: "review" },
   ];
   const visibleRows = filter === "all" ? feedback : feedback.filter((row) => row.status === filter);
 
@@ -271,7 +271,7 @@ function FeedbackLensDemo() {
               </button>
             ))}
           </div>
-          <StatusBadge tone="accent">4 sources connected</StatusBadge>
+          <StatusBadge tone="accent">4 inputs reviewed</StatusBadge>
         </div>
         <DemoDataTable
           rows={visibleRows}
@@ -291,12 +291,12 @@ function FeedbackLensDemo() {
         <div className="demo-pulse surface-card-raised border border-white/10 p-4">
           <h4 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Duplicate cluster breakdown</h4>
           <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
-            Cluster: CSV import fails with accented headers. Sources include Canny, GitHub, email, and support notes. Likely UTF-8 normalization issue during header mapping.
+            Cluster: CSV import fails with accented headers. Inputs include CSV rows, forwarded messages, pasted notes, and support notes. Likely UTF-8 normalization issue during header mapping.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <StatusBadge tone="danger">negative spike</StatusBadge>
             <StatusBadge tone="warning">duplicate group</StatusBadge>
-            <StatusBadge tone="accent">GitHub issue draft</StatusBadge>
+            <StatusBadge tone="accent">Action draft</StatusBadge>
           </div>
         </div>
         <div className="surface-card-raised border border-white/10 p-4">

@@ -14,6 +14,8 @@ import {
 import { product } from "@/config/product";
 import { CheckCircle2, CreditCard, Mail, RefreshCw, Save } from "lucide-react";
 
+const SHOW_EXTERNAL_CONNECTIONS = false;
+
 type Profile = SettingsSubscriptionProfile & {
   name: string;
   email: string;
@@ -272,60 +274,62 @@ export default function SettingsPage() {
             <SubscriptionPanel profile={profile} trialDaysLeft={trialDaysLeft} onManage={handleManageSubscription} busy={managingSubscription} />
           </SettingsSection>
 
-          <SettingsSection title="Connections" description={`Forward fallback: ${invoiceSettings.forward_address || "not generated yet"}`}>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {connectionRows.map((row) => {
-                const connected = Boolean(invoiceSettings.connections[row.id as keyof InvoiceSettings["connections"]]);
-                return (
-                  <div key={row.id} className="flex items-center justify-between gap-4 rounded-lg p-4" style={{ backgroundColor: "var(--color-surface-raised)" }}>
-                    <div className="flex items-center gap-3">
-                      <row.icon size={18} style={{ color: connected ? "#059669" : "var(--color-text-secondary)" }} />
-                      <div>
-                        <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>{row.label}</p>
-                        <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>{row.detail}</p>
+          {SHOW_EXTERNAL_CONNECTIONS ? (
+            <SettingsSection title="Connections" description={`Forward fallback: ${invoiceSettings.forward_address || "not generated yet"}`}>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {connectionRows.map((row) => {
+                  const connected = Boolean(invoiceSettings.connections[row.id as keyof InvoiceSettings["connections"]]);
+                  return (
+                    <div key={row.id} className="flex items-center justify-between gap-4 rounded-lg p-4" style={{ backgroundColor: "var(--color-surface-raised)" }}>
+                      <div className="flex items-center gap-3">
+                        <row.icon size={18} style={{ color: connected ? "#059669" : "var(--color-text-secondary)" }} />
+                        <div>
+                          <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>{row.label}</p>
+                          <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>{row.detail}</p>
+                        </div>
+                      </div>
+                      <div className="flex min-w-0 flex-col items-end gap-2">
+                        {row.id === "stripe" ? (
+                          <input
+                            type="password"
+                            value={paymentCredentials.stripe_api_key}
+                            onChange={(event) => setPaymentCredentials((current) => ({ ...current, stripe_api_key: event.target.value }))}
+                            className="input-field h-9 w-44 text-xs"
+                            placeholder="rk_live_..."
+                            autoComplete="off"
+                          />
+                        ) : null}
+                        {row.id === "paypal" ? (
+                          <div className="flex flex-col gap-2">
+                            <input
+                              type="password"
+                              value={paymentCredentials.paypal_client_id}
+                              onChange={(event) => setPaymentCredentials((current) => ({ ...current, paypal_client_id: event.target.value }))}
+                              className="input-field h-9 w-44 text-xs"
+                              placeholder="Client ID"
+                              autoComplete="off"
+                            />
+                            <input
+                              type="password"
+                              value={paymentCredentials.paypal_client_secret}
+                              onChange={(event) => setPaymentCredentials((current) => ({ ...current, paypal_client_secret: event.target.value }))}
+                              className="input-field h-9 w-44 text-xs"
+                              placeholder="Client secret"
+                              autoComplete="off"
+                            />
+                          </div>
+                        ) : null}
+                        <button type="button" onClick={() => handleConnect(row.id)} className="btn-secondary flex items-center gap-2 px-3 py-2 text-sm" disabled={connecting === row.id}>
+                          {connected ? <CheckCircle2 size={14} /> : connecting === row.id ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                          {connected ? "Connected" : "Connect"}
+                        </button>
                       </div>
                     </div>
-                    <div className="flex min-w-0 flex-col items-end gap-2">
-                      {row.id === "stripe" ? (
-                        <input
-                          type="password"
-                          value={paymentCredentials.stripe_api_key}
-                          onChange={(event) => setPaymentCredentials((current) => ({ ...current, stripe_api_key: event.target.value }))}
-                          className="input-field h-9 w-44 text-xs"
-                          placeholder="rk_live_..."
-                          autoComplete="off"
-                        />
-                      ) : null}
-                      {row.id === "paypal" ? (
-                        <div className="flex flex-col gap-2">
-                          <input
-                            type="password"
-                            value={paymentCredentials.paypal_client_id}
-                            onChange={(event) => setPaymentCredentials((current) => ({ ...current, paypal_client_id: event.target.value }))}
-                            className="input-field h-9 w-44 text-xs"
-                            placeholder="Client ID"
-                            autoComplete="off"
-                          />
-                          <input
-                            type="password"
-                            value={paymentCredentials.paypal_client_secret}
-                            onChange={(event) => setPaymentCredentials((current) => ({ ...current, paypal_client_secret: event.target.value }))}
-                            className="input-field h-9 w-44 text-xs"
-                            placeholder="Client secret"
-                            autoComplete="off"
-                          />
-                        </div>
-                      ) : null}
-                      <button type="button" onClick={() => handleConnect(row.id)} className="btn-secondary flex items-center gap-2 px-3 py-2 text-sm" disabled={connecting === row.id}>
-                        {connected ? <CheckCircle2 size={14} /> : connecting === row.id ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                        {connected ? "Connected" : "Connect"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </SettingsSection>
+                  );
+                })}
+              </div>
+            </SettingsSection>
+          ) : null}
 
           <SettingsSection title="Reminder Settings" description="Configure sender escalation, safe send windows, and notifications.">
             <form onSubmit={handleSettingsSave} className="grid grid-cols-1 gap-4 md:grid-cols-3">
