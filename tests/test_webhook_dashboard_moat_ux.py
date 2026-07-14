@@ -71,7 +71,8 @@ class WebhookDashboardMoatUxTests(unittest.TestCase):
 
         self.assertIn("hasActiveSearch", source)
         self.assertIn("No deliveries match your search filters", source)
-        self.assertIn('if (logsResult.status === "fulfilled" && !hasServerSearch)', source)
+        self.assertIn('if (logsResult.status === "fulfilled")', source)
+        self.assertIn('!historyClearedRef.current && !hasServerSearch', source)
         self.assertIn("Clear search", source)
         self.assertNotIn('data.total === 1 ? "" : "ies"', source)
 
