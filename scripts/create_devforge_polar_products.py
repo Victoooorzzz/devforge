@@ -8,7 +8,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-POLAR_API_URL = "https://api.polar.sh/v1"
+PRODUCTION_POLAR_API_URL = "https://api.polar.sh/v1"
+SANDBOX_POLAR_API_URL = "https://sandbox-api.polar.sh/v1"
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,8 @@ class DevForgeApp:
     env_key: str
     name: str
     description: str
+    pro_price_cents: int = 999
+    team_price_cents: int = 4900
 
 
 APPS = [
@@ -49,8 +52,18 @@ APPS = [
         env_key="FEEDBACKLENS",
         name="Feedback Lens",
         description="Local sentiment analysis and deduped feedback triage.",
+        pro_price_cents=1900,
+        team_price_cents=7900,
     ),
 ]
+
+
+def resolve_api_url(server: str = "", api_url: str = "") -> str:
+    if api_url.strip():
+        return api_url.rstrip("/")
+    if server.strip().lower() == "sandbox":
+        return SANDBOX_POLAR_API_URL
+    return PRODUCTION_POLAR_API_URL
 
 
 def build_product_payload(
@@ -79,6 +92,28 @@ def build_product_payload(
                 "price_amount": price_cents,
             }
         ],
+    }
+
+
+def active_fixed_price_cents(product: dict[str, Any]) -> int | None:
+    for price in product.get("prices", []):
+        if (
+            price.get("amount_type") == "fixed"
+            and not price.get("is_archived", False)
+        ):
+            return price.get("price_amount")
+    return None
+
+
+def build_product_price_update_payload(price_cents: int) -> dict[str, Any]:
+    return {
+        "prices": [
+            {
+                "amount_type": "fixed",
+                "price_currency": "usd",
+                "price_amount": price_cents,
+            }
+        ]
     }
 
 
@@ -115,11 +150,11 @@ def _request_json(
         raise RuntimeError(f"Polar API {method} {url} failed: {exc.code} {body}") from exc
 
 
-def find_existing_product(token: str, app_slug: str, tier: str) -> dict[str, Any] | None:
+def find_existing_product(token: str, app_slug: str, tier: str, api_url: str) -> dict[str, Any] | None:
     try:
         response = _request_json(
             "GET",
-            f"{POLAR_API_URL}/products/",
+            f"{api_url}/products/",
             token,
             params={
                 "limit": 100,
@@ -141,7 +176,7 @@ def find_existing_product(token: str, app_slug: str, tier: str) -> dict[str, Any
     return None
 
 
-def create_product(token: str, app: DevForgeApp, tier: str, price_cents: int) -> dict[str, Any]:
+def create_product(token: str, app: DevForgeApp, tier: str, price_cents: int, api_url: str) -> dict[str, Any]:
     payload = build_product_payload(
         app_slug=app.slug,
         tier=tier,
@@ -149,22 +184,49 @@ def create_product(token: str, app: DevForgeApp, tier: str, price_cents: int) ->
         description=app.description,
         price_cents=price_cents,
     )
+
+
+def update_product_price(token: str, product_id: str, price_cents: int, api_url: str) -> dict[str, Any]:
+    return _request_json(
+        "PATCH",
+        f"{api_url}/products/{product_id}",
+        token,
+        payload=build_product_price_update_payload(price_cents),
+    )
     return _request_json(
         "POST",
-        f"{POLAR_API_URL}/products/",
+        f"{api_url}/products/",
         token,
         payload=payload,
     )
 
 
-def sync_products(token: str, dry_run: bool = False) -> dict[str, dict[str, str]]:
+def sync_products(token: str, api_url: str, dry_run: bool = False) -> dict[str, dict[str, str]]:
     results = {}
 
     for app in APPS:
         results[app.env_key] = {}
-        for tier, price_cents in [("pro", 999), ("team", 4900)]:
-            existing = find_existing_product(token, app.slug, tier)
+        for tier, price_cents in [("pro", app.pro_price_cents), ("team", app.team_price_cents)]:
+            existing = find_existing_product(token, app.slug, tier, api_url)
             if existing:
+                current_price = active_fixed_price_cents(existing)
+                if current_price != price_cents:
+                    if dry_run:
+                        print(
+                            f"Dry-run: Would update {app.name} ({tier}) "
+                            f"from {current_price} to {price_cents} cents/mo"
+                        )
+                    else:
+                        print(
+                            f"Updating {app.name} ({tier}) "
+                            f"from {current_price} to {price_cents} cents/mo..."
+                        )
+                        existing = update_product_price(
+                            token,
+                            existing["id"],
+                            price_cents,
+                            api_url,
+                        )
                 print(f"Found existing product for {app.name} ({tier}): {existing['id']}")
                 results[app.env_key][tier] = existing["id"]
                 continue
@@ -176,7 +238,7 @@ def sync_products(token: str, dry_run: bool = False) -> dict[str, dict[str, str]
 
             print(f"Creating product for {app.name} ({tier}) at ${price_cents/100:.2f}/mo...")
             try:
-                created = create_product(token, app, tier, price_cents)
+                created = create_product(token, app, tier, price_cents, api_url)
                 print(f"Created product: {created['id']}")
                 results[app.env_key][tier] = created["id"]
             except Exception as e:
@@ -202,7 +264,11 @@ def main() -> int:
         for app in APPS:
             results[app.env_key] = {"pro": f"dry-run-{app.slug}-pro", "team": f"dry-run-{app.slug}-team"}
     else:
-        results = sync_products(token=token or "", dry_run=args.dry_run)
+        api_url = resolve_api_url(
+            server=os.environ.get("POLAR_SERVER", ""),
+            api_url=os.environ.get("POLAR_API_URL", ""),
+        )
+        results = sync_products(token=token or "", api_url=api_url, dry_run=args.dry_run)
 
     print("\nPolar product sync complete:\n")
 

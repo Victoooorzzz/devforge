@@ -15,6 +15,12 @@ from polar_utils import (
     should_deactivate_for_polar_event,
 )
 from create_polar_products import build_product_payload
+from create_devforge_polar_products import (
+    APPS as TIERED_APPS,
+    active_fixed_price_cents,
+    build_product_price_update_payload,
+    resolve_api_url as resolve_catalog_api_url,
+)
 from product_catalog import resolve_app_from_product_id, resolve_plan_from_product_id, resolve_product_id_for_app
 
 
@@ -107,6 +113,48 @@ class ProductCatalogTests(unittest.TestCase):
 
 
 class PolarCatalogPayloadTests(unittest.TestCase):
+    def test_tiered_catalog_matches_frontend_prices(self):
+        prices = {
+            app.slug: (app.pro_price_cents, app.team_price_cents)
+            for app in TIERED_APPS
+        }
+
+        self.assertEqual(prices["feedbacklens"], (1900, 7900))
+        for app_slug in ("filecleaner", "invoicefollow", "pricetrackr", "webhookmonitor"):
+            self.assertEqual(prices[app_slug], (999, 4900))
+
+    def test_tiered_catalog_uses_sandbox_api_when_requested(self):
+        self.assertEqual(
+            resolve_catalog_api_url(server="sandbox"),
+            "https://sandbox-api.polar.sh/v1",
+        )
+
+    def test_tiered_catalog_detects_and_replaces_wrong_fixed_price(self):
+        product = {
+            "prices": [
+                {
+                    "amount_type": "fixed",
+                    "price_amount": 999,
+                    "price_currency": "usd",
+                    "is_archived": False,
+                }
+            ]
+        }
+
+        self.assertEqual(active_fixed_price_cents(product), 999)
+        self.assertEqual(
+            build_product_price_update_payload(1900),
+            {
+                "prices": [
+                    {
+                        "amount_type": "fixed",
+                        "price_currency": "usd",
+                        "price_amount": 1900,
+                    }
+                ]
+            },
+        )
+
     def test_build_product_payload_creates_monthly_usd_subscription(self):
         payload = build_product_payload(
             app_slug="filecleaner",
