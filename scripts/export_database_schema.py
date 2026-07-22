@@ -9,6 +9,10 @@ from sqlalchemy.dialects import postgresql
 from sqlmodel import SQLModel
 
 
+def clean_sql(value: str) -> str:
+    return "\n".join(line.rstrip() for line in value.rstrip().splitlines())
+
+
 def render_schema() -> str:
     # Importing the universal application registers every product model in the
     # shared SQLModel metadata. SQLAlchemy does not connect until a query runs.
@@ -31,7 +35,7 @@ def render_schema() -> str:
     ]
 
     for table in SQLModel.metadata.sorted_tables:
-        sections.append(str(CreateTable(table, if_not_exists=True).compile(dialect=dialect)).rstrip() + ";")
+        sections.append(clean_sql(str(CreateTable(table, if_not_exists=True).compile(dialect=dialect))) + ";")
         sections.append("")
 
     seen_indexes: set[str] = set()
@@ -40,7 +44,7 @@ def render_schema() -> str:
             if not index.name or index.name in seen_indexes:
                 continue
             seen_indexes.add(index.name)
-            sections.append(str(CreateIndex(index, if_not_exists=True).compile(dialect=dialect)).rstrip() + ";")
+            sections.append(clean_sql(str(CreateIndex(index, if_not_exists=True).compile(dialect=dialect))) + ";")
 
     sections.extend(["", "-- Idempotent structural compatibility migrations", ""])
     structural_prefixes = ("ALTER ", "CREATE ", "DO ")
