@@ -8,7 +8,7 @@ const oxanium = Oxanium({ subsets: ["latin"], weight: ["300", "400", "600", "700
 const chakra = Chakra_Petch({ subsets: ["latin"], weight: ["300", "400", "600", "700"], variable: "--font-chakra" });
 
 export const metadata: Metadata = seoMetadata({
-  title: "DevForge - Five micro-SaaS tools for developers and operators",
+  title: "DevForge - Four micro-SaaS tools for developers and operators",
   description: DEVFORGE_SUITE.description,
   url: DEVFORGE_SUITE.url,
   productName: DEVFORGE_SUITE.name,

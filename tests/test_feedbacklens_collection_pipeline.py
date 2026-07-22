@@ -36,6 +36,9 @@ class _FakeExecuteResult:
     def scalar_one_or_none(self):
         return self.rows[0] if self.rows else None
 
+    def first(self):
+        return self.rows[0] if self.rows else None
+
     def scalar_one(self):
         return self.scalar if self.scalar is not None else len(self.rows)
 

@@ -28,9 +28,13 @@ class DevForgeSiteUXContractTest(unittest.TestCase):
 
         self.assertNotIn("5 products live", suite_home)
         self.assertIn("liveCount", suite_home)
-        self.assertIn("5 focused tools", suite_home)
+        self.assertIn("4 focused tools", suite_home)
         self.assertIn("Shared auth + billing", suite_home)
         self.assertIn("No enterprise theater", suite_home)
+
+        layout = (ROOT / "apps" / "devforge-site" / "frontend" / "src" / "app" / "layout.tsx").read_text()
+        self.assertIn("Four micro-SaaS tools", layout)
+        self.assertNotIn("Five micro-SaaS tools", layout)
 
     def test_suite_home_has_high_intent_signup_cta(self):
         suite_home = (ROOT / "packages" / "ui" / "components" / "SuiteHomePage.tsx").read_text()

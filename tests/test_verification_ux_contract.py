@@ -27,6 +27,12 @@ class VerificationUxContractTest(unittest.TestCase):
         self.assertIn('if ($app.Name -eq "pricetrackr")', script)
         self.assertIn('"JWT_SECRET"', script)
 
+    def test_vercel_deploy_stops_on_errors(self):
+        script = (ROOT / "scripts" / "deploy-all.ps1").read_text()
+
+        self.assertIn('$ErrorActionPreference = "Stop"', script)
+        self.assertNotIn('$ErrorActionPreference = "Continue"', script)
+
     def test_verify_pages_use_consistent_white_devforge_branding(self):
         for product in PRODUCTS:
             path = ROOT / "apps" / product / "frontend" / "src" / "app" / "verify" / "page.tsx"
