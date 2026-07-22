@@ -135,8 +135,15 @@ def verify_standard_webhook_signature(
 
 
 def _decode_webhook_secret(secret: str) -> bytes:
-    if secret.startswith("whsec_"):
-        secret = secret.removeprefix("whsec_")
+    for prefix in ("polar_whs_", "whsec_"):
+        if secret.startswith(prefix):
+            secret = secret.removeprefix(prefix)
+            break
+    else:
+        return secret.encode()
+
+    try:
         padding = "=" * (-len(secret) % 4)
-        return base64.b64decode(secret + padding)
-    return secret.encode()
+        return base64.b64decode(secret + padding, validate=True)
+    except (ValueError, base64.binascii.Error):
+        return secret.encode()

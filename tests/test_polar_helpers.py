@@ -1,6 +1,10 @@
 import unittest
+import base64
+import hashlib
+import hmac
 from pathlib import Path
 import sys
+import time
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +17,7 @@ from polar_utils import (
     resolve_polar_api_url,
     should_activate_for_polar_event,
     should_deactivate_for_polar_event,
+    verify_standard_webhook_signature,
 )
 from create_polar_products import build_product_payload
 from create_devforge_polar_products import (
@@ -55,6 +60,27 @@ class PolarCheckoutPayloadTests(unittest.TestCase):
 
 
 class PolarWebhookTests(unittest.TestCase):
+    def test_verifies_current_polar_webhook_secret_prefix(self):
+        secret_bytes = b"polar-standard-webhook-secret"
+        secret = "polar_whs_" + base64.b64encode(secret_bytes).decode().rstrip("=")
+        payload = b'{"type":"subscription.active","data":{}}'
+        webhook_id = "msg_test"
+        timestamp = str(int(time.time()))
+        signed_content = b".".join([webhook_id.encode(), timestamp.encode(), payload])
+        signature = base64.b64encode(
+            hmac.new(secret_bytes, signed_content, hashlib.sha256).digest()
+        ).decode()
+
+        self.assertTrue(
+            verify_standard_webhook_signature(
+                payload=payload,
+                webhook_id=webhook_id,
+                webhook_timestamp=timestamp,
+                webhook_signature=f"v1,{signature}",
+                secret=secret,
+            )
+        )
+
     def test_extracts_user_id_from_customer_external_id(self):
         event = {
             "type": "subscription.active",
