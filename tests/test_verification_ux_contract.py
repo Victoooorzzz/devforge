@@ -31,7 +31,8 @@ class VerificationUxContractTest(unittest.TestCase):
         script = (ROOT / "scripts" / "deploy-all.ps1").read_text()
 
         self.assertIn('$ErrorActionPreference = "Stop"', script)
-        self.assertNotIn('$ErrorActionPreference = "Continue"', script)
+        self.assertIn('if ($deployExitCode -ne 0)', script)
+        self.assertIn('throw "Vercel deployment failed with exit code $deployExitCode."', script)
 
     def test_verify_pages_use_consistent_white_devforge_branding(self):
         for product in PRODUCTS:

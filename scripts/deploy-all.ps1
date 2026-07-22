@@ -79,13 +79,23 @@ function Invoke-VercelDeploy {
         [string]$Cwd
     )
 
-    if (Get-Command vercel -ErrorAction SilentlyContinue) {
-        $deployOutput = & vercel deploy --prod --yes --token $Token --cwd $Cwd 2>&1
+    # Vercel writes normal progress messages to stderr. Capture those messages
+    # without letting PowerShell's global fail-fast mode abort before we can
+    # evaluate the native process exit code.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        if (Get-Command vercel -ErrorAction SilentlyContinue) {
+            $deployOutput = & vercel deploy --prod --yes --token $Token --cwd $Cwd 2>&1
+        }
+        else {
+            $deployOutput = & corepack pnpm dlx vercel@latest deploy --prod --yes --token $Token --cwd $Cwd 2>&1
+        }
+        $deployExitCode = $LASTEXITCODE
     }
-    else {
-        $deployOutput = & corepack pnpm dlx vercel@latest deploy --prod --yes --token $Token --cwd $Cwd 2>&1
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
     }
-    $deployExitCode = $LASTEXITCODE
     $deployOutput | ForEach-Object { [string]$_ -replace [regex]::Escape($Token), "[REDACTED]" } | Write-Host
     if ($deployExitCode -ne 0) {
         throw "Vercel deployment failed with exit code $deployExitCode."
