@@ -73,6 +73,48 @@ function Set-VercelEnvVar {
 }
 # ────────────────────────────────────────────────────────────────────────────
 
+function Get-AivenProjectCaForDatabase {
+    param(
+        [string]$Token,
+        [string]$DatabaseUrl
+    )
+
+    $hostMatch = [regex]::Match($DatabaseUrl, "@([^/:?#]+)")
+    if (-not $hostMatch.Success) {
+        throw "DATABASE_URL no contiene un host PostgreSQL valido."
+    }
+
+    $databaseHost = $hostMatch.Groups[1].Value
+    $headers = @{ Authorization = "aivenv1 $Token" }
+    $projects = (Invoke-RestMethod -Uri "https://api.aiven.io/v1/project" -Headers $headers).projects
+
+    foreach ($aivenProject in $projects) {
+        $projectName = $aivenProject.project_name
+        $encodedProject = [uri]::EscapeDataString($projectName)
+        $services = (Invoke-RestMethod `
+            -Uri "https://api.aiven.io/v1/project/$encodedProject/service" `
+            -Headers $headers).services
+
+        foreach ($service in $services) {
+            if ($service.service_type -ne "pg" -or -not $service.service_uri) {
+                continue
+            }
+            $serviceHostMatch = [regex]::Match($service.service_uri, "@([^/:?#]+)")
+            if ($serviceHostMatch.Success -and $serviceHostMatch.Groups[1].Value -eq $databaseHost) {
+                $caResponse = Invoke-RestMethod `
+                    -Uri "https://api.aiven.io/v1/project/$encodedProject/kms/ca" `
+                    -Headers $headers
+                if (-not $caResponse.certificate) {
+                    throw "Aiven no devolvio el certificado CA del proyecto."
+                }
+                return $caResponse.certificate
+            }
+        }
+    }
+
+    throw "No se encontro el proyecto Aiven correspondiente a DATABASE_URL."
+}
+
 function Invoke-VercelDeploy {
     param(
         [string]$Token,
@@ -214,6 +256,13 @@ foreach ($app in $apps) {
                 Set-VercelEnvVar -ProjectId $project.id -Key $serverKey -Value $serverValue
             }
         }
+        if (-not $env:AIVEN_TOKEN -or -not $env:DATABASE_URL) {
+            throw "PriceTrackr requiere AIVEN_TOKEN y DATABASE_URL para configurar TLS."
+        }
+        $aivenCa = Get-AivenProjectCaForDatabase `
+            -Token $env:AIVEN_TOKEN `
+            -DatabaseUrl $env:DATABASE_URL
+        Set-VercelEnvVar -ProjectId $project.id -Key "AIVEN_CA_CERT" -Value $aivenCa
     }
 
     # Paso 2 - Inyectar .vercel/project.json
