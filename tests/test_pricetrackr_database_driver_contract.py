@@ -15,6 +15,7 @@ class PriceTrackrDatabaseDriverContractTests(unittest.TestCase):
             ROOT / "apps/pricetrackr/frontend/src/lib/db.ts"
         ).read_text(encoding="utf-8")
         deploy_script = (ROOT / "scripts/deploy-all.ps1").read_text(encoding="utf-8")
+        turbo = json.loads((ROOT / "turbo.json").read_text(encoding="utf-8"))
 
         self.assertIn("postgres", package["dependencies"])
         self.assertNotIn("@neondatabase/serverless", package["dependencies"])
@@ -24,6 +25,7 @@ class PriceTrackrDatabaseDriverContractTests(unittest.TestCase):
         self.assertIn("rejectUnauthorized: true", source)
         self.assertIn('Set-VercelEnvVar -ProjectId $project.id -Key "AIVEN_CA_CERT"', deploy_script)
         self.assertIn("/kms/ca", deploy_script)
+        self.assertIn("AIVEN_CA_CERT", turbo["globalEnv"])
 
 
 if __name__ == "__main__":
