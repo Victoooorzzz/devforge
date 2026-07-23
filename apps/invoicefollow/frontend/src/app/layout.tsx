@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { CSSProperties } from "react";
-import { generateMetadata as seoMetadata, generateSoftwareAppJsonLd, getProduct } from "@devforge/core";
+import { GoogleAnalyticsScript, generateMetadata as seoMetadata, generateSoftwareAppJsonLd, getProduct } from "@devforge/core";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
@@ -32,6 +32,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        <GoogleAnalyticsScript />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

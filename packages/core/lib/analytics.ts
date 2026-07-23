@@ -9,6 +9,8 @@ interface EventProps {
 
 declare global {
   interface Window {
+    dataLayer?: unknown[];
+    gtag?: (...args: unknown[]) => void;
     plausible?: (
       eventName: string,
       options?: { props?: Record<string, string | number | boolean> }
@@ -34,6 +36,10 @@ export function trackEvent(eventName: EventName, props?: EventProps): void {
     });
   }
 
+  if (window.gtag) {
+    window.gtag("event", eventName, cleanProps);
+  }
+
   if (process.env.NODE_ENV === "development") {
     console.log(`[Analytics] ${eventName}`, cleanProps);
   }
@@ -46,4 +52,28 @@ export function PlausibleScript({ domain }: { domain: string }): React.ReactElem
     "data-domain": domain,
     src: "https://plausible.io/js/script.js",
   });
+}
+
+export function GoogleAnalyticsScript({
+  measurementId = "G-QHLMJM23RD",
+}: {
+  measurementId?: string;
+}): React.ReactElement {
+  const React = require("react");
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement("script", {
+      async: true,
+      src: `https://www.googletagmanager.com/gtag/js?id=${measurementId}`,
+    }),
+    React.createElement("script", {
+      dangerouslySetInnerHTML: {
+        __html: `window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', '${measurementId}');`,
+      },
+    })
+  );
 }

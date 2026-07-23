@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { DEVFORGE_SUITE, generateMetadata as seoMetadata, generateOrganizationJsonLd } from "@devforge/core";
+import { DEVFORGE_SUITE, GoogleAnalyticsScript, generateMetadata as seoMetadata, generateOrganizationJsonLd } from "@devforge/core";
 import { Chakra_Petch, Inter, Oxanium } from "next/font/google";
 import "@devforge/ui/styles/globals.css";
 
@@ -20,6 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${oxanium.variable} ${chakra.variable}`}>
       <head>
+        <GoogleAnalyticsScript />
         <style dangerouslySetInnerHTML={{ __html: `
           :root {
             --color-accent: #821346;

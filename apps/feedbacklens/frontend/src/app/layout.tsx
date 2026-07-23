@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { generateMetadata as seoMetadata, generateSoftwareAppJsonLd, getProduct } from "@devforge/core";
+import { GoogleAnalyticsScript, generateMetadata as seoMetadata, generateSoftwareAppJsonLd, getProduct } from "@devforge/core";
 import { Inter } from "next/font/google";
 import "@devforge/ui/styles/globals.css";
 
@@ -27,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
+        <GoogleAnalyticsScript />
         <style dangerouslySetInnerHTML={{ __html: `:root { --color-accent: ${product.accentColor}; --color-accent-dim: ${product.accentColor}26; --color-accent-glow: ${product.accentColor}14; }` }} />
         <script
           type="application/ld+json"

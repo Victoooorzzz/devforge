@@ -17,7 +17,7 @@ export type {
   ProductSlug,
 } from "./lib/products";
 
-export { trackEvent, PlausibleScript } from "./lib/analytics";
+export { GoogleAnalyticsScript, trackEvent, PlausibleScript } from "./lib/analytics";
 export { generateMetadata, generateSoftwareAppJsonLd, generateOrganizationJsonLd } from "./lib/seo";
 export { buildProductLlmsTxt, buildSuiteLlmsTxt } from "./lib/geo";
 
