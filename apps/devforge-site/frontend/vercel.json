@@ -1,4 +1,16 @@
 {
+  "redirects": [
+    {
+      "source": "/r/whm-ig",
+      "destination": "https://webhookmonitor.devforgeapp.pro/?utm_source=instagram&utm_medium=organic_social&utm_campaign=whm-2026-07-replay-evidence&utm_content=whm-instagram-01",
+      "permanent": false
+    },
+    {
+      "source": "/r/whm-tt",
+      "destination": "https://webhookmonitor.devforgeapp.pro/?utm_source=tiktok&utm_medium=organic_social&utm_campaign=whm-2026-07-replay-evidence&utm_content=whm-tiktok-01",
+      "permanent": false
+    }
+  ],
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm turbo build --filter=devforge-site...",
   "outputDirectory": ".next",
