@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   description:
     "Hire the developer behind DevForge to build custom websites, landing pages, product pages, dashboards, and production-ready web apps.",
   alternates: {
-    canonical: "https://devforgeapp.pro/hire",
+    canonical: "https://tools.devforgeapp.pro/hire",
   },
 };
 
@@ -34,7 +34,7 @@ export default function HirePage() {
   return (
     <Layout
       productName="DevForge"
-      productDomain="devforgeapp.pro"
+      productDomain="tools.devforgeapp.pro"
       logoSrc="/devforge-logo-white.svg"
       navLinks={[
         { label: "Products", href: "/#products" },

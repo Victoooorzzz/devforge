@@ -26,7 +26,11 @@ export default function RootLayout({
     description: product.seoDescription,
     url: product.url,
     price: product.plans.find((plan) => plan.slug === "pro")?.price || 9.99,
-    category: "DeveloperApplication",
+    category: product.category,
+    status: product.status,
+    audience: product.audience,
+    features: product.features,
+    plans: product.plans,
   });
 
   return (

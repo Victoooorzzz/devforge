@@ -81,25 +81,57 @@ export function generateSoftwareAppJsonLd(config: {
   price: number;
   currency?: string;
   category?: string;
+  status?: "live" | "beta";
+  audience?: string;
+  features?: string[];
+  plans?: Array<{
+    name: string;
+    price: number;
+    description: string;
+    limits: string[];
+  }>;
 }): Record<string, unknown> {
+  const offers = config.plans?.length
+    ? config.plans.map((plan) => ({
+        "@type": "Offer",
+        name: `${config.name} ${plan.name}`,
+        price: plan.price,
+        priceCurrency: config.currency || "USD",
+        description: plan.description,
+        availability: "https://schema.org/InStock",
+        url: `${config.url}/#pricing`,
+        additionalProperty: plan.limits.map((limit) => ({
+          "@type": "PropertyValue",
+          name: "Plan limit",
+          value: limit,
+        })),
+      }))
+    : {
+        "@type": "Offer",
+        price: config.price,
+        priceCurrency: config.currency || "USD",
+        availability: "https://schema.org/InStock",
+      };
+
   return {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
+    "@id": `${config.url}/#software`,
     name: config.name,
     description: config.description,
     url: config.url,
     applicationCategory: config.category || "DeveloperApplication",
     operatingSystem: "Web",
-    offers: {
-      "@type": "Offer",
-      price: config.price,
-      priceCurrency: config.currency || "USD",
-      availability: "https://schema.org/InStock",
-    },
+    applicationSuite: "DevForge",
+    softwareVersion: config.status === "beta" ? "Beta" : "Production",
+    audience: config.audience ? { "@type": "Audience", audienceType: config.audience } : undefined,
+    featureList: config.features,
+    offers,
     creator: {
       "@type": "Organization",
+      "@id": "https://tools.devforgeapp.pro/#organization",
       name: "DevForge",
-      url: "https://devforgeapp.pro",
+      url: "https://tools.devforgeapp.pro",
     },
   };
 }
@@ -109,8 +141,9 @@ export function generateOrganizationJsonLd(): Record<string, unknown> {
     "@context": "https://schema.org",
     "@type": "Organization",
     name: "DevForge",
-    url: "https://devforgeapp.pro",
-    description: "Indie SaaS Tools for Developers and Freelancers",
+    "@id": "https://tools.devforgeapp.pro/#organization",
+    url: "https://tools.devforgeapp.pro",
+    description: "Four focused micro-SaaS tools for developers, operators, founders, and small teams.",
     sameAs: [],
   };
 }

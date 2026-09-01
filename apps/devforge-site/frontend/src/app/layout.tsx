@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { DEVFORGE_SUITE, GoogleAnalyticsScript, generateMetadata as seoMetadata, generateOrganizationJsonLd } from "@devforge/core";
+import { DEVFORGE_PRODUCTS, DEVFORGE_SUITE, GoogleAnalyticsScript, generateMetadata as seoMetadata, generateOrganizationJsonLd, generateSoftwareAppJsonLd } from "@devforge/core";
 import { Chakra_Petch, Inter, Oxanium } from "next/font/google";
 import "@devforge/ui/styles/globals.css";
 
@@ -10,13 +10,27 @@ const chakra = Chakra_Petch({ subsets: ["latin"], weight: ["300", "400", "600", 
 export const metadata: Metadata = seoMetadata({
   title: "DevForge - Four micro-SaaS tools for developers and operators",
   description: DEVFORGE_SUITE.description,
-  url: DEVFORGE_SUITE.url,
+  url: "https://tools.devforgeapp.pro",
   productName: DEVFORGE_SUITE.name,
   keywords: ["micro saas tools", "developer tools", "file cleaner", "webhook monitor", "feedback analysis", "price tracker", "invoice reminders"],
   tldr: DEVFORGE_SUITE.headline,
 });
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const suiteSchema = [
+    generateOrganizationJsonLd(),
+    ...DEVFORGE_PRODUCTS.map((product) => generateSoftwareAppJsonLd({
+      name: product.name,
+      description: product.seoDescription,
+      url: product.url,
+      price: product.plans.find((plan) => plan.slug === "pro")?.price || 0,
+      category: product.category,
+      status: product.status,
+      audience: product.audience,
+      features: product.features,
+      plans: product.plans,
+    })),
+  ];
   return (
     <html lang="en" className={`${inter.variable} ${oxanium.variable} ${chakra.variable}`}>
       <head>
@@ -42,8 +56,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           .badge, .font-mono { font-family: var(--font-chakra), sans-serif; letter-spacing: 0.15em; text-transform: uppercase; }
           button, .btn-primary, .btn-secondary, .btn-ghost { font-family: var(--font-chakra), sans-serif; letter-spacing: 0.15em; text-transform: uppercase; border-radius: 2px; }
         ` }} />
-        <script defer data-domain="devforgeapp.pro" src="https://plausible.io/js/script.js" />
-        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(generateOrganizationJsonLd()) }} />
+        <script defer data-domain="tools.devforgeapp.pro" src="https://plausible.io/js/script.js" />
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(suiteSchema) }} />
       </head>
       <body className="antialiased">{children}</body>
     </html>

@@ -24,6 +24,6 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ["/api", "/api/*"],
       },
     ],
-    sitemap: "https://devforgeapp.pro/sitemap.xml",
+    sitemap: "https://tools.devforgeapp.pro/sitemap.xml",
   };
 }
