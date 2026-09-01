@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from urllib.parse import urlencode, urlparse
 from urllib import error as url_error, request as url_request
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from html.parser import HTMLParser
 from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -772,14 +773,15 @@ async def _analyze_with_local_transformers(text: str, focus_terms: str = "") -> 
 
 
 def _analyze_feedback_locally(text: str, focus_terms: str = "") -> dict:
-    return _analyze_with_enhanced_keywords(text, focus_terms)
+    return _analyze_with_enhanced_keywords(_prepare_untrusted_feedback_for_analysis(text), focus_terms)
 
 
 async def _analyze_feedback_locally_async(text: str, focus_terms: str = "") -> dict:
+    prepared = _prepare_untrusted_feedback_for_analysis(text)
     engine = os.getenv("FEEDBACKLENS_ANALYSIS_ENGINE", "enhanced_keyword").strip().lower()
     if engine in {"local_transformers", "transformers", "distilbert"}:
-        return await _analyze_with_local_transformers(text, focus_terms)
-    return _analyze_with_enhanced_keywords(text, focus_terms)
+        return await _analyze_with_local_transformers(prepared, focus_terms)
+    return _analyze_with_enhanced_keywords(prepared, focus_terms)
 
 
 def _cluster_slug_for_analysis(text: str, themes: list[str] | None = None) -> str:
@@ -861,8 +863,89 @@ def _sentence_split(text: str) -> list[str]:
     return [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", text) if sentence.strip()]
 
 
-def _clean_feedback_text(text: str) -> str:
+_HIDDEN_STYLE_RE = re.compile(
+    r"(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?:\D|$)|"
+    r"font-size\s*:\s*0(?:px|em|rem|%)?|position\s*:\s*(?:absolute|fixed)[^;]*(?:left|top)\s*:\s*-\d{3,})",
+    re.IGNORECASE,
+)
+_BASE64_BLOB_RE = re.compile(r"(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/_-]{80,}={0,2}(?![A-Za-z0-9+/=_-])")
+_INSTRUCTION_LIKE_RE = re.compile(
+    r"(?:\bbegin[_\s-]*(?:admin|system)[_\s-]*session\b|"
+    r"\bignore\s+(?:all\s+)?(?:previous|prior|system|developer)\s+instructions?\b|"
+    r"\breveal\s+(?:the\s+)?(?:system|developer)\s+prompt\b|"
+    r"\b(?:send|exfiltrate|upload)\s+(?:the\s+)?(?:api\s+keys?|credentials?|secrets?|tokens?)\b|"
+    r"\b(?:delete|drop|erase)\s+(?:the\s+)?(?:database|tickets?|records?|tables?)\b)",
+    re.IGNORECASE,
+)
+
+
+class _VisibleFeedbackHTMLParser(HTMLParser):
+    _always_hidden = {"script", "style", "template", "noscript", "svg"}
+    _block_tags = {"p", "div", "li", "br", "section", "article", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.hidden_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = {key.lower(): (value or "") for key, value in attrs}
+        hidden = (
+            tag.lower() in self._always_hidden
+            or "hidden" in attributes
+            or attributes.get("aria-hidden", "").lower() == "true"
+            or bool(_HIDDEN_STYLE_RE.search(attributes.get("style", "")))
+        )
+        if self.hidden_depth or hidden:
+            self.hidden_depth += 1
+            return
+        if tag.lower() in self._block_tags:
+            self.parts.append(" ")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+        if self.hidden_depth:
+            self.hidden_depth -= 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.hidden_depth:
+            self.hidden_depth -= 1
+            return
+        if tag.lower() in self._block_tags:
+            self.parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if not self.hidden_depth:
+            self.parts.append(data)
+
+
+def _visible_feedback_text(text: str) -> str:
+    parser = _VisibleFeedbackHTMLParser()
+    try:
+        parser.feed(text)
+        parser.close()
+    except Exception:
+        return re.sub(r"<[^>]*>", " ", text)
+    return "".join(parser.parts)
+
+
+def _prepare_untrusted_feedback_for_analysis(text: str) -> str:
+    """Treat external feedback as inert data before any analysis engine sees it."""
     normalized = unicodedata.normalize("NFKC", text)
+    normalized = re.sub(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]", "", normalized)
+    normalized = _BASE64_BLOB_RE.sub("[encoded content removed]", normalized)
+    sentences = _sentence_split(normalized)
+    safe_sentences = [
+        "[instruction-like content removed]" if _INSTRUCTION_LIKE_RE.search(sentence) else sentence
+        for sentence in sentences
+    ]
+    safe = " ".join(safe_sentences).strip()
+    return f"<untrusted_feedback>{safe}</untrusted_feedback>"
+
+
+def _clean_feedback_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", _visible_feedback_text(text))
+    normalized = re.sub(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]", "", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     if not normalized:
         return ""
